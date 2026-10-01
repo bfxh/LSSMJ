@@ -65,8 +65,17 @@ def split_anchor(anchor, root):
 
 
 def read_lines(path):
-    with open(path, encoding="utf-8", errors="replace") as f:
-        return f.readlines()
+    """按行读取；UTF-8 解码失败时回退 GBK/GB2312（Windows 中文源码常见编码）。
+
+    回退只影响「怎么把字节读成文本」，不改变校验强度：引文仍须逐字出现。
+    """
+    with open(path, "rb") as f:
+        raw = f.read()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("gbk", errors="replace")
+    return text.splitlines(keepends=True)
 
 
 def check_row(row, root, cache):
