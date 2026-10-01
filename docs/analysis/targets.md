@@ -97,4 +97,19 @@
 | 综合与设计 | `reports/00/01/05/06/09/10` + **`lssmj-design/README.md`（自研设计文档）** |
 
 **账本终值构成**：source 1546 / doc 643 / paper 224 / web 7；深度行锚可逐条复算（`ledger-stats.md`）。
-**未完成项：无**（Noesis/Coherent 中间件未做，需求方未强制；如需补，编号段 `w2g` 空闲）。
+
+---
+
+## 第三轮（缺口补齐，用户点名"看看还有什么没有的都分析"）
+
+| # | 缺口 | 产出 | 账本 | 状态 |
+| --- | --- | --- | --- | --- |
+| N1 | 商业游戏/应用 UI 中间件谱系（Noesis/Coherent/Ultralight/Scaleform 遗产/CEF-in-engine） | `docs/platforms/game-ui-middleware.md`（212 行） | `w2g` **89 条** | ✅ 三家独立共识=画进宿主纹理+局部更新+空帧早退；许可红线（Ultralight 免费档禁游戏、禁改衍生）；Rive 运行时 MIT 为本批唯一许可可用件 |
+| N2 | C++ 光栅器第二组（Blend2D/ThorVG/NanoVG/Cairo） | `docs/engines/cpp-2d-rasterizers.md`（246 行） | `w4e` **122 条**（source 全量） | ✅ Blend2D 55 条（解析光栅+条带参数可复算）；**ThorVG 脏区一等公民（16×16 分区双缓冲脏表）** |
+| N3 | Avalonia 源码级复核（青简六条评估逐条回执） | `docs/engines/avalonia.md`（142 行） | `w4f` **86 条** | ✅ damage 默认只单包围盒（12.1 起 RegionDirtyRectClipping 默认关）；多矩形合并=WPF CDirtyRegion2 移植；默认独立渲染线程；**复核：③已过时、⑥无源码支持** |
+| N4 | 平台合成器与闭源系统 UI（DWM/UI.Composition/SurfaceFlinger/SwiftUI/WinUI3） | `docs/platforms/compositors-and-system-ui.md`（218 行） | `w3g` **81 条** | ✅ DWM 厚（compositor clock/MPO/DXGI flip）；**Android 是唯一公开 damage API 的一家**；对 §7 否证一处（动画归属，见 ADR H4） |
+| N5 | 工程方法学对照（qingjian-gates/unified-rx/BSHSQ vs 本仓） | `docs/reports/12-engineering-method-crossref.md`（81 行） | `w3h` **94 条** | ✅ 18 个模式对照（棘轮双档/合法交换净账/门自检注入/冻结值换代/scope 判红）+ **P1–P12 可移植清单** |
+| — | 缺口盘点本身 | `docs/analysis/gap-analysis.md` | — | ✅ |
+| — | 论文/来源目录学（机器生成） | `docs/reports/11-papers-bibliography.md` | — | ✅ |
+
+> "判过不做"的清单与理由见 `gap-analysis.md` §三（反编译/主机平台/1000 篇论文式扫描/02–08 合成报告等）。

@@ -2,18 +2,18 @@
 
 - 生成日期：2026-10-01
 - 复算命令：`python tools/ledger.py report --out docs/analysis/ledger-stats.md`
-- 账本文件：23 个 jsonl
+- 账本文件：28 个 jsonl
 
-**总条目（通过校验）：2420**；被拒条目：0；覆盖目标数：205；带 lesson 字段：2406
+**总条目（通过校验）：2892**；被拒条目：0；覆盖目标数：227；带 lesson 字段：2878
 
 ## 深度分布
 
 | depth | 条数 |
 | --- | --- |
-| source | 1546 |
-| doc | 643 |
+| source | 1863 |
+| doc | 793 |
 | paper | 224 |
-| web | 7 |
+| web | 12 |
 
 ## 波次文件分布
 
@@ -31,16 +31,21 @@
 | w2d.jsonl | 188 |
 | w2e.jsonl | 102 |
 | w2f.jsonl | 88 |
+| w2g.jsonl | 89 |
 | w3a.jsonl | 85 |
 | w3b.jsonl | 83 |
 | w3c.jsonl | 117 |
 | w3d.jsonl | 75 |
 | w3e.jsonl | 68 |
 | w3f.jsonl | 60 |
+| w3g.jsonl | 81 |
+| w3h.jsonl | 94 |
 | w4a.jsonl | 62 |
 | w4b.jsonl | 26 |
 | w4c.jsonl | 134 |
 | w4d.jsonl | 90 |
+| w4e.jsonl | 122 |
+| w4f.jsonl | 86 |
 | w5a.jsonl | 125 |
 
 ## 目标 Top 30
@@ -53,27 +58,27 @@
 | qt-quick-scenegraph | 106 |
 | chromium | 100 |
 | qingjian-render | 98 |
+| avalonia | 86 |
 | gtk4-gsk | 82 |
 | tiny-skia | 68 |
 | impeller | 67 |
 | gn-sdk | 62 |
 | flutter | 61 |
 | webrender | 59 |
+| blend2d | 55 |
 | gpui | 43 |
 | cosmic-text | 42 |
 | skia | 41 |
 | unity-ugui | 37 |
+| coherent-gameface | 36 |
+| thorvg | 35 |
 | microsoft-wpf | 29 |
 | imgui | 29 |
+| qingjian-gates | 29 |
 | unreal-slate-umg | 28 |
+| bshsq | 26 |
 | mineradio | 26 |
 | slint | 24 |
 | apple | 24 |
+| nanovg | 23 |
 | qingjian-design | 23 |
-| unity-uitoolkit | 22 |
-| js-framework-benchmark | 21 |
-| makepad | 20 |
-| vello | 19 |
-| egui | 18 |
-| android-frameworks-base | 17 |
-| cassowary-tochi | 16 |

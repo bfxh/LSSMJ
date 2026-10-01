@@ -23,6 +23,7 @@
 | 入口 | 内容 |
 | --- | --- |
 | `analysis/METHOD.md` | 协议：深度阶梯 / 证据锚纪律 / 复算方法 |
+| `analysis/gap-analysis.md` | 缺口盘点（已覆盖 / 本轮补缺 / 判过不做及理由） |
 | `analysis/AGENT-BRIEF.md` | 分析代理作业简报 |
 | `analysis/targets.md` | 目标总清单（含行数目标与账本文件登记） |
 | `analysis/targets-lock.json` | url + commit + 本地路径（机器可读） |
@@ -47,3 +48,9 @@
 | `reports/09-performance-methodology.md` | 性能方法论（先打点再改/单点≠稳态/交错 A/B/金丝雀/棘轮） |
 | `reports/10-decisions-adr.md` | 决策记录（学谁/弃谁/否证条件）+ 二轮补充 |
 | `papers/**` | 论文/长文述评（text-rendering / gpu-rendering-techniques / layout-and-incremental / ui-systems-and-latency + 30 余篇深读） |
+| `reports/11-papers-bibliography.md` | 论文/来源目录学（机器生成，224 条 paper 目标索引） |
+| `reports/12-engineering-method-crossref.md` | 工程方法学三仓对照（18 模式 + P1–P12 可移植清单） |
+| `platforms/game-ui-middleware.md` | 游戏/应用商业 UI 中间件谱系（Noesis/Coherent/Ultralight/Scaleform 遗产/CEF 路线；许可红线） |
+| `platforms/compositors-and-system-ui.md` | 平台合成器与闭源系统 UI（DWM/UI.Composition/SurfaceFlinger/render server/SwiftUI/WinUI3） |
+| `engines/cpp-2d-rasterizers.md` | C++ 光栅器第二组（Blend2D/ThorVG/NanoVG/Cairo；ThorVG 脏区范式） |
+| `engines/avalonia.md` | Avalonia 源码级复核（对青简六条评估的逐条回执） |
