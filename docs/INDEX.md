@@ -33,9 +33,14 @@
 | `targets/**` | 案例解剖（GN SDK / Mineradio） |
 | `reports/**` | 综合报告与 ADR |
 
-## 副档
+## 副档与综合
 
 | 入口 | 内容 |
 | --- | --- |
-| `renderer-gn/**` | GN SDK（闭源）渲染/UI 逆向文档 |
-| `reports/10-decisions-adr.md` | 设计决策记录（每条带证据） |
+| `renderer-gn/**` | GN SDK（闭源）渲染/UI 逆向文档（含复算与未验证清单） |
+| `targets/mineradio-electron.md` | Mineradio（Electron 42）案例解剖与成本账 |
+| `lssmj-design/README.md` | ★ **自研设计文档**：判据 C1–C6、架构、渲染核心、文本清单、预算、路线图 |
+| `reports/00-overview.md` | 总览与口径 |
+| `reports/01-engine-landscape.md` | 全景矩阵（含"未完成"如实登记） |
+| `reports/09-performance-methodology.md` | 性能方法论（先打点再改/单点≠稳态/交错 A/B/金丝雀/棘轮） |
+| `reports/10-decisions-adr.md` | 决策记录（学谁/弃谁/否证条件） |
