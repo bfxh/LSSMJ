@@ -41,6 +41,9 @@
 | `targets/mineradio-electron.md` | Mineradio（Electron 42）案例解剖与成本账 |
 | `lssmj-design/README.md` | ★ **自研设计文档**：判据 C1–C6、架构、渲染核心、文本清单、预算、路线图 |
 | `reports/00-overview.md` | 总览与口径 |
-| `reports/01-engine-landscape.md` | 全景矩阵（含"未完成"如实登记） |
+| `reports/01-engine-landscape.md` | 全景矩阵（含"未完成 → 二轮补齐"与**口径修正**：taffy/Tessera/整形栈/亚像素） |
+| `reports/05-web-js-wrapper-costs.md` | Web 栈与 JS 包装成本（JFB 实抄数字、Tauri vs Electron） |
+| `reports/06-cjk-text-and-ime.md` | 中文/东亚排版与输入法 UI |
 | `reports/09-performance-methodology.md` | 性能方法论（先打点再改/单点≠稳态/交错 A/B/金丝雀/棘轮） |
-| `reports/10-decisions-adr.md` | 决策记录（学谁/弃谁/否证条件） |
+| `reports/10-decisions-adr.md` | 决策记录（学谁/弃谁/否证条件）+ 二轮补充 |
+| `papers/**` | 论文/长文述评（text-rendering / gpu-rendering-techniques / layout-and-incremental / ui-systems-and-latency + 30 余篇深读） |

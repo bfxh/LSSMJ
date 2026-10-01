@@ -36,17 +36,27 @@
 - 增量/响应式：Cassowary、Adapton、Salsa、React Fiber、Svelte、JFB。
 - 平台契约：TSF、DirectWrite、text-input-v3、wayland damage、Impeller、Electron 性能文档。
 
-## 未完成（代理中断，如实登记）
+## 未完成 → **第二轮已全部补齐**（2026-10-01 晚）
 
-| 目标 | 计划 | 状态 |
-| --- | --- | --- |
-| Godot | `docs/engines/godot.md` | ⬜ 无产出 |
-| Bevy（用户点名） | `docs/engines/bevy.md` | ⬜ 无产出 |
-| egui/iced/slint/makepad/dioxus+blitz | `docs/engines/rust-ui-frameworks.md` | ⬜ 无产出（w1c 未生成） |
-| 文本渲染论文批（SDF/亚像素/整形论文带 60 条） | `docs/papers/text-rendering.md` | ⬜ 无产出（w1f 未生成；部分主题由 `w3f` 覆盖） |
-| Apple / 微软 / Android | `docs/platforms/{apple,microsoft,android}.md` | ⬜ 无产出（w2f 未生成） |
-| 游戏中间件（Noesis/Coherent） | `docs/platforms/game-ui-middleware.md` | ⬜ 无产出 |
-| GPU 技术论文批 / 布局论文批 / UI 系统论文批 / Web 成本 / CJK 专项 | w3a–w3e | 🟡 部分由 `w3f`（60 条）与 `w2c`/`w4b` 覆盖，专项报告未成 |
+| 目标 | 结果 |
+| --- | --- |
+| Godot | ✅ `../engines/godot.md`（196 行）+ `w2a` **138 条**（原生 MSDF 全链路、三级 min-size 缓存、**无通用 damage**——强化我们 damage-first 决策） |
+| Bevy（用户点名） | ✅ `../engines/bevy.md`（140 行）+ `w4c` **134 条**（文本栈已换 **parley** 0.11；布局"节点级变更加每帧无条件 compute"；UI 批键=栈号+偏移） |
+| Rust UI 框架（egui/iced/slint/makepad/dioxus+blitz） | ✅ `../engines/rust-ui-frameworks.md`（172 行）+ `w1c` **99 条**（**五家没人用 taffy 做自家 UI 布局**；重绘局部化四档谱系；egui 否证跨帧复用 tessellation） |
+| 文本渲染论文批 | ✅ `../papers/text-rendering.md`（223 行）+ 11 篇深读 + `w1f` **93 条**（paper 66；SDF/gamma/亚像素硬约束/FreeType 版本纪律） |
+| GPU 技术论文批 | ✅ `../papers/gpu-rendering-techniques.md`（231 行）+ 7 篇深读 + `w3a` **85 条**（Nanite 讲义全文、矢量填充三代路线、OIT） |
+| 布局与增量论文批 | ✅ `../papers/layout-and-incremental.md`（214 行）+ 7 篇深读 + `w3b` **83 条**（taffy 口径补全：135.78 vs 247.42 ms@M1 Pro；Cassowary 最坏情形；DOI 现场纠错两条） |
+| UI 系统与延迟论文批 | ✅ `../papers/ui-systems-and-latency.md`（258 行）+ `w3c` **117 条**（damage 三语义+矩形封顶；延迟 20/50ms 刻度；TSF 自绘候选窗先例；**Tessera 查证：组件树级 dirty、无像素级 dirty rect 实测——不得引用**） |
+| Web 栈成本 | ✅ `../reports/05-web-js-wrapper-costs.md`（176 行）+ `w3d` **75 条**（JFB 实抄数字：swap1k solid 12.6 vs react 89.9ms；Tauri 2.84MB vs Electron 166.5MB/454MiB/84 线程） |
+| CJK 与输入 | ✅ `../reports/06-cjk-text-and-ime.md`（192 行）+ `w3e` **68 条**（clreq 挤压先于禁则；jlreq 短行放宽；竖排`vert`非`vrt2`；Rime/Fcitx5 候选窗惯例） |
+| Apple / 微软 / Android | ✅ `../platforms/{apple,microsoft,android}.md` + `w2f` **88 条**（WPF 脏区 ≤8 矩形贪心合并；**DComp 官方"只支持位图"**；Android damage 一等公民；CAMetalLayer drawable 池教训） |
+| C/C++ 即时模式群 | ✅ `../engines/immediate-game-ui.md`（222 行）+ `w4d` **90 条**（ImGui 命令簿记/稀疏碼点表；缓冲粒度三谱系；LyShine/Fyrox/RmlUi 保留侧样本） |
 
-> 补齐路径已写好：`../analysis/targets.md` 的波次表 + `../analysis/AGENT-BRIEF.md`（恢复预算后可按简报直接续跑，
-> 账本编号段（w1c/w1f/w2a/w2f/w3a–e）未占用，不会撞号）。
+**账本终值：2420 条通过 / 0 拒绝**（`verify --min 1000`；source 1546 / doc 643 / paper 224 / web 7）。
+
+## 口径修正（对照用户初稿蓝图，逐条带锚）
+
+1. **"Taffy 10 万节点 1.64ms"**：实测口径相反——taffy 自报宽树 10 万节点**慢 82%**（135.78 / 241.34 / 247.42 ms，0.3@71027a8、M1 Pro、criterion×10；`w3b` W3B-043）。
+2. **"Tessera UI 的 dirty rect 实测"**：查证结论=其 dirty 机制在**组件树级**（BuildTreeMode 三档），**没有像素级 dirty rect 实测数字**，该出处不可引用（`w3c` W3C-114..117）。
+3. **cosmic-text 栈**：0.19 起整形引擎是 **harfrust**（rustybuzz 已归档）；Bevy 则从 cosmic-text **换到了 parley**（`w4c` W4C-004/010）——整形栈有两条并存路线，选型须对表。
+4. **亚像素**：ClearType 仅竖条纹 RGB LCD + FreeType 五点权重 + 纵向无 AA 三条硬约束（`w1f` W1F-067/074/048）；gamma 空间操作全错（W1F-039）。

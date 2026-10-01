@@ -65,3 +65,19 @@
 | F1 | **许可红线**：Unity Companion License 源码（`w2e` W2E-057）、GN SDK（无随包许可）**只读参考、不得移植** | 逐条在报告里验过 |
 | F2 | 每帧预算显性化 + 零大分配白名单 + 回收限流 | Mineradio LOW_SPEC 全部条目（`w4b` W4B-019..022）+ ImGui 字符串教训（`w3f` W3F-060） |
 | F3 | 判据先于优化：C1–C6 的测量协议（`09-performance-methodology.md` §9.7）先行 | 本仓方法论 |
+
+---
+
+## G. 第二轮补充（B/C/D 波次回填，2026-10-01 晚）
+
+| # | 判决 | 依据（锚） | 落到哪 |
+| --- | --- | --- | --- |
+| G1 | **整形栈有两条并存路线**：cosmic-text(harfrust) 与 parley；Bevy 0.19 起已从前者换到 parley | `w4c` W4C-004/010；`w1b`（harfrust）；`w1f`（rustybuzz 归档） | 候选窗档维持 cosmic-text（SwashCache 直存、青简实证）；**parley 列为对表项**（否证=宽度对表或缓存碎片劣化） |
+| G2 | 字形图集采用 **per-size 分桶**（学 Godot 的 per-size shelf atlas；单源 MSDF 服务全字号是另一档） | `w2a` W2A-086..092/098/099；SDF 原理损失 `w1f` W1F-003..012 | 设计 §5.4 图集档；**SDF 仍不进候选窗**（小字号收益不抵） |
+| G3 | damage 落地形态定为：**图块 union + 矩形数封顶（8）+ 超限回退全窗**（WPF 贪心合并算法） | `w2f` W2F-028..031；Android damage 一等公民 W2F-061/062；slint 上限 3 W1C-041/042；makepad 子树矩形比较 W1C-067..070 | 设计 §4.3 / P1 |
+| G4 | 布局内核自研再获加成：**五家 Rust UI 框架没有一家用 taffy 做自家 UI 布局**（blitz 用它只因 CSS 语义） | `w1c` W1C-026/087 | 强化 D1；taffy 仅作 CSS 场景候选 |
+| G5 | UI 批键可为"稳定排序键 + 相邻同图合并"（Bevy UI 实证：栈号+部件偏移 f32） | `w4c` W4C-078/079/089/093 | 设计 §4.2 GPU 档备选（比 SortKey 更软，两者按实测选） |
+| G6 | "平台壳只吃位图"有官方原文：DComp **"works with bitmap content only; it does not support vectors or text"** | `w2f` W2F-075 | E1 官方背书（Windows 合成层与我们的位图契约同构） |
+| G7 | **蓝图口径修正三连**：taffy 宽树慢 82%（135.78 vs 247.42 ms@M1 Pro）、Tessera 无像素级 dirty rect 实测（不得引用）、亚像素三硬约束（仅竖条纹 RGB LCD / 纵向无 AA / 五点权重） | `w3b` W3B-043；`w3c` W3C-114..117；`w1f` W1F-048/067/074 | 全景报告"口径修正"节 + 本表 |
+| G8 | 交互延迟锚：**<20ms 不可感、50ms 可感但可用**（非 VR 鼠标也在 ~20ms 档） | `w3c` W3C-058/059/062 | 判据 C1 的交互预算标尺 |
+| G9 | gamma 纪律：**gamma 空间做混合/缩放=错**；FreeType 版本号即渲染行为（2.7 默认 v40 起） | `w1f` W1F-039/041/069 | 文本管线实现清单（P2 验收项） |

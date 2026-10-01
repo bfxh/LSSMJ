@@ -100,6 +100,9 @@ tiny-skia、fontdb），不重复造轮子；**借鉴对象不限语言**——C
    **空 damage 直接跳过合成**（WebRender `w1e` W1E-055/058/082 全套照抄口径）。
 3. **树 diff（二级手段）**：结构变化大时用 Myers 风格差分求 damage（GSK `w2d` W2D-017）——
    在"候选行增删"这种粗粒度变化下其实 1 就能兜住，diff 留给复杂面板。
+   落地形态（ADR G3）：**图块 union + 矩形数封顶（≤8，学 WPF 的贪心合并，`w2f` W2F-028..031）
+   + 超限回退全窗**；Android 把 damage 做成一等公民（`w2f` W2F-061/062），
+   slint 的"脏矩形上限 3"是更严的同族做法（`w1c` W1C-041/042）。
 
 ### 4.4 合成与"省掉画"
 
@@ -127,6 +130,11 @@ tiny-skia、fontdb），不重复造轮子；**借鉴对象不限语言**——C
    注音/标注不得与所注汉字分离（`w3f` W3F-041）。
 7. **SDF/矢量字**：候选窗规模**不用**（青简评估与 GTK/Qt 的图集路线更稳，`../renderer-qingjian/09` §9.4）；
    大字号/极端缩放的 UI 再评估 msdf-atlas-gen（`w3f` W3F-005/007）。
+   图集档参考 **Godot per-size shelf atlas**（单源 MSDF 服务全字号是另一档；`w2a` W2A-086..092/098/099）。
+8. **实现纪律（第二轮回填）**：gamma 空间不做混合/缩放（`w1f` W1F-039）；亚像素启用须过三条硬约束
+   （仅竖条纹 RGB LCD、纵向无 AA、FreeType 五点权重，W1F-048/067/074）；FreeType 版本号即渲染行为
+   （2.7 默认 v40，W1F-069）；**整形栈对表项=parley**（Bevy 0.19 起已从 cosmic-text 换过去，
+   `w4c` W4C-004/010）。
 
 ## 6. 布局与状态
 
@@ -145,7 +153,9 @@ tiny-skia、fontdb），不重复造轮子；**借鉴对象不限语言**——C
 
 - 契约（青简，`w5a`）：壳只做"贴图 + 回传坐标"；渲染器输出 `{pixmap(预乘 RGBA), content_rect, hit_table}`。
 - Windows：`UpdateLayeredWindow`（BGRA 预乘，逐通道换序 `w5a` W5A-093/094）；DPI=`dpi/96`（W5A-092）；
-  回退链（字体失败 → 系统绘制）照抄（W5A-091）。
+  回退链（字体失败 → 系统绘制）照抄（W5A-091）。合成层官方背书：DComp 自述
+  **"works with bitmap content only; it does not support vectors or text"**（`w2f` W2F-075）——
+  系统合成路径与我们的位图契约同构。
 - macOS：`NSBitmapImageRep`（8bpc/4ch/预乘，按行 stride 拷，`w5a` W5A-098/100/101）；系统阴影跟 alpha（W5A-097）。
 - Linux：显示面在 Fcitx5/IBus（`docs/design/rendering.md:33`），壳不实现或只做无框架调试窗。
 - IME：preedit/commit/delete 生命周期显式建模（wayland text-input-v3 的 `preedit_string/commit_string`
