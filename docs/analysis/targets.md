@@ -7,8 +7,8 @@
 
 | # | 目标 | 抓取 | 重点 | 产出 | 行数目标 | 状态 |
 | --- | --- | --- | --- | --- | --- | --- |
-| A0 | **qingjian-render（交付主体）** | 已克隆 `scratch/src/qingjian` | `crates/qingjian-render/**` 全部 21 文件 + 消费侧 `apps/windows/server/src/ui/**`、`apps/macos/src/candidates/**` | `docs/renderer-qingjian/**`（主代理亲自写） | ≥80 | ⬜ |
-| A1 | qingjian 全仓（core/dict/lm/learning/predict/translate/platform + apps + 工程实践） | 同上 | `crates/*/src/lib.rs`、`apps/*/src`、`docs/design/**`、`Cargo.toml`、CI | `docs/engines/qingjian.md` | ≥50 | ⬜ |
+| A0 | **qingjian-render（交付主体）** | 已克隆 `scratch/src/qingjian` | `crates/qingjian-render/**` 全部 38 文件 + 消费侧 `apps/windows/server/src/ui/**`、`apps/macos/src/candidates/**` | `docs/renderer-qingjian/**`（主代理亲自写） | ≥80 | 🟡 文档 01–09 已成稿；账本 `w5a.jsonl` **125 条全绿**（source 86 / doc 39） |
+| A1 | qingjian 全仓（core/dict/lm/learning/predict/translate/platform + apps + 工程实践） | 同上 | `crates/*/src/lib.rs`、`apps/*/src`、`docs/design/**`、`Cargo.toml`、CI | `docs/engines/qingjian.md` | ≥50 | ✅ **176 条 0 拒绝**（c08ae57c；报告 163 行） |
 | A2 | 文本栈：cosmic-text（含青简 fork 差异）、swash、rustybuzz、fontdb、harfbuzz、taffy、parley/folio | clone 到 `scratch/src/<slug>` | 各自 `src/` 核心 + `docs/` + README 的数字 | `docs/engines/text-stack.md` | ≥60 | ⬜ |
 | A3 | Rust UI 框架：egui、iced、slint、makepad、dioxus+blitz | clone（slint 大，sparse `internal/`, `crates/core*`） | 各自架构核心：egui `paint/`、iced `wgpu/`、slint 编译器+渲染、makepad `draw/` | `docs/engines/rust-ui-frameworks.md` | ≥60 | ⬜ |
 | A4 | 矢量/2D 光栅：tiny-skia（青简直接依赖）、lyon、femtovg、vello、pathfinder、raqote | clone | tiny-skia：`src/`（路径光栅/毛玻璃/剪辑）；vello：`shaders/` 计算管线 | `docs/engines/2d-rasterizers.md` | ≥60 | ⬜ |

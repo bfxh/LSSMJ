@@ -66,9 +66,9 @@
 
 | 文件 | 改动 | 锚（raw 快照 `cosmic-text-opsz-snapshot/`） |
 | --- | --- | --- |
-| `src/font/mod.rs` | `Font::new(db, id, weight)` → 增参 `optical_size: Option<f32>`；轴设置从"只写 wght"改成 `settings = vec![(wght, …)]`，有 opsz 时再 `push((Tag::new(b"opsz"), opsz))` | `cosmic-text-opsz-snapshot/src/font/mod.rs`（`let mut settings = vec!` 一带） |
-| `src/font/system.rs` | 新增字段 `optical_size: Option<f32>` + `optical_size()` / `set_optical_size()`；**改变即 `self.font_cache.clear()`**；`get_font` 把 opsz 传给 `Font::new` | `cosmic-text-opsz-snapshot/src/font/system.rs` |
-| `src/swash.rs` | 原先只查 `wght` 变体，现改成 `variation_settings(&font, weight, font_system.optical_size())` 后统一 `normalized_coords(settings)` | `cosmic-text-opsz-snapshot/src/swash.rs` |
+| `src/font/mod.rs` | `Font::new(db, id, weight)` → 增参 `optical_size: Option<f32>`（:126）；轴设置从"只写 wght"改成 `let mut settings = vec![(Tag::new(b"wght"), weight.0 as f32)];`（:146），有 opsz 时再 push | `cosmic-text-opsz-snapshot/src/font/mod.rs:146` |
+| `src/font/system.rs` | 新增字段 `optical_size: Option<f32>`（:143）+ `set_optical_size`（:311）；**改值即 `self.font_cache.clear()`（:314）**；`get_font` 把 opsz 传给 `Font::new`（:320 取快照） | `cosmic-text-opsz-snapshot/src/font/system.rs:311`,`:314` |
+| `src/swash.rs` | 原先只查 `wght` 变体，现改成 `variation_settings(&font, cache_key.font_weight, font_system.optical_size())`（:28、:110）后统一 `normalized_coords(settings)`；新增辅助函数 `variation_settings`（:77），`opsz` 存在且给了值才加轴（:92） | `cosmic-text-opsz-snapshot/src/swash.rs:28`,`:92` |
 
 - 消费侧印证：`qingjian-render/src/text/mod.rs:47` 注释说明"光学字号（点）：SF 这类带 opsz 轴的字体…CoreText 对系统字体自动做，这里要显式给"，:49 `set_optical_size(points)`；:48 同时承认"现在是整个画笔一个值（cosmic-text 的字体实例缓存没按它分键）"——与 `font_cache.clear()` 的实现互相印证（**没分键 ⇒ 只能全局换档**）。
 - **风险留档**：该分支 `behind 9`（未 rebase 到最新 main），且改的是 `font_cache` 清空语义——清空会连带丢掉所有字体的 `SharedFaceData` 缓存；若未来按字号频繁切档，这是已知热点。
@@ -189,6 +189,7 @@ qingjian-render ── cosmic-text 0.19(fork@9cf0d65)
 
 - **未实测任何性能**：本任务禁跑 cargo/上游代码，§3 的数字全部是**转载自仓库 README**，其机器/口径已如实标注；青简本机的吞吐未测。
 - **harfrust 自身未读源码**：本报告对"harfrust 沿用 HarfBuzz 复杂文种分派"的判断来自 rustybuzz 的同源分派表 + harfrust 是 HarfBuzz 移植的自述；**未读 harfrust 仓库**（不在任务清单）。
+- **fork 还有两条未读分支**：`qingjian-team/cosmic-text` 除 main/qingjian-opsz 外还有 **`subpixel`** 与 `no-default-font-override`（`gh api .../branches`，2026-10-01）。**subpixel 分支未展开**——它与 W1B-024 的亚像素缺口直接相关，应作为后续单独审计项。
 - **`behind 9` 的 9 个上游提交内容未逐条核**：只确认了数量与方向（`gh api compare`）。
 - **folio → fontique 的"官方改名公告"未拿到**：证据链为"folio 仓库 404 + fontique 自述 Font enumeration and fallback + 现为 parley 工作区成员"，**缺一条官方迁移说明**。
 - **glyphon 的 `ColorMode`/多图集（Mask+Color 分张）细节未读透**：只确认了 Kind 分型与纹理格式选择存在（`text_atlas.rs:108` `num_channels`）。
