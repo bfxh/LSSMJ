@@ -30,5 +30,29 @@
   "local_path": "D:/KF/GN_SDK1e/GN_SDK1e",
   "fetched_at": "2026-10-01",
   "method": "用户提供 zip（闭源 SDK 分发包）"
+ },
+ {
+  "target": "zed-gpui",
+  "url": "https://github.com/zed-industries/zed",
+  "commit": "06afd454ec3f23b7c97ce7527e9be9e1478564a4",
+  "local_path": "D:/KF/LSSMJ/scratch/src/zed",
+  "fetched_at": "2026-10-01",
+  "method": "git clone --depth 1 --filter=blob:none --sparse (crates/gpui,gpui_apple,gpui_macos,gpui_linux,gpui_platform,gpui_macros)"
+ },
+ {
+  "target": "webrender",
+  "url": "https://github.com/servo/webrender",
+  "commit": "e1c924ebad9ffdfe8c8c606aba77eb3f888c396a",
+  "local_path": "D:/KF/LSSMJ/scratch/src/webrender",
+  "fetched_at": "2026-10-01",
+  "method": "git clone --depth 1（注：该仓自述为 mozilla-central gfx/wr 的 downstream mirror；另 clone webrender.wiki 无 commit 锚）"
+ },
+ {
+  "target": "skia",
+  "url": "https://github.com/google/skia",
+  "commit": "af9d144331802b134cd67e21521b10cd1d430315",
+  "local_path": "D:/KF/LSSMJ/scratch/src/skia",
+  "fetched_at": "2026-10-01",
+  "method": "git clone --depth 1 --filter=blob:none --sparse (docs,src/core,src/text,src/gpu)"
  }
 ]
