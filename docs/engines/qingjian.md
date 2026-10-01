@@ -2,7 +2,7 @@
 
 > 范围：全仓（crates/* 除 `crates/qingjian-render` 本体、apps/*、tools/*、docs/*、CI）。
 > 本地路径 `D:/KF/LSSMJ/scratch/src/qingjian`（只读分析，未跑 cargo/未改文件）。
-> 账本：`docs/analysis/ledger/w1a.jsonl`，165 条，全部 `source` 深度（本报告每条主张指到 `W1A-###`）。
+> 账本：`docs/analysis/ledger/w1a.jsonl`，176 条，全部 `source` 深度（本报告每条主张指到 `W1A-###`）。
 > 上游 URL：https://github.com/qingjian-team/qingjian ；许可证 GPL-3.0-or-later（`Cargo.toml:21`）。
 > 版本现状：workspace 库版本 `0.1.1`、各壳 `0.1.5-dev`（`W1A-150`，壳版本各自写死是约定）。
 
@@ -17,7 +17,7 @@
 7. **热路径性能有公开读数与统一口径**：预算「每一键 10 ms」（`W1A-116`），数字口径 = release / 89 万条词库 / 300 万对 bigram / M 系列 Mac（`W1A-117`）；RSS 480→148 MB（`W1A-118`）、查词 20→0.2 ms（`W1A-119`）、纠错过滤 39→0.17 ms（`W1A-120`）、格子缓存 12→1 ms（`W1A-121`）、首键 9–10→4.5–5.6 ms（`W1A-122`）、启动 930→50 ms（`W1A-124`）。
 8. **三个平台是同构的两种进程模型**：macOS 同进程 IMK 单例；Windows/Linux 是独立 Server 进程 + 薄壳（TSF DLL / Fcitx5 插件），协议帧 = 4 字节长度前缀 + JSON（`W1A-069`），协议版本 7（`W1A-067`），Linux 复用同一套（`W1A-148`）。
 9. **隐私与供应链是设计项不是补丁**：TSF 侧查 `GUID_COMPARTMENT_KEYBOARD_DISABLED` 整键放行（`W1A-089`）；密钥文件 0600 原子写（`W1A-032`）；日志必经掩码写入器（`W1A-071/085`）；更新索引用内置 ed25519 公钥 `verify_strict` 验签（`W1A-081/082`）；没配签名密钥的发版门禁直接失败（`W1A-097`）。
-10. **工程实践成体系**：CI 三 job（Linux 全量 / macOS 壳 / Windows 三件套，均 `--locked` + `-D warnings`，`W1A-093`）、actions 钉 commit（`W1A-092`）、每周 cargo audit（`W1A-096`）、pre-commit 拦装饰性注释（`W1A-098`）、发版门禁四条（`W1A-141`）。
+10. **工程实践成体系**：CI 三 job（Linux 全量 / macOS 壳 / Windows 三件套，均 `--locked` + `-D warnings`，`W1A-093`）、actions 钉 commit（`W1A-092`）、每周 cargo audit（`W1A-096`）、pre-commit 拦装饰性注释（`W1A-098`）、发版门禁四条（`W1A-141`）；模型假设「没有基线不立项、准确率赢了但延迟不达标也不立项」（`W1A-170/172`）。
 
 ## 可吸收 / 不可吸收（对「候选窗/自绘渲染器 + 高帧率 UI」这个目标）
 
@@ -68,6 +68,10 @@
 `Engine` 是唯一门面（`engine/mod.rs:82-290`，字段带注释）：`set_input/push/backspace` 喂拼音 → `query()` 出 `Query{segmentations, candidates, timings}` → `annotate(&mut CandidateList)` 补译文 → `commit(&Candidate)` 上屏并喂 Learner（词频、词转移、自动造词）。`Engine::flush_learning()` 定时落盘且不作废格子缓存；`break_chain()` 断学习链（壳停用时）。
 多会话：`EngineSession` 保存可挂起状态，`swap_session` 交换组句/历史/学习链并清查询与异步缓存（`engine/session.rs:57-86`，`W1A-080`）。
 
+### 1.4 验证工具链（apps/cli）
+
+CLI 是 Core 的第一个壳、不依赖任何平台 API（`W1A-166/167`）：查询 / 逐键计时（`--typing`）/ 输入日志回放（`--replay`）/ 整句评测（`--eval-text`，可 `--eval-save` 冻结句子集）/ 常数扫描（`--tune`）/ 冷启动字词实验（`--eval-cold`）。Engine 的组装集中在一处，注释声明「这是 Core 之外唯一知道具体 Translator / Learner 类型的地方」（`W1A-168`）；回放按日志每条的方案切引擎，因此 CLI 自己留一份码表（`W1A-169`）。评测协议见 `docs/plan/model-eval.md`：先写指标与基线再改代码、改完在同一份**冻结**日志上比（`W1A-170/171`），并把「日志里的正确答案多是被测系统自己的输出」这类尺子偏差逐条留档（`W1A-173`），连回放器本身的口径修正（raw 也要走 `take_raw`，否则英文首选低 10 个点）都记在案（`W1A-174`）。
+
 ## 2. 关键机制
 
 ### 2.1 解析与切分（parser）
@@ -80,7 +84,7 @@
 
 ### 2.3 排序模型（ranking）
 
-规则排序键（音节数一致 > 覆盖字母多 > 非末尾简拼少 > 末音节完整 > 同输入串选择次数 > 上下文 log P(词|前词) + 加分 − 罚分 > 原音节/词长短 > 字典序）（`ranking/mod.rs:1-15`）。选择次数加分 = 0.5·ln(1+min(次数,20))（`W1A-027`）；模糊音命中扣 ln2。排序键先算好再排、远超上限时 `select_nth_unstable_by` 预选（`W1A-028`），候选上限 500（`W1A-010`）。
+规则排序键（音节数一致 > 覆盖字母多 > 非末尾简拼少 > 末音节完整 > 同输入串选择次数 > 上下文 log P(词|前词) + 加分 − 罚分 > 原音节/词长短 > 字典序）（`ranking/mod.rs:1-15`，其中「非末尾简拼少」见 `W1A-175`）。选择次数加分 = 0.5·ln(1+min(次数,20))（`W1A-027`）；模糊音命中扣 ln2（`W1A-176`）。排序键先算好再排、远超上限时 `select_nth_unstable_by` 预选（`W1A-028`），候选上限 500（`W1A-010`）。
 
 ### 2.4 整句转换（sentence）与个人模型
 
@@ -151,9 +155,9 @@
 
 ## 5. 未验证项（缺什么证据）
 
-1. **无外部文档锚**：本批 150 条全为仓库内 `source`（含 in-repo 设计/笔记文档的行锚），没有抓取外部规范/论文；架构文档里对微软文档、IMK、Apple CoreText 行为的引用（如 `W1A-089` 的「微软文档明说密码框应禁用文本服务」）**未经我复核原文**。
-2. **未跑构建/测试**：所有性能数字均为上游文档转录，未复算；`cargo test`/clippy 状态未验证（任务禁止跑构建）。JS/HTML 侧的 `apps/windows/settings`（WinUI 3）、`apps/linux/fcitx5`（C++）只看了入口与文档，未读实现。
-3. **未读面**：`crates/qingjian-core/src/engine/{commit,learning,marked,statistics,vocabulary,prediction}` 只读了 crate 文档与设计文档转述；`apps/macos/src/{imk,host,preferences,candidates/view,menubar}` 的实现细节、`tools/{dict-convert,gloss-gen,corpus}` 的算法、`apps/windows/{settings,installer}` 全部未读（预算 120 文件内已用 ≈50）。
+1. **无外部文档锚**：本批 176 条全为仓库内 `source`（含 in-repo 设计/笔记文档的行锚），没有抓取外部规范/论文；架构文档里对微软文档、IMK、Apple CoreText 行为的引用（如 `W1A-089` 的「微软文档明说密码框应禁用文本服务」）**未经我复核原文**（本机 WebFetch 不可用，只对 2 个外链做了试抓，其中一个需登录/JS，遂全部放弃）。
+2. **未跑构建/测试**：所有性能数字均为上游文档转录，未复算；`cargo test`/clippy 状态未验证（任务禁止跑构建）。非 Rust 侧的 `apps/windows/settings`（WinUI 3）、`apps/linux/fcitx5`（C++）只看了入口与文档，未读实现。
+3. **未读面**：`crates/qingjian-core/src/engine/{commit,learning,marked,statistics,vocabulary,prediction}` 只读了 crate 文档与设计文档转述；`apps/macos/src/{imk,host,preferences,candidates/view,menubar}` 的实现细节、`tools/{dict-convert,gloss-gen,corpus}` 的算法、`apps/windows/{settings,installer}`、`apps/linux/fcitx5`（C++）全部未读（读文件预算 ≤120，已用约 60）。
 4. **数字的适用面**：10 ms/键、480→148 MB 等全部来自「89 万条开发词库 + M 系列 Mac + release」这一单一配置（`W1A-117` 自陈）；换词库规模（现产品 8.7 万条，`W1A-153`）或换机器后**未重测**，不可外推。
 5. **渲染器主体（A0）不在本报告**：`crates/qingjian-render/**` 只引用接口，未做行级分析；主题 TOML 的字段集与像素级对齐数字见 A0。
 6. **时间点**：以上均为 commit `c08ae57` 的快照；`docs/notes/performance.md` 里部分数字标注 2026-09-05/09-08，与仓库当前代码（如 P2C 已取代字级模型做重排，`W1A-145`）之间存在**文档滞后**，本报告按「文档写下的当时口径」引用。
