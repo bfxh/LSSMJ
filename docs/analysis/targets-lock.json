@@ -1,0 +1,34 @@
+[
+ {
+  "target": "qingjian",
+  "url": "https://github.com/qingjian-team/qingjian",
+  "commit": "c08ae57cb88b6a4a46f4a5e9c1d6d11c5e69222e",
+  "local_path": "D:/KF/LSSMJ/scratch/src/qingjian",
+  "fetched_at": "2026-10-01",
+  "method": "git clone --depth 1"
+ },
+ {
+  "target": "cosmic-text-qj",
+  "url": "https://github.com/qingjian-team/cosmic-text",
+  "commit": "daae9c75d52322f8fb3af6168d76561540914e1f",
+  "local_path": "D:/KF/LSSMJ/scratch/src/cosmic-text-qj",
+  "fetched_at": "2026-10-01",
+  "method": "git clone --depth 1"
+ },
+ {
+  "target": "mineradio",
+  "url": "https://github.com/XxHuberrr/Mineradio",
+  "commit": null,
+  "local_path": "D:/KF/LSSMJ/scratch/src/Mineradio-paused-2.2.0",
+  "fetched_at": "2026-10-01",
+  "method": "tar.gz v2.2.0 快照（用户提供）"
+ },
+ {
+  "target": "gn-sdk",
+  "url": null,
+  "commit": null,
+  "local_path": "D:/KF/GN_SDK1e/GN_SDK1e",
+  "fetched_at": "2026-10-01",
+  "method": "用户提供 zip（闭源 SDK 分发包）"
+ }
+]
