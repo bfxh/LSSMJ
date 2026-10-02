@@ -1,19 +1,19 @@
 # 账本统计（机器生成）
 
-- 生成日期：2026-10-02
+- 生成日期：2026-10-03
 - 复算命令：`python tools/ledger.py report --out docs/analysis/ledger-stats.md`
-- 账本文件：35 个 jsonl
+- 账本文件：42 个 jsonl
 
-**总条目（通过校验）：3000**；被拒条目：0；覆盖目标数：274；带 lesson 字段：2986
+**总条目（通过校验）：3432**；被拒条目：0；覆盖目标数：386；带 lesson 字段：3418
 
 ## 深度分布
 
 | depth | 条数 |
 | --- | --- |
-| source | 1965 |
-| doc | 796 |
-| paper | 227 |
-| web | 12 |
+| source | 1999 |
+| doc | 1033 |
+| paper | 384 |
+| web | 16 |
 
 ## 波次文件分布
 
@@ -54,6 +54,13 @@
 | w6e.jsonl | 18 |
 | w6f.jsonl | 13 |
 | w6g.jsonl | 12 |
+| w6h.jsonl | 13 |
+| w6j.jsonl | 8 |
+| w6k.jsonl | 6 |
+| w7a.jsonl | 161 |
+| w7b.jsonl | 72 |
+| w7c.jsonl | 85 |
+| w7d.jsonl | 87 |
 
 ## 目标 Top 30
 
@@ -83,9 +90,9 @@
 | imgui | 29 |
 | qingjian-gates | 29 |
 | unreal-slate-umg | 28 |
+| taa-playdead | 27 |
 | bshsq | 26 |
 | mineradio | 26 |
 | slint | 24 |
 | apple | 24 |
-| nanovg | 23 |
-| qingjian-design | 23 |
+| sky-atmosphere | 24 |

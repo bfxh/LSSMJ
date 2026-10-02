@@ -53,7 +53,9 @@
 | `reports/12-engineering-method-crossref.md` | 工程方法学三仓对照（18 模式 + P1–P12 可移植清单） |
 | `reports/13-asset-animation-pipeline.md` | 资产/动画/着色器管线（glTF/ACL/DRACO/KTX2/WGSL） |
 | `reports/14-graphics-apis.md` | 图形 API（D3D11/12+Work Graphs、Vulkan、GL、Metal、WebGPU/wgpu；选型结论） |
-| `reports/15-video-pipeline.md` | 视频管线（DXVA/NVDEC/Chromium/GN cVIDEO 契约；边界三层） |
+| `reports/15-video-pipeline.md` | 视频管线（DXVA/NVDEC/Chromium/GN cVIDEO 契约；边界三层 + 平台解码 API 附表） |
+| `reports/16-gpu-tooling.md` | GPU 测量与工具链（抓帧≠计时/HAGS 精度/时间戳链/呈现模式；判据不押停更工具） |
+| `reports/17-font-engineering.md` | 字形工程（OpenType 表/Variations/彩色字体四格式/回退算法；对青简文本栈 10 条可吸收） |
 | `platforms/game-ui-middleware.md` | 游戏/应用商业 UI 中间件谱系（Noesis/Coherent/Ultralight/Scaleform 遗产/CEF 路线；许可红线） |
 | `platforms/compositors-and-system-ui.md` | 平台合成器与闭源系统 UI（DWM/UI.Composition/SurfaceFlinger/render server/SwiftUI/WinUI3） |
 | `engines/cpp-2d-rasterizers.md` | C++ 光栅器第二组（Blend2D/ThorVG/NanoVG/Cairo；ThorVG 脏区范式） |

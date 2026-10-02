@@ -141,9 +141,9 @@
 | G5b | RTG 书目与降噪谱系（登记缺口收尾） | `docs/papers/rtg-and-denoisers.md` | `w6j` **8** | ✅ 主代理 |
 | G5c | 平台解码 API（登记缺口收尾；VideoToolbox JSON 通道） | `docs/reports/15` 附节 | `w6k` **6** | ✅ 主代理 |
 | G5d | GPU 测量与工具链 | `docs/reports/16-gpu-tooling.md`（142 行） | `w7b` **72** | ✅ 代理 A2 |
-| G5e | 后处理与抗锯齿（TAA/FXAA/SMAA/bloom/DOF/MB） | `docs/papers/post-processing-and-aa.md` | `w7a` | ⏳ 代理 A1 |
-| G5f | 场景内容系统（天空大气/水体/粒子/地形） | `docs/papers/scene-content-systems.md` | `w7c` | ⏳ 代理 A3 |
-| G5g | 字形工程深读（OpenType/Variations/彩色字体/回退算法） | `docs/reports/17-font-engineering.md` | `w7d` | ⏳ 代理 A4 |
+| G5e | 后处理与抗锯齿（TAA/FXAA/SMAA/bloom/DOF/MB） | `docs/papers/post-processing-and-aa.md`（+10 篇短分析） | `w7a` **160** | ✅ 代理 A1 |
+| G5f | 场景内容系统（天空大气/水体/粒子/地形） | `docs/papers/scene-content-systems.md`（199 行） | `w7c` **85** | ✅ 代理 A3 |
+| G5g | 字形工程深读（OpenType/Variations/彩色字体/回退算法） | `docs/reports/17-font-engineering.md`（289 行） | `w7d` **87** | ✅ 代理 A4 |
 
 > 第五轮方法学增量：**PDF 抽取通道**（pypdf，Disney 59KB 全文本）与 **Apple 文档 JSON 通道**
 > （`developer.apple.com/tutorials/data/documentation/<fw>.json`）已固化，写进对应报告。
