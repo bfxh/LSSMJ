@@ -1,14 +1,13 @@
 # 后处理链与抗锯齿（第五轮 W7A；2026-10-02）
 
-> 范围：TAA 谱系与"为什么糊"、空间 AA（FXAA/SMAA/MLAA）、MSAA 的现代地位、Bloom/Glare、
-> DOF/运动模糊、后处理管线架构（UE/Unity/Godot）、compute vs 全屏 pass。
+> 范围：TAA 谱系与"为什么糊"、空间 AA（FXAA/SMAA/MLAA）、MSAA 的现代地位、Bloom/Glare、DOF/运动模糊、
+> 后处理管线架构（UE/Unity/Godot）、compute vs 全屏 pass。
 > 账本：`../analysis/ledger/w7a.jsonl`（**161 条**：paper 99 / doc 52 / source 6 / web 4；verify rejected=0）。
-> 快照：`D:/KF/LSSMJ/scratch/w7a/raw/`（抓取清单与转换见各短分析）。上游 commit：
-> playdeadgames/temporal @ `4795aa0007d464371abe60b7b28a1cf893a4e349`（本波唯一 clone 级上游；其余为文档/论文；
-> commit 行=账本 W7A-161，README 按该 commit 冻结抓取）。
-> 短分析（10 篇）：`taa-playdead-inside.md` / `taa-karis-ue4-2014.md` / `taa-salvi-variance-clipping-2016.md` /
-> `taa-survey-2020.md` / `fxaa-lottes.md` / `smaa-jimenez-2012.md` / `mlaa-reshetov.md` /
-> `codaw-postfx-2014.md` / `killzone-temporal-aa-2014.md` / `engine-post-chains.md`。
+> 上游 commit：playdeadgames/temporal @ `4795aa0007d464371abe60b7b28a1cf893a4e349`（commit 行=W7A-161；
+> 快照 `D:/KF/LSSMJ/scratch/w7a/raw/`，转换规范见各短分析）。
+> 短分析（10 篇，均在本目录）：`taa-playdead-inside` / `taa-karis-ue4-2014` / `taa-salvi-variance-clipping-2016` /
+> `taa-survey-2020` / `fxaa-lottes` / `smaa-jimenez-2012` / `mlaa-reshetov` / `codaw-postfx-2014` /
+> `killzone-temporal-aa-2014` / `engine-post-chains`。
 
 ## TL;DR（10 条，每条带账本锚）
 
@@ -42,30 +41,20 @@
 
 ## 可吸收 / 不可吸收（对"候选窗/自绘渲染器 + 高帧率 UI"这个目标）
 
-### 吸收清单（含"有界吸收"——后者注明条件）
+**吸收**（含"有界吸收"，括号注明条件）：
 
-| 项 | 判定 | 锚 |
-| --- | --- | --- |
-| TAA 反馈回路 + EMA（10/90、0.88–0.97）| 吸收（场景档默认 AA） | W7A-001/044/017 |
-| Halton(2,3) jitter（8/16/32 档） | 吸收 | W7A-014/020/031 |
-| 速度缓冲 + 3x3 膨胀 + tile max | 吸收（TAA 前置） | W7A-004/005/022/035 |
-| 邻域裁剪三代（min/max→圆化 clip→VC） | 吸收（按档位给） | W7A-036..038/046..048 |
-| 反 flicker/拖尾/糊的验收用例 | 吸收（C11–C13） | W7A-050/055/054/011 |
-| FXAA（单 pass、UI 前、tonemap 后） | 吸收（最低档） | W7A-069/070/071/078 |
-| SMAA 1x/T2x | 有界吸收（更锐档，需许可核对） | W7A-081/082/132 |
-| Bloom 多尺度 mip + Karis average | 吸收（可选、默认弱） | W7A-123/108/112/139 |
-| TAAU（TAA 兼任上采样） | 有界吸收（若做动态分辨率） | W7A-128/129 |
-| "后处理默认开关"的选择 | 显式决策：UI 档关；场景档默认弱开可关 | W7A-117（UE 默认有）/W7A-146（URP 默认无） |
+- TAA 反馈回路+EMA（10/90、0.88–0.97）｜W7A-001/044/017；Halton(2,3) jitter（8/16/32 档）｜W7A-014/020/031；
+  速度缓冲+3x3 膨胀+tile max（TAA 前置）｜W7A-004/005/022/035；邻域裁剪三代 min/max→圆化 clip→VC（按档位）｜W7A-036..038/046..048；
+  反 flicker/拖尾/糊的验收用例（C11–C13）｜W7A-050/055/054/011。
+- FXAA（单 pass、UI 之前、tonemap 之后；最低档）｜W7A-069/070/071/078；SMAA 1x/T2x（有界：更锐档）｜W7A-081/082/132；
+  Bloom 多尺度 mip+Karis average（可选、默认弱）｜W7A-123/108/112/139；TAAU（有界：若做动态分辨率）｜W7A-128/129；
+  后处理默认开关=显式决策（UI 档关；场景档默认弱开可关）｜W7A-117/146。
 
-### 不吸收清单（含理由）
+**不吸收**（含理由）：
 
-| 项 | 判定 | 锚 |
-| --- | --- | --- |
-| MSAA | 不吸收为默认（保留为无 TAA 时的几何档） | W7A-133/135 |
-| DOF 半分辨率两层 | 不吸收（本轮最小集外） | W7A-106/113/105 |
-| 运动模糊（McGuire 重建滤波） | 不吸收（最小集外） | W7A-114/115 |
-| 卷积 bloom | 不吸收 | W7A-124 |
-| compute 后处理 | 不默认（GL 档无、移动驱动差） | W7A-157/158 |
+- MSAA 作默认（保留为无 TAA 时的几何档）｜W7A-133/135；DOF 半分辨率两层（本轮最小集外）｜W7A-106/113/105；
+  运动模糊（McGuire 重建滤波，最小集外）｜W7A-114/115；卷积 bloom（影视/高端）｜W7A-124；
+  compute 后处理作默认（GL 档无、移动驱动差）｜W7A-157/158。
 
 ## 来源地图（24 个来源，快照在 `scratch/w7a/raw/`）
 
