@@ -36,6 +36,15 @@
 > 设计侧回写计划：`lssmj-design/` 将增 **"场景档"补充设计**（`02-scene-tier.md`：纹理/光照/RT/可见性/资产在 P5+ 的取舍与判据），
 > 让"整个渲染引擎"不只 UI 档——本轮结果落盘后由主代理写。
 
+## 三·五、第五轮（缺口收尾 + 四个新扫面，2026-10-02）
+
+- **登记缺口收尾**：各向异性+IBL+PBRT 深挖（`w6h` 13）· RTG/降噪书目（`w6j` 8）· 平台视频 API（`w6k` 6）——全部 ✅。
+- **四个新扫面**：GPU 测量工具链（`w7b` 72 ✅）· 后处理与 AA（`w7a` ⏳）· 场景内容系统（`w7c` ⏳）· 字形工程（`w7d` ⏳）。
+- **新固化方法**：PDF 抽取（pypdf）与 Apple 文档 JSON 通道（两条抓取路径写进报告）。
+- **仍然开放的缺口（自愿续跑，编号段空闲）**：Karis/Frostbite/Hoffman course notes 全文（PDF 截断，`w7e`）；
+  RTG II 全文与 ReSTIR PDF（`w7e`）；MediaCodec/FFmpeg 文档正文（`w7f`）；Noesis 官网（403）；
+  场景档 P5 前的必读清单见 `papers/rtg-and-denoisers.md` 末节。
+
 ## 四、判过不做（含理由，一行一条）
 
 | 项 | 理由 |
