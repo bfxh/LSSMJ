@@ -23,7 +23,20 @@
 | N4 | **平台合成器**：DWM/UI.Composition、SurfaceFlinger、WindowServer、SwiftUI、WinUI3——此前 §7 只引到 DComp 一句，合成侧证据链不全 | `../platforms/compositors-and-system-ui.md` | `w3g` |
 | N5 | **工程方法学（targets C6）**：qingjian-gates / unified-rx / BSHSQ 的门禁-棘轮-测量纪律 vs 本仓账本门，做一次三仓对照与可移植清单 | `../reports/12-engineering-method-crossref.md` | `w3h` |
 
-## 三、判过不做（含理由，一行一条）
+## 三、第四轮补缺（纹理/光追/光照/资产与动画/可见性——用户点名，正在跑）
+
+| # | 缺口（为什么算缺） | 轨 | 账本 |
+| --- | --- | --- | --- |
+| R1 | **纹理系统**：压缩（BCn/ASTC/ETC/Basis）、虚拟纹理（SVT/megatexture/tiled resources）、mipmap/各向异性过滤、流送与预算、bindless——前三轮只在"图集"层面擦边 | `../papers/texture-systems.md` | `w6a` |
+| R2 | **实时光追与降噪**：Ray Tracing Gems、ReSTIR、SVGF/NRD、DXR/KHR 规范、混合渲染；并核验 GN SDK"光追全局光照"声称对应什么技术面 | `../papers/raytracing.md` | `w6b` |
+| R3 | **光照、材质与色彩管理**：PBR 谱系（Disney/GGX/Karis）、IBL/SH、GI（Lumen/DDGI/LPV/烘焙）、阴影（CSM/VSM）、tonemap（ACES）、色彩管理 | `../papers/lighting-and-materials.md` | `w6c` |
+| R4 | **资产/动画/着色器管线**：glTF 2.0、USD/FBX 现状、几何压缩（Draco/meshopt）、动画压缩（ACL）、状态机、WGSL/SPIR-V/naga、管线缓存 | `../reports/13-asset-animation-pipeline.md` | `w6d` |
+| R5 | **可见性、剔除与场景组织**：视锥/遮挡剔除（硬件查询/CHC/Umbra）、BVH/松散八叉树、GPU 驱动剔除、HLOD、可见性缓冲 | `../papers/visibility-and-culling.md` | `w6e` |
+
+> 设计侧回写计划：`lssmj-design/` 将增 **"场景档"补充设计**（`02-scene-tier.md`：纹理/光照/RT/可见性/资产在 P5+ 的取舍与判据），
+> 让"整个渲染引擎"不只 UI 档——本轮结果落盘后由主代理写。
+
+## 四、判过不做（含理由，一行一条）
 
 | 项 | 理由 |
 | --- | --- |

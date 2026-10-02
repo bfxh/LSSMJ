@@ -1,18 +1,18 @@
 # 账本统计（机器生成）
 
-- 生成日期：2026-10-01
+- 生成日期：2026-10-02
 - 复算命令：`python tools/ledger.py report --out docs/analysis/ledger-stats.md`
-- 账本文件：28 个 jsonl
+- 账本文件：35 个 jsonl
 
-**总条目（通过校验）：2892**；被拒条目：0；覆盖目标数：227；带 lesson 字段：2878
+**总条目（通过校验）：3000**；被拒条目：0；覆盖目标数：274；带 lesson 字段：2986
 
 ## 深度分布
 
 | depth | 条数 |
 | --- | --- |
-| source | 1863 |
-| doc | 793 |
-| paper | 224 |
+| source | 1965 |
+| doc | 796 |
+| paper | 227 |
 | web | 12 |
 
 ## 波次文件分布
@@ -47,6 +47,13 @@
 | w4e.jsonl | 122 |
 | w4f.jsonl | 86 |
 | w5a.jsonl | 125 |
+| w6a.jsonl | 13 |
+| w6b.jsonl | 14 |
+| w6c.jsonl | 21 |
+| w6d.jsonl | 17 |
+| w6e.jsonl | 18 |
+| w6f.jsonl | 13 |
+| w6g.jsonl | 12 |
 
 ## 目标 Top 30
 
@@ -62,7 +69,7 @@
 | gtk4-gsk | 82 |
 | tiny-skia | 68 |
 | impeller | 67 |
-| gn-sdk | 62 |
+| gn-sdk | 67 |
 | flutter | 61 |
 | webrender | 59 |
 | blend2d | 55 |
