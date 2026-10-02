@@ -40,16 +40,20 @@
 | --- | --- |
 | `renderer-gn/**` | GN SDK（闭源）渲染/UI 逆向文档（含复算与未验证清单） |
 | `targets/mineradio-electron.md` | Mineradio（Electron 42）案例解剖与成本账 |
-| `lssmj-design/README.md` | ★ **自研设计文档**：判据 C1–C6、架构、渲染核心、文本清单、预算、路线图 |
+| `lssmj-design/README.md` | ★ **自研设计文档（第一层：显示面 UI）**：判据 C1–C6、架构、渲染核心、文本清单、预算、路线图 |
+| `lssmj-design/02-scene-tier.md` | ★ **第二层设计（场景/3D 档）**：几何/纹理/光/可见性/资产/API/视频的取舍与判据 C7–C10 |
 | `reports/00-overview.md` | 总览与口径 |
 | `reports/01-engine-landscape.md` | 全景矩阵（含"未完成 → 二轮补齐"与**口径修正**：taffy/Tessera/整形栈/亚像素） |
 | `reports/05-web-js-wrapper-costs.md` | Web 栈与 JS 包装成本（JFB 实抄数字、Tauri vs Electron） |
 | `reports/06-cjk-text-and-ime.md` | 中文/东亚排版与输入法 UI |
 | `reports/09-performance-methodology.md` | 性能方法论（先打点再改/单点≠稳态/交错 A/B/金丝雀/棘轮） |
 | `reports/10-decisions-adr.md` | 决策记录（学谁/弃谁/否证条件）+ 二轮补充 |
-| `papers/**` | 论文/长文述评（text-rendering / gpu-rendering-techniques / layout-and-incremental / ui-systems-and-latency + 30 余篇深读） |
-| `reports/11-papers-bibliography.md` | 论文/来源目录学（机器生成，224 条 paper 目标索引） |
+| `papers/**` | 论文/长文述评（text-rendering / gpu-rendering-techniques / layout-and-incremental / ui-systems-and-latency / texture-systems / raytracing / lighting-and-materials / visibility-and-culling + 30 余篇深读） |
+| `reports/11-papers-bibliography.md` | 论文/来源目录学（机器生成） |
 | `reports/12-engineering-method-crossref.md` | 工程方法学三仓对照（18 模式 + P1–P12 可移植清单） |
+| `reports/13-asset-animation-pipeline.md` | 资产/动画/着色器管线（glTF/ACL/DRACO/KTX2/WGSL） |
+| `reports/14-graphics-apis.md` | 图形 API（D3D11/12+Work Graphs、Vulkan、GL、Metal、WebGPU/wgpu；选型结论） |
+| `reports/15-video-pipeline.md` | 视频管线（DXVA/NVDEC/Chromium/GN cVIDEO 契约；边界三层） |
 | `platforms/game-ui-middleware.md` | 游戏/应用商业 UI 中间件谱系（Noesis/Coherent/Ultralight/Scaleform 遗产/CEF 路线；许可红线） |
 | `platforms/compositors-and-system-ui.md` | 平台合成器与闭源系统 UI（DWM/UI.Composition/SurfaceFlinger/render server/SwiftUI/WinUI3） |
 | `engines/cpp-2d-rasterizers.md` | C++ 光栅器第二组（Blend2D/ThorVG/NanoVG/Cairo；ThorVG 脏区范式） |

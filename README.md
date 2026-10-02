@@ -36,9 +36,9 @@ docs/
   reports/                 综合报告（全景 / 文本 / 布局与响应式 / GPU 技术 / 性能方法论 / ADR）
   renderer-qingjian/       ★ 交付主体：青简自绘渲染器文档（11 篇）
   renderer-gn/             GN SDK（闭源）渲染/UI 逆向文档 + 复算
-  lssmj-design/            ★ 自研设计文档（选优后设计：判据/架构/预算/路线图）
+  lssmj-design/            ★ 自研设计文档（两层：README 显示面 UI 档 + 02-scene-tier 场景档）
   targets/                 案例解剖（mineradio-electron）
-  reports/                 综合报告（00 总览 / 01 全景 / 09 方法论 / 10 ADR）
+  reports/                 综合报告（00 总览 / 01 全景 / 05 Web 成本 / 06 CJK / 09 方法论 / 10 ADR / 11 目录学 / 12 工程方法 / 13 资产 / 14 图形 API / 15 视频）
 tools/
   ledger.py                账本校验 / 统计 / 报告（零依赖，含 --selftest 金丝雀）
 scratch/                   浅克隆与工作区（不进 git）

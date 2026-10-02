@@ -113,3 +113,20 @@
 | — | 论文/来源目录学（机器生成） | `docs/reports/11-papers-bibliography.md` | — | ✅ |
 
 > "判过不做"的清单与理由见 `gap-analysis.md` §三（反编译/主机平台/1000 篇论文式扫描/02–08 合成报告等）。
+
+---
+
+## 第四轮（用户点名：纹理/光追/光照 + 图形 API + 视频）
+
+| # | 范围 | 产出 | 账本 | 状态 |
+| --- | --- | --- | --- | --- |
+| R1 | 纹理：压缩（BC/ASTC/Basis）/虚拟纹理（SVT/Tiled）/mipmap/流送 | `docs/papers/texture-systems.md` | `w6a` **13** | ✅ |
+| R2 | 光追与降噪：RT Core/DXR/Vulkan RT/RTG I-II/ReSTIR/SVGF + GN"光追"声称核验 | `docs/papers/raytracing.md` | `w6b` **14** | ✅ |
+| R3 | 光照/材质/色彩：PBR/SH-IBL/GI(Lumen/Enlighten/Lightmass/探针)/阴影(CSM/PCSS/SAVSM)/ACES/HDR | `docs/papers/lighting-and-materials.md` | `w6c` **21** | ✅ |
+| R4 | 资产/动画/着色器：glTF 2.0+扩展/Draco/meshopt/ACL/KTX2/WGSL | `docs/reports/13-asset-animation-pipeline.md` | `w6d` **17** | ✅ |
+| R5 | 可见性/剔除：CHC/遮挡查询/软遮挡/HLOD/World Partition/可见性缓冲/ExecuteIndirect | `docs/papers/visibility-and-culling.md` | `w6e` **18** | ✅ |
+| R6 | 图形 API（用户点名）：D3D11/12+Work Graphs/Vulkan 资源与描述符/GL MDI/Metal/WebGPU+wgpu | `docs/reports/14-graphics-apis.md` | `w6f` **13** | ✅ |
+| R7 | 视频（用户点名）：DXVA/NVDEC/Chromium 管线/GN cVIDEO 契约 | `docs/reports/15-video-pipeline.md` | `w6g` **12** | ✅ |
+| — | 场景档设计（两层设计文档的第二层） | `docs/lssmj-design/02-scene-tier.md` | — | ✅ |
+
+> 第四轮由主代理自干（子代理二次余额中断；三个主题的预抓缓存被复用入账——证据边界见各报告"未验证"节）。
