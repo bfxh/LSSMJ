@@ -27,8 +27,19 @@
 [渲染层]   纹理/位图作为普通素材参与合成（UI 或场景，两侧都用同一"素材"概念）
 ```
 
+## 附：平台解码 API（第五轮补，2026-10-02）
+
+| 平台 | API | 状态 | 锚 |
+| --- | --- | --- | --- |
+| Windows | DXVA2 / D3D11VA | DXVA2 ✅ 一手；**D3D11VA 页 404**（medfound 多路径与 GitHub 镜像列举均未定位，W6K-005） | W6G-001 |
+| NVIDIA | NVDEC | ✅ 一手（片上解码器、与 CUDA 核分离） | W6G-002/003 |
+| Apple | VideoToolbox | ✅ 一手（**Apple 文档 JSON 通道**：压缩/解压服务句 + `VTCreateCGImageFromCVPixelBuffer` 符号） | W6K-001/002 |
+| Linux | libva / VA-API | ✅ 一手（"open-source library and API specification"） | W6K-003/004 |
+| Android | MediaCodec | ❌ 未达（域不可达） | — |
+
+**通道发现**：Apple 文档抓不到时，可走 `developer.apple.com/tutorials/data/documentation/<framework>.json`（本批由此拿到一手定义句）。
+
 ## 未验证 / 缺口
 
-- D3D11VA 页（404）、HDR 视频页（404）、VideoToolbox 正文（脚本页）、VA-API（418）、MediaCodec（未取）——**平台侧一手材料不全**，编号段 `w6k` 空闲可续。
-- FFmpeg 文档正文未达（W6G-010）；未做任何解码实测。
-- 未读 Mineradio 的 `public/**`（快照不含）——它在渲染侧如何播视频仍未核（w4b 已登记同一缺口）。
+- D3D11VA/HDR 视频（MS 404，W6K-005）、MediaCodec（域不可达）、FFmpeg 文档正文（W6G-010）——**平台侧仍有缺口**（编号段 `w7f` 备）。
+- 未做任何解码实测；未读 Mineradio 的 `public/**`（快照不含）——它在渲染侧如何播视频仍未核（w4b 已登记同一缺口）。
