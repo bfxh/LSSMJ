@@ -6,6 +6,12 @@
 
 | 文件 | 内容 | 状态 |
 | --- | --- | --- |
+| `lssmj-design/00-master-plan.md` | ★ **总体设计文档（Master Plan）**：双终局目标（真实画质 / 三渲二）、判据全景 C1–C13、架构总览、风险表 | ✅ v1 |
+| `lssmj-design/03-task-backlog.md` | ★ **任务列表**：五轨任务表 + 里程碑 M1–M4 | ✅ |
+| `lssmj-design/04-ci-and-gates.md` | ★ **CI 流程与门禁**：本仓 A0–A5 + 引擎仓目标态 + YAML | ✅ |
+
+| 文件 | 内容 | 状态 |
+| --- | --- | --- |
 | `renderer-qingjian/README.md` | 青简自绘渲染器文档：导读与阅读顺序 | ✅ |
 | `renderer-qingjian/01-overview.md` | 定位与总体数据流（为什么自绘 / 一帧怎么走） | ✅ |
 | `renderer-qingjian/02-architecture.md` | 模块地图（38 文件逐个职责 + 依赖方向） | ✅ |
