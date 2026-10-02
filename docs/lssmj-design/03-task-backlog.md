@@ -39,20 +39,21 @@
 | T-PH-14 | 场景内容：天空（Hillaire 优先）/froxel 透视/水（Gerstner·FFT）/粒子（离屏分数尺寸）/地形（clipmap+morph） | T-PH-11 | 各子系统独立对拍 | `w7c` W7C-001/010/019/028/031/045/058 |
 | T-PH-15 | 虚拟几何（Nanite 式簇树）——最后立项，不许跳步 | T-PH-13 | 成本随屏幕分辨率 | `papers/gpu-rendering-techniques.md` |
 
-## 轨 3 · 三渲二（NPR，第二终局目标；判据 C11–C13 草案）
+## 轨 3 · 三渲二（NPR，第二终局目标；判据 C11–C13，锚已回填 `w8a`）
 
-| ID | 任务 | 依赖 | 验收判据（草案） | 依据 |
+| ID | 任务 | 依赖 | 验收判据 | 依据 |
 | --- | --- | --- | --- | --- |
-| T-NPR-01 | 风格化 shading 基线：ramp/阶梯阴影 + 双色光照（与 PBR 共几何/可见性/纹理层） | T-PH-01..04 | C13（两管线同场景几何/轮廓不漂移） | 待 `papers/npr-toon-rendering.md`（w8a）回填 |
-| T-NPR-02 | 描边系统：inverted hull + 后处理边缘（normal/depth）双路 + 线宽控制 | T-NPR-01 | C11（线宽分辨率无关对拍） | 同上 |
-| T-NPR-03 | 法线编辑管线（Xrd 式：资产期改法线换 2D 观感） | T-NPR-01 | 资产管线回归（CI 内样例模型） | 同上 |
-| T-NPR-04 | 面部 SDF 阴影（方向驱动的脸影贴图求解） | T-NPR-02 | C12（面部阴影方向对拍） | 同上 |
-| T-NPR-05 | 头发 NPR（各向异性谱系：Kajiya-Kay→Marschner 选集） | T-NPR-01 | 高光带位置对拍 | 同上 |
-| T-NPR-06 | matcap/替换贴图档 + ramp 资产热更新 | T-NPR-01 | 资产热更回归 | 同上 |
-| T-NPR-07 | 风格化 PBR 混合（Rime/BotW 式：PBR 底 + 艺术化压缩） | T-NPR-01 | 双档切换对拍 | 同上 |
-| T-NPR-08 | 2D-in-3D：billboard/纸片工作流 + 帧驱动动画记录 | T-NPR-02 | 与 2D 参考并排 | 同上 |
-| T-NPR-09 | NPR 后处理：描边/速度线/网点（halftone）可选档 | T-NPR-02 | 关档逐位=基础档 | 同上 |
-| T-NPR-10 | 风格一致性门：同资产在 NPR/PBR 双管线的回归金样 | T-NPR-01..07 | 金样冻结哈希 | 待定（学 BSHSQ 冻结哈希惯例） |
+| T-NPR-01 | 风格化 shading 基线：ramp/阶梯阴影 + 双色光照（与 PBR 共几何/可见性/纹理层） | T-PH-01..04 | C13（两管线同场景几何/轮廓不漂移） | `w8a` W8A-063/064（阶梯化 BSDF）+ W8A-040/044（UTS3 共核样本） |
+| T-NPR-02 | 描边系统：inverted hull + 后处理边缘双路 + 线宽控制 | T-NPR-01 | C11（线宽分辨率无关对拍） | `w8a` W8A-006；`papers/outline-techniques.md` |
+| T-NPR-03 | 法线编辑管线（Xrd 式：弃法线贴图+手工法线+逐角色专光） | T-NPR-01 | 资产管线回归（CI 内样例模型） | `w8a` W8A-002/004/010 |
+| T-NPR-04 | 面部 SDF 阴影（`step(LdotF, SDF 掩码)`+左右双掩码+逐帧 LdotF） | T-NPR-02 | C12（面部阴影方向对拍） | `w8a` W8A-053/058/059 |
+| T-NPR-05 | 头发 NPR（Kajiya-Kay→Marschner 谱系；工程双层高光） | T-NPR-01 | 高光带位置对拍 | `w8a` W8A-021/031 |
+| T-NPR-06 | matcap/替换贴图档 + ramp 资产热更新（lightmap.a 五档分区式） | T-NPR-01 | 资产热更回归 | `w8a` W8A-054/055 |
+| T-NPR-07 | 风格化 PBR 混合（PBR 底 + 艺术化压缩；沿用共享核） | T-NPR-01 | 双档切换对拍 | `papers/stylized-pbr-shared-core.md`（w8a） |
+| T-NPR-08 | 2D-in-3D：billboard/纸片工作流 + 帧驱动动画记录 | T-NPR-02 | 与 2D 参考并排 | `papers/2d-in-3d-workflow.md`（w8a） |
+| T-NPR-09 | NPR 后处理：描边/速度线/网点可选档 | T-NPR-02 | 关档逐位=基础档 | `w8a`（outline/风格化后处理条目） |
+| T-NPR-10 | 风格一致性门：同资产在 NPR/PBR 双管线回归金样 | T-NPR-01..07 | 金样冻结哈希 | 冻结哈希惯例（BSHSQ 先例） |
+| T-NPR-11 | **光照双模否证实验**：逐角色专光 × 全局时变光/GI 同开的小场景实测 | T-NPR-01、T-PH-07 | G3 实验判据（`w8a` 报告 §5） | 最强否证风险（`w8a` 共核结论） |
 
 ## 轨 4 · 工程与 CI（`04-ci-and-gates.md` 的落地）
 

@@ -42,8 +42,10 @@
 - **四个新扫面**：GPU 测量工具链（`w7b` **72** ✅）· 后处理与 AA（`w7a` **160** ✅）· 场景内容系统（`w7c` **85** ✅）· 字形工程（`w7d` **87** ✅）。
 - **第五轮合计 +431 条**（账本总 3431）；决策回写在 ADR J1–J9。
 - **新固化方法**：PDF 抽取（pypdf）与 Apple 文档 JSON 通道（两条抓取路径写进报告）。
+- **第六轮（G-B 三渲二/NPR）**：`w8a` **109** ✅（共核结论与 C11–C13 锚已回填 Master Plan §3；T-NPR-11 光照双模实验立项）。
 - **仍然开放的缺口（自愿续跑，编号段空闲）**：Karis/Frostbite/Hoffman course notes 全文（PDF 截断，`w7e`）；
   RTG II 全文与 ReSTIR PDF（`w7e`）；MediaCodec/FFmpeg 文档正文（`w7f`）；Noesis 官网（403）；
+  米哈游角色 shader 官方一手（仅社区还原，w8a 已标注）；Marschner/X-Toon 正文 PDF（仅摘要）；
   场景档 P5 前的必读清单见 `papers/rtg-and-denoisers.md` 末节。
 
 ## 四、判过不做（含理由，一行一条）

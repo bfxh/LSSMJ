@@ -147,3 +147,16 @@
 
 > 第五轮方法学增量：**PDF 抽取通道**（pypdf，Disney 59KB 全文本）与 **Apple 文档 JSON 通道**
 > （`developer.apple.com/tutorials/data/documentation/<fw>.json`）已固化，写进对应报告。
+
+---
+
+## 第六轮（终局目标之一：三渲二/NPR，2026-10-03）
+
+| # | 范围 | 产出 | 账本 | 状态 |
+| --- | --- | --- | --- | --- |
+| G6 | NPR/三渲二：GGXrd 管线、米哈游系（UTS3/SDF 脸系）、描边技术、NPR 经典论文（X-Toon/Kajiya-Kay/Marschner）、风格化 PBR、2D-in-3D | `docs/papers/npr-toon-rendering.md`（165 行）+ **10 篇短分析** | `w8a` **109** | ✅ 代理 |
+
+> **共核结论（进 Master Plan §3）**：NPR 与 photoreal **能共核**——几何/可见性/纹理/动画/阴影/后处理骨架共用，
+> 只替换一个可派发的 shading 层（per-object/逐部位覆写 + Step/Feather/ramp）与一个可开关的描边层；
+> 官方级样本=UTS3（一份光照核兼容三管线）、kShading（只换阶梯化 BSDF）。最强否证风险=逐角色专光 vs 全局时变光的
+> **光照双模问题**（已立项 T-NPR-11 小场景实测）。
