@@ -127,3 +127,17 @@
 | J7 | 场景内容：天空优先 Hillaire（无 LUT），Bruneton 4D LUT 为经典对照；机载透视=froxel；水=Gerstner/FFT 二档；粒子第一约束=**无界 overdraw**（分数尺寸离屏）；地形=clipmap+morph；植被=单 draw 草 | `w7c` W7C-001/010/019/028/031/045/058/067 | `02-scene-tier.md` §5 增补 |
 | J8 | 字形工程：emoji 黑白/彩色=**cmap format 14 查询问题**；IUP 完整语义；变体规范（avar/HVAR/gvar）；**fontconfig 软排序与 cosmic-text 硬过滤不可互推**（青简回退链注意项）；彩色字体四格式硬差异 | `w7d` W7D-003/004/012..014/020..033/082..084/039..046 | 文本层 backlog（可回流上游） |
 | J9 | 方法学固化：**PDF 抽取通道**（pypdf）与 **Apple 文档 JSON 通道**（`/tutorials/data/documentation/<fw>.json`）写入报告，作为后续抓取的标准路径 | `w6h`/`w6k` 报告；本轮实操 | `METHOD.md` 抓取规范增补 |
+
+---
+
+## K. 第七轮补充（渲染压缩 / 泡沫时期电影感 / 前端迁移引导，2026-10-03）
+
+| # | 判决 | 依据（锚） | 落到哪 |
+| --- | --- | --- | --- |
+| K1 | **压缩默认档=视觉无损**（门 C14）；"固定速率压缩"规范口径是"一般视觉无损但**非 bit-exact**"——与逐位金丝雀 C4 **天然互斥** ⇒ 政策：**C4 只在无损路径强制**；固定速率/有损档显式开启且**不与 C4 混跑** | `w8b` W8B-022 | 任务 T-CMP-01；`04-ci` B.3 |
+| K2 | GPU 带宽压缩现状：DCC 官方自称 lossless，但 shader-readable 标记会**降低**压缩率、部分写要读改写；wgpu 正式特性=BC/ETC2/ASTC(+HDR)，**VRS 无特性位** ⇒ 按"能力探测+不阻挡"纪律处理，不产生引擎级承诺 | `w8b` W8B-002/004/005/007/101..103 | T-CMP-03 |
+| K3 | **Rust 压缩工具链已齐**（全链无不可用项、许可干净：intel_tex_2/ctt/astcenc/basisu/KTX2 Apache-2.0、zstd BSD-3-Clause） | `w8b` W8B-058..062/132..135 | T-CMP-02 直接落地 |
+| K4 | **神经压缩判"不可用"**（硬证据：浮点上下文推断已致跨平台熵解码失败；解码线程效率到 2026 仍是独立论文题目）——实验性技术"必须清楚意识到不行"在此有锚 | `w8b` W8B-128/094 | 判定表已入 `reports/18` |
+| K5 | 电影感效果链 E1–E13 判定落档：**颗粒在显示域施加=规范级共识**（ITU-T/AV1/DLSS 三源）；**扫描颗粒贴图=三处独立否证**；次序纪律 deband→grain、放大→分辨率相关效果；grain×TAA 冲突列为质量红线 | `w8c` W8C-053/058/079/016..027/059/080 | T-FL-01..04；门 C15 |
+| K6 | 前端引导选"**中档**"：DSL 宏（rstml/RSX 形态）+ CSS 子集（lightningcss 类型化 AST；blitz 三分桥映射）+ TSX/HTML→DSL codemod（oxc/swc）+ 热重载/脚手架/错误 DX + Electron 映射表；**JS 层=大档推迟**（Boa experimental / rquickjs 单线程 / Javy ≥869KB 无 Node API；wasmtime `fuel` 是唯一硬预算机制），等真实插件需求 | `w8d` W8D-002/010/016/029/035/036/037..047/056..066 | T-GD-01..05；门 C16 |
+| K7 | 许可登记（工程口径，未法律复核）：lightningcss=MPL-2.0（与 GPL-3.0 并存需登记）；压缩链全 Apache/MIT/BSD——进"许可两栏账" | `w8d` W8D-016；`w8b` W8B-058..062 | F1 清单扩容 |

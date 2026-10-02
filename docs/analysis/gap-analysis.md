@@ -43,9 +43,12 @@
 - **第五轮合计 +431 条**（账本总 3431）；决策回写在 ADR J1–J9。
 - **新固化方法**：PDF 抽取（pypdf）与 Apple 文档 JSON 通道（两条抓取路径写进报告）。
 - **第六轮（G-B 三渲二/NPR）**：`w8a` **109** ✅（共核结论与 C11–C13 锚已回填 Master Plan §3；T-NPR-11 光照双模实验立项）。
+- **第七轮（压缩/电影感/前端迁移）**：`w8b` **137** + `w8c` **108** + `w8d` **90** ✅——压缩"降质即不可用"判定表
+  （不可用 13 项含神经压缩）、电影感效果链 E1–E13、前端引导选"中档"（均入 ADR K1–K7）。
 - **仍然开放的缺口（自愿续跑，编号段空闲）**：Karis/Frostbite/Hoffman course notes 全文（PDF 截断，`w7e`）；
   RTG II 全文与 ReSTIR PDF（`w7e`）；MediaCodec/FFmpeg 文档正文（`w7f`）；Noesis 官网（403）；
   米哈游角色 shader 官方一手（仅社区还原，w8a 已标注）；Marschner/X-Toon 正文 PDF（仅摘要）；
+  AFBC/Apple memoryless render target（文档未达，`w8b` 留档）；SMPTE RDD5/Kolb 1995/ARRI White Paper（付费/403，`w8c` 留档）；
   场景档 P5 前的必读清单见 `papers/rtg-and-denoisers.md` 末节。
 
 ## 四、判过不做（含理由，一行一条）

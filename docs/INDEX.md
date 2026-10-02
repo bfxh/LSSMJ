@@ -62,6 +62,9 @@
 | `reports/15-video-pipeline.md` | 视频管线（DXVA/NVDEC/Chromium/GN cVIDEO 契约；边界三层 + 平台解码 API 附表） |
 | `reports/16-gpu-tooling.md` | GPU 测量与工具链（抓帧≠计时/HAGS 精度/时间戳链/呈现模式；判据不押停更工具） |
 | `reports/17-font-engineering.md` | 字形工程（OpenType 表/Variations/彩色字体四格式/回退算法；对青简文本栈 10 条可吸收） |
+| `reports/18-render-compression.md` | 渲染压缩（48 行判定表：可用/有界/不可用；Rust 工具链逐条；神经压缩判死有硬证据） |
+| `reports/19-frontend-migration.md` | 前端语言迁移引导（DSL/CSS/JS 引擎/Electron 映射；选型=中档） |
+| `papers/anime-film-look.md` | 泡沫时期科幻动漫画质（效果链 E1–E13；显示域施加=规范级共识） |
 | `platforms/game-ui-middleware.md` | 游戏/应用商业 UI 中间件谱系（Noesis/Coherent/Ultralight/Scaleform 遗产/CEF 路线；许可红线） |
 | `platforms/compositors-and-system-ui.md` | 平台合成器与闭源系统 UI（DWM/UI.Composition/SurfaceFlinger/render server/SwiftUI/WinUI3） |
 | `engines/cpp-2d-rasterizers.md` | C++ 光栅器第二组（Blend2D/ThorVG/NanoVG/Cairo；ThorVG 脏区范式） |

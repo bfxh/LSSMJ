@@ -2,18 +2,18 @@
 
 - 生成日期：2026-10-03
 - 复算命令：`python tools/ledger.py report --out docs/analysis/ledger-stats.md`
-- 账本文件：43 个 jsonl
+- 账本文件：46 个 jsonl
 
-**总条目（通过校验）：3541**；被拒条目：0；覆盖目标数：402；带 lesson 字段：3527
+**总条目（通过校验）：3876**；被拒条目：0；覆盖目标数：486；带 lesson 字段：3862
 
 ## 深度分布
 
 | depth | 条数 |
 | --- | --- |
-| source | 2024 |
-| doc | 1045 |
-| paper | 441 |
-| web | 31 |
+| source | 2176 |
+| doc | 1112 |
+| paper | 551 |
+| web | 37 |
 
 ## 波次文件分布
 
@@ -62,6 +62,9 @@
 | w7c.jsonl | 85 |
 | w7d.jsonl | 87 |
 | w8a.jsonl | 109 |
+| w8b.jsonl | 137 |
+| w8c.jsonl | 108 |
+| w8d.jsonl | 90 |
 
 ## 目标 Top 30
 
@@ -69,7 +72,7 @@
 | --- | --- |
 | qingjian | 176 |
 | godot | 138 |
-| bevy | 134 |
+| bevy | 135 |
 | qt-quick-scenegraph | 106 |
 | chromium | 100 |
 | qingjian-render | 98 |
@@ -83,10 +86,12 @@
 | blend2d | 55 |
 | gpui | 43 |
 | cosmic-text | 42 |
+| film-grain | 42 |
 | skia | 41 |
 | unity-ugui | 37 |
 | coherent-gameface | 36 |
 | thorvg | 35 |
+| slint | 30 |
 | microsoft-wpf | 29 |
 | imgui | 29 |
 | qingjian-gates | 29 |
@@ -94,6 +99,4 @@
 | taa-playdead | 27 |
 | bshsq | 26 |
 | mineradio | 26 |
-| slint | 24 |
 | apple | 24 |
-| sky-atmosphere | 24 |
