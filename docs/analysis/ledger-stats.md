@@ -2,17 +2,17 @@
 
 - 生成日期：2026-10-03
 - 复算命令：`python tools/ledger.py report --out docs/analysis/ledger-stats.md`
-- 账本文件：51 个 jsonl
+- 账本文件：52 个 jsonl
 
-**总条目（通过校验）：4307**；被拒条目：0；覆盖目标数：555；带 lesson 字段：4293
+**总条目（通过校验）：4367**；被拒条目：0；覆盖目标数：562；带 lesson 字段：4353
 
 ## 深度分布
 
 | depth | 条数 |
 | --- | --- |
-| source | 2339 |
-| doc | 1279 |
-| paper | 651 |
+| source | 2365 |
+| doc | 1303 |
+| paper | 661 |
 | web | 38 |
 
 ## 波次文件分布
@@ -21,6 +21,7 @@
 | --- | --- |
 | w10a.jsonl | 81 |
 | w10b.jsonl | 64 |
+| w11a.jsonl | 60 |
 | w1a.jsonl | 176 |
 | w1b.jsonl | 115 |
 | w1c.jsonl | 99 |
@@ -75,15 +76,15 @@
 
 | target | 条数 |
 | --- | --- |
-| qingjian | 176 |
-| godot | 157 |
+| qingjian | 177 |
+| godot | 162 |
 | bevy | 144 |
 | qt-quick-scenegraph | 106 |
 | chromium | 100 |
 | qingjian-render | 98 |
 | avalonia | 86 |
 | gtk4-gsk | 82 |
-| flutter | 73 |
+| flutter | 75 |
 | tiny-skia | 68 |
 | impeller | 67 |
 | gn-sdk | 67 |
@@ -97,8 +98,8 @@
 | coherent-gameface | 36 |
 | imgui | 36 |
 | thorvg | 35 |
+| apple | 34 |
 | slint | 34 |
-| apple | 31 |
 | microsoft-wpf | 29 |
 | qingjian-gates | 29 |
 | unreal-slate-umg | 28 |
