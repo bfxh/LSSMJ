@@ -152,3 +152,12 @@
 | L2 | **阴影分档**：默认档=CSM+PCF（误差恒定分割；acne/走样/漏光三项对拍）；质量档=页式 VSM（16k 虚拟/128 页/跨帧缓存）+SMRT/DFSS 软阴影；**质量验收=接触硬化 + `texel/pixel` 比**（不是模糊量） | `w9a` W9A-001..004/007/008/044/046/047/052 | T-PH-05；判定表已入 `papers/real-time-lighting-deep.md` |
 | L3 | **组件层三支柱**：事件路由（RmlUi 距离×阶段排序键）+焦点域/显式焦点链（Qt/WPF）+**AccessKit=唯一 a11y schema**（增量 TreeUpdate，不进热路径）+令牌三层（构建期解析成常量表）+失效位三分类（帧末统一 flush）；a11y/令牌/失效各留一个可测门 | `w9b` W9B-044..048/053/054/064/065/027..034/072/073 | T-UC-01..05；`reports/20-ui-component-core.md` |
 | L4 | **复杂软件最小集路线**：headless 虚拟列表（独立复用池 + 区间差集重绘 + 离屏缓存 2）→ 可序列化停靠网格（损坏输入无损拒绝 + 节点 min-size/priority）→ 三状态滚动物理（减速率作滚动/投影共享参数）→ 编辑器缓冲（piece tree 或 rope 聚合树，均需行索引补偿）+命令注册表/撤销四件套 | `w9c` W9C-001/005/008/012/038/044/055/013/058/016/063 | T-WS-01..06；`reports/21-complex-widgets-and-docking.md` |
+
+---
+
+## M. 第九轮补充（角色动画运行时 / 色彩管理与 HDR 显示链，2026-10-03）
+
+| # | 判决 | 依据（锚） | 落到哪 |
+| --- | --- | --- | --- |
+| M1 | **动画运行时六层**：clip 采样（三模式+端点钳制）→ graph（blend/add/clip DAG）→ state（入口/转移/子状态机/conduit/单帧转移上限）→ pose（两骨解析 IK 默认 + FABRIK 多骨 + 约束集合）→ root（分量烘焙 × 物理状态）→ skin（骨骼矩阵数组 + 骨架纹理）。**与 UI 动画共用同一插值与求值内核**（权重回落语义 + 双缓冲）；表情/次级运动（morph/弹簧骨）为角色档可选层 | `w10a` W10A-005/008/018/019/023/034/042/054/065 | T-AM-01..06；`papers/animation-runtime.md` |
+| M2 | **色彩管理三段链**：内容空间（sRGB/P3/Rec.2020/PQ/HLG）→ 线性 FP16 合成空间（CCCS/scRGB 等价，D65）→ 显示空间（BT.2100 PQ/HLG 或 sRGB/P3）。ICC 输入经 D50 PCS + 线性 Bradford；色域外默认截断、更好的映射作显式档；**输出色彩空间由 wgpu SurfaceColorSpace 八档承载**（能力探测+降级）。新增判据 C18（色彩一致） | `w10b` W10B-010/014/015/022/026/029/033/034 | T-CM-01..05；门 C18；`reports/22-color-management-and-hdr-display.md` |

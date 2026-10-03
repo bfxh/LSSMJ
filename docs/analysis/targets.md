@@ -70,6 +70,7 @@
 | `w7a..w7d.jsonl` | 代理 A1–A4 | 第五轮（后处理与 AA / GPU 工具链 / 场景内容系统 / 字形工程） |
 | `w8a..w8d.jsonl` | 代理 | 第六·七轮（NPR / 压缩 / 电影感 / 前端迁移） |
 | `w9a..w9c.jsonl` | 代理（报告由主代理补全） | 第八轮（实时光影 / UI 组件核心 / 复杂组件与工作区） |
+| `w10a..w10b.jsonl` | 主代理 | 第九轮（角色动画运行时 / 色彩管理与 HDR 显示链） |
 
 > 状态列由每批完成者更新；`ledger-stats.md` 是最终复算入口。
 
@@ -193,3 +194,16 @@
 > 基于既有账本与快照补全**；`reports/20` 由子代理在中断前完成。证据边界仍按"只读、未运行上游代码"如实标注。
 > **优先级落地**：w9a 即 P0"实时光影"的第一交付（主链次序=阴影缓存→多光源 clustered→GTAO→DDGI/SHaRC→RT 逐光可选）；
 > w9b/w9c 补上 P1 组件层的最后空白（轨 9/10 的"待回填"全部清零）。
+
+---
+
+## 第九轮（角色动画运行时 + 色彩管理与 HDR 显示链，2026-10-03）
+
+| # | 范围 | 产出 | 账本 | 状态 |
+| --- | --- | --- | --- | --- |
+| G9a | **角色动画运行时**（蒙皮/混合图/状态机/IK/根运动/表情与次级运动） | `docs/papers/animation-runtime.md`（判定表 31 行 + 六层架构 + 6 份来源短分析） | `w10a` **81**（source 36 / doc 29 / paper 16） | ✅ 主代理（glTF 规范式 + Bevy DAG + Godot FABRIK + Unity/UE 产品语义 + 15 篇论文） |
+| G9b | **色彩管理与 HDR 显示链**（ICC/PCS/色域映射/PQ·HLG/平台色彩管理/wgpu 输出色彩空间） | `docs/reports/22-color-management-and-hdr-display.md`（三段显示链 + 21 行判定表 + 新判据 C18 草案） | `w10b` **64**（source 12 / doc 38 / paper 14） | ✅ 主代理（ICC D50 PCS + Skia 六步链 + Windows CCCS + wgpu 八档 SurfaceColorSpace） |
+
+> **缺口发现方式**：英文关键词扫描（skeletal/skinning/blend tree/IK/root motion/ICC/wide gamut/Display P3 等）在
+> 全仓命中≈0，据此判定为真实空白（不是"已覆盖但没标注"）。两波都以"规范 → 平台文档 → 引擎源码 → 论文谱系"
+> 四层取证；来源抓取账目与不可达项在各自报告的"未验证"节如实列出。

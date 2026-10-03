@@ -49,10 +49,16 @@
   实时光影主链（阴影缓存优先/多光源 clustered/GTAO/DDGI·SHaRC/RT 逐光可选，wgpu RT=实验特性边界）、
   组件层五段蓝图（AccessKit 唯一 a11y schema）、复杂组件最小清单（虚拟列表/停靠/命令/缓冲）。
   本轮子代理在报告阶段遇 API 余额中断，账本完整、两份报告由主代理补全（见 `targets.md` 第八轮留档）。
+- **第九轮（角色动画运行时 + 色彩管理与 HDR 显示链）**：`w10a` **81** + `w10b` **64** ✅——
+  动画六层（蒙皮公式/混合图 DAG/状态机/FABRIK/根运动分量/表情与弹簧骨）与色彩管理三段链
+  （内容空间→线性 FP16 合成→显示空间；ICC D50 PCS / Bradford / PQ·HLG / wgpu SurfaceColorSpace 八档），
+  新增判据 C18（色彩一致）。两处空白由英文关键词扫描发现（skeletal/skinning/blend tree/ICC/wide gamut 等命中≈0）。
 - **仍然开放的缺口（自愿续跑，编号段空闲）**：Karis/Frostbite/Hoffman course notes 全文（PDF 截断，`w7e`）；
   RTG II 全文与 ReSTIR PDF（`w7e`）；MediaCodec/FFmpeg 文档正文（`w7f`）；Noesis 官网（403）；
   米哈游角色 shader 官方一手（仅社区还原，w8a 已标注）；Marschner/X-Toon 正文 PDF（仅摘要）；
   AFBC/Apple memoryless render target（文档未达，`w8b` 留档）；SMPTE RDD5/Kolb 1995/ARRI White Paper（付费/403，`w8c` 留档）；
+  Android 宽色域/HDR 官方文档（本机网络超时，`w10b` 留档）；Skia 官网文档（超时；已用仓库内 color.md 替代）；
+  BT.2100 正文 PDF（ITU 直链 404，只取到条目页）与 SMPTE ST 2084（付费）；
   场景档 P5 前的必读清单见 `papers/rtg-and-denoisers.md` 末节。
 
 ## 四、判过不做（含理由，一行一条）
