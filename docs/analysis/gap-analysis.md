@@ -61,6 +61,9 @@
   堆/类型/子分配与专用分配（Vulkan/D3D12）、驻留与优先级逐出（Vulkan memory priority）、
   slab 分配器与异步回读（Bevy）、依赖图释放与显存记账（Godot）、资源缓存淘汰（Skia）；
   新增判据 C20（显存预算与驻留）。任务表轨 14（T-RS-01..06）/M7。
+- **第十二轮（显示拓扑 / DPI 缩放 / 窗口合成）**：`w13a` **49** ✅——统一虚拟桌面坐标系、
+  逐屏/逐窗口缩放两字段、缩放变化=一级失效源、Windows per-monitor v2、Wayland 分数缩放、
+  可用区语义、交换链能力集与 currentExtent、VRR 与允许撕裂绑定；新增判据 C21。任务表轨 15（T-DP-01..05）/M8。
 - **仍然开放的缺口（自愿续跑，编号段空闲）**：Karis/Frostbite/Hoffman course notes 全文（PDF 截断，`w7e`）；
   RTG II 全文与 ReSTIR PDF（`w7e`）；MediaCodec/FFmpeg 文档正文（`w7f`）；Noesis 官网（403）；
   米哈游角色 shader 官方一手（仅社区还原，w8a 已标注）；Marschner/X-Toon 正文 PDF（仅摘要）；

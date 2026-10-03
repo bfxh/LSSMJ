@@ -2,17 +2,17 @@
 
 - 生成日期：2026-10-03
 - 复算命令：`python tools/ledger.py report --out docs/analysis/ledger-stats.md`
-- 账本文件：53 个 jsonl
+- 账本文件：54 个 jsonl
 
-**总条目（通过校验）：4421**；被拒条目：0；覆盖目标数：569；带 lesson 字段：4407
+**总条目（通过校验）：4470**；被拒条目：0；覆盖目标数：575；带 lesson 字段：4456
 
 ## 深度分布
 
 | depth | 条数 |
 | --- | --- |
-| source | 2389 |
-| doc | 1327 |
-| paper | 667 |
+| source | 2407 |
+| doc | 1353 |
+| paper | 672 |
 | web | 38 |
 
 ## 波次文件分布
@@ -23,6 +23,7 @@
 | w10b.jsonl | 64 |
 | w11a.jsonl | 60 |
 | w12a.jsonl | 54 |
+| w13a.jsonl | 49 |
 | w1a.jsonl | 176 |
 | w1b.jsonl | 115 |
 | w1c.jsonl | 99 |
@@ -77,15 +78,15 @@
 
 | target | 条数 |
 | --- | --- |
+| godot | 177 |
 | qingjian | 177 |
-| godot | 172 |
 | bevy | 153 |
 | qt-quick-scenegraph | 106 |
 | chromium | 100 |
 | qingjian-render | 98 |
 | avalonia | 86 |
 | gtk4-gsk | 82 |
-| flutter | 75 |
+| flutter | 78 |
 | tiny-skia | 68 |
 | impeller | 67 |
 | gn-sdk | 67 |
@@ -96,14 +97,14 @@
 | cosmic-text | 42 |
 | film-grain | 42 |
 | unity-ugui | 37 |
+| apple | 36 |
 | coherent-gameface | 36 |
 | imgui | 36 |
 | thorvg | 35 |
-| apple | 34 |
 | slint | 34 |
 | microsoft-wpf | 29 |
 | qingjian-gates | 29 |
 | unreal-slate-umg | 28 |
 | taa-playdead | 27 |
+| egui | 26 |
 | bshsq | 26 |
-| mineradio | 26 |
