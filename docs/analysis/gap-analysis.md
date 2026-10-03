@@ -57,6 +57,10 @@
   事件合并与原子报告（accumulate/SYN_REPORT/设备时间戳/单次投递）、命中测试与指针捕获、设备面
   （笔轴·手柄标准布局·多设备多指）、延迟补偿（coalesced 默认 + predicted 可开关；10 篇论文）。
   新增判据 C19（输入一致）。**范围裁决**：物理/音频/网络/国际化架构/编辑器工具链/视频内容链不在本项目范围。
+- **第十一轮（渲染资源与显存预算）**：`w12a` **54** ✅——"分类/预算/流送"三步（D3D12）、
+  堆/类型/子分配与专用分配（Vulkan/D3D12）、驻留与优先级逐出（Vulkan memory priority）、
+  slab 分配器与异步回读（Bevy）、依赖图释放与显存记账（Godot）、资源缓存淘汰（Skia）；
+  新增判据 C20（显存预算与驻留）。任务表轨 14（T-RS-01..06）/M7。
 - **仍然开放的缺口（自愿续跑，编号段空闲）**：Karis/Frostbite/Hoffman course notes 全文（PDF 截断，`w7e`）；
   RTG II 全文与 ReSTIR PDF（`w7e`）；MediaCodec/FFmpeg 文档正文（`w7f`）；Noesis 官网（403）；
   米哈游角色 shader 官方一手（仅社区还原，w8a 已标注）；Marschner/X-Toon 正文 PDF（仅摘要）；

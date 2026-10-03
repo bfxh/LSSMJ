@@ -68,6 +68,7 @@
 | `reports/21-complex-widgets-and-docking.md` | 复杂组件与工作区（虚拟列表/停靠/模态/DnD/滚动物理/编辑器文本；轨 10 锚，w9c 84 条） |
 | `reports/22-color-management-and-hdr-display.md` | 色彩管理与 HDR 显示链（ICC/PCS/色域映射/PQ·HLG/平台色彩管理/wgpu 输出色彩空间；w10b 64 条） |
 | `reports/23-input-system-and-routing.md` | 输入系统与事件路由（统一指针模型/捕获/命中/合并/设备/延迟；w11a 60 条） |
+| `reports/24-render-resource-and-vram-budget.md` | 渲染资源与显存预算（分配器/驻留/生命周期/上传回读/淘汰；w12a 54 条） |
 | `papers/anime-film-look.md` | 泡沫时期科幻动漫画质（效果链 E1–E13；显示域施加=规范级共识） |
 | `papers/real-time-lighting-deep.md` | 实时光影主链（阴影/多光源/AO/GI/混合；P0 游戏向，w9a 128 条） |
 | `papers/animation-runtime.md` | 角色动画运行时（蒙皮/混合图/状态机/IK/根运动/表情与次级运动；w10a 81 条） |

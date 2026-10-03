@@ -2,17 +2,17 @@
 
 - 生成日期：2026-10-03
 - 复算命令：`python tools/ledger.py report --out docs/analysis/ledger-stats.md`
-- 账本文件：52 个 jsonl
+- 账本文件：53 个 jsonl
 
-**总条目（通过校验）：4367**；被拒条目：0；覆盖目标数：562；带 lesson 字段：4353
+**总条目（通过校验）：4421**；被拒条目：0；覆盖目标数：569；带 lesson 字段：4407
 
 ## 深度分布
 
 | depth | 条数 |
 | --- | --- |
-| source | 2365 |
-| doc | 1303 |
-| paper | 661 |
+| source | 2389 |
+| doc | 1327 |
+| paper | 667 |
 | web | 38 |
 
 ## 波次文件分布
@@ -22,6 +22,7 @@
 | w10a.jsonl | 81 |
 | w10b.jsonl | 64 |
 | w11a.jsonl | 60 |
+| w12a.jsonl | 54 |
 | w1a.jsonl | 176 |
 | w1b.jsonl | 115 |
 | w1c.jsonl | 99 |
@@ -77,8 +78,8 @@
 | target | 条数 |
 | --- | --- |
 | qingjian | 177 |
-| godot | 162 |
-| bevy | 144 |
+| godot | 172 |
+| bevy | 153 |
 | qt-quick-scenegraph | 106 |
 | chromium | 100 |
 | qingjian-render | 98 |
@@ -88,8 +89,8 @@
 | tiny-skia | 68 |
 | impeller | 67 |
 | gn-sdk | 67 |
+| skia | 62 |
 | webrender | 59 |
-| skia | 55 |
 | blend2d | 55 |
 | gpui | 43 |
 | cosmic-text | 42 |
