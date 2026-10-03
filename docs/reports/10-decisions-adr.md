@@ -141,3 +141,14 @@
 | K5 | 电影感效果链 E1–E13 判定落档：**颗粒在显示域施加=规范级共识**（ITU-T/AV1/DLSS 三源）；**扫描颗粒贴图=三处独立否证**；次序纪律 deband→grain、放大→分辨率相关效果；grain×TAA 冲突列为质量红线 | `w8c` W8C-053/058/079/016..027/059/080 | T-FL-01..04；门 C15 |
 | K6 | 前端引导选"**中档**"：DSL 宏（rstml/RSX 形态）+ CSS 子集（lightningcss 类型化 AST；blitz 三分桥映射）+ TSX/HTML→DSL codemod（oxc/swc）+ 热重载/脚手架/错误 DX + Electron 映射表；**JS 层=大档推迟**（Boa experimental / rquickjs 单线程 / Javy ≥869KB 无 Node API；wasmtime `fuel` 是唯一硬预算机制），等真实插件需求 | `w8d` W8D-002/010/016/029/035/036/037..047/056..066 | T-GD-01..05；门 C16 |
 | K7 | 许可登记（工程口径，未法律复核）：lightningcss=MPL-2.0（与 GPL-3.0 并存需登记）；压缩链全 Apache/MIT/BSD——进"许可两栏账" | `w8d` W8D-016；`w8b` W8B-058..062 | F1 清单扩容 |
+
+---
+
+## L. 第八轮补充（P0 实时光影 / P1 组件层，2026-10-03）
+
+| # | 判决 | 依据（锚） | 落到哪 |
+| --- | --- | --- | --- |
+| L1 | **实时光影主链次序**（游戏向）：阴影缓存优先 → 多光源（clustered 目标档 / tiled 退化）→ GTAO → DDGI/SHaRC 缓存式 GI → RT 逐光可选。**RT 在 wgpu 属实验特性 ⇒ 定为"可缺席成员"**，缺特性就地回退光栅阴影 | `w9a` W9A-004/021/060/071/081/097/110/116 | T-PH-05..08；`papers/real-time-lighting-deep.md` |
+| L2 | **阴影分档**：默认档=CSM+PCF（误差恒定分割；acne/走样/漏光三项对拍）；质量档=页式 VSM（16k 虚拟/128 页/跨帧缓存）+SMRT/DFSS 软阴影；**质量验收=接触硬化 + `texel/pixel` 比**（不是模糊量） | `w9a` W9A-001..004/007/008/044/046/047/052 | T-PH-05；判定表已入 `papers/real-time-lighting-deep.md` |
+| L3 | **组件层三支柱**：事件路由（RmlUi 距离×阶段排序键）+焦点域/显式焦点链（Qt/WPF）+**AccessKit=唯一 a11y schema**（增量 TreeUpdate，不进热路径）+令牌三层（构建期解析成常量表）+失效位三分类（帧末统一 flush）；a11y/令牌/失效各留一个可测门 | `w9b` W9B-044..048/053/054/064/065/027..034/072/073 | T-UC-01..05；`reports/20-ui-component-core.md` |
+| L4 | **复杂软件最小集路线**：headless 虚拟列表（独立复用池 + 区间差集重绘 + 离屏缓存 2）→ 可序列化停靠网格（损坏输入无损拒绝 + 节点 min-size/priority）→ 三状态滚动物理（减速率作滚动/投影共享参数）→ 编辑器缓冲（piece tree 或 rope 聚合树，均需行索引补偿）+命令注册表/撤销四件套 | `w9c` W9C-001/005/008/012/038/044/055/013/058/016/063 | T-WS-01..06；`reports/21-complex-widgets-and-docking.md` |

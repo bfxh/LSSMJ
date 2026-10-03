@@ -45,6 +45,10 @@
 - **第六轮（G-B 三渲二/NPR）**：`w8a` **109** ✅（共核结论与 C11–C13 锚已回填 Master Plan §3；T-NPR-11 光照双模实验立项）。
 - **第七轮（压缩/电影感/前端迁移）**：`w8b` **137** + `w8c` **108** + `w8d` **90** ✅——压缩"降质即不可用"判定表
   （不可用 13 项含神经压缩）、电影感效果链 E1–E13、前端引导选"中档"（均入 ADR K1–K7）。
+- **第八轮（P0 实时光影 + P1 组件层）**：`w9a` **128** + `w9b` **74** + `w9c` **84** ✅——
+  实时光影主链（阴影缓存优先/多光源 clustered/GTAO/DDGI·SHaRC/RT 逐光可选，wgpu RT=实验特性边界）、
+  组件层五段蓝图（AccessKit 唯一 a11y schema）、复杂组件最小清单（虚拟列表/停靠/命令/缓冲）。
+  本轮子代理在报告阶段遇 API 余额中断，账本完整、两份报告由主代理补全（见 `targets.md` 第八轮留档）。
 - **仍然开放的缺口（自愿续跑，编号段空闲）**：Karis/Frostbite/Hoffman course notes 全文（PDF 截断，`w7e`）；
   RTG II 全文与 ReSTIR PDF（`w7e`）；MediaCodec/FFmpeg 文档正文（`w7f`）；Noesis 官网（403）；
   米哈游角色 shader 官方一手（仅社区还原，w8a 已标注）；Marschner/X-Toon 正文 PDF（仅摘要）；

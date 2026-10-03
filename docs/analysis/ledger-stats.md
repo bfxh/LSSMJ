@@ -2,18 +2,18 @@
 
 - 生成日期：2026-10-03
 - 复算命令：`python tools/ledger.py report --out docs/analysis/ledger-stats.md`
-- 账本文件：46 个 jsonl
+- 账本文件：49 个 jsonl
 
-**总条目（通过校验）：3876**；被拒条目：0；覆盖目标数：486；带 lesson 字段：3862
+**总条目（通过校验）：4162**；被拒条目：0；覆盖目标数：527；带 lesson 字段：4148
 
 ## 深度分布
 
 | depth | 条数 |
 | --- | --- |
-| source | 2176 |
-| doc | 1112 |
-| paper | 551 |
-| web | 37 |
+| source | 2291 |
+| doc | 1212 |
+| paper | 621 |
+| web | 38 |
 
 ## 波次文件分布
 
@@ -65,6 +65,9 @@
 | w8b.jsonl | 137 |
 | w8c.jsonl | 108 |
 | w8d.jsonl | 90 |
+| w9a.jsonl | 128 |
+| w9b.jsonl | 74 |
+| w9c.jsonl | 84 |
 
 ## 目标 Top 30
 
@@ -78,10 +81,10 @@
 | qingjian-render | 98 |
 | avalonia | 86 |
 | gtk4-gsk | 82 |
+| flutter | 73 |
 | tiny-skia | 68 |
 | impeller | 67 |
 | gn-sdk | 67 |
-| flutter | 61 |
 | webrender | 59 |
 | blend2d | 55 |
 | gpui | 43 |
@@ -90,13 +93,13 @@
 | skia | 41 |
 | unity-ugui | 37 |
 | coherent-gameface | 36 |
+| imgui | 36 |
 | thorvg | 35 |
-| slint | 30 |
+| slint | 34 |
 | microsoft-wpf | 29 |
-| imgui | 29 |
 | qingjian-gates | 29 |
 | unreal-slate-umg | 28 |
+| apple | 28 |
 | taa-playdead | 27 |
 | bshsq | 26 |
 | mineradio | 26 |
-| apple | 24 |
