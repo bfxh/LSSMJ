@@ -186,3 +186,5 @@
 5. **令牌系统官方站不可抓**：m3.material.io 与 Fluent 2 官网为 JS 渲染（抓取仅得空壳），M3/Fluent 证据分别用 material-web 仓库文档（W9B-029）与 fluentui 仓库 types.ts（W9B-034）替代——均为官方仓库，但不是设计规范原文。
 6. **Qt 文档版本**：doc.qt.io 抓取页眉显示 Qt 6.12.0（开发版）；Qt 源码快照钉 v6.8.1——两处版本不同，语义类引用不受影响，机制细节以 6.8.1 为准。
 7. **无运行时验证**：全部为文档/源码静态观察；焦点金丝雀、读屏器冒烟（T-UC-01/02 的门）本轮未做（按纪律不跑上游代码）。
+
+> **补锚更新（w14a）**：第 1 项已补——AccessKit 四侧适配器源码已逐读（Windows `UiaReturnRawElementProvider`/`UiaRaiseAutomationEvent` + `WM_GETOBJECT` 嵌套警告 `W14A-001..003`；macOS `NSView` 挂载与焦点通知 `W14A-004..006`；Unix/AT-SPI 的 zbus 与事件分族 `W14A-007..009`）。Android/iOS 适配器仍未逐读。

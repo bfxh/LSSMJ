@@ -2,16 +2,16 @@
 
 - 生成日期：2026-10-03
 - 复算命令：`python tools/ledger.py report --out docs/analysis/ledger-stats.md`
-- 账本文件：54 个 jsonl
+- 账本文件：55 个 jsonl
 
-**总条目（通过校验）：4470**；被拒条目：0；覆盖目标数：575；带 lesson 字段：4456
+**总条目（通过校验）：4499**；被拒条目：0；覆盖目标数：575；带 lesson 字段：4485
 
 ## 深度分布
 
 | depth | 条数 |
 | --- | --- |
-| source | 2407 |
-| doc | 1353 |
+| source | 2418 |
+| doc | 1371 |
 | paper | 672 |
 | web | 38 |
 
@@ -24,6 +24,7 @@
 | w11a.jsonl | 60 |
 | w12a.jsonl | 54 |
 | w13a.jsonl | 49 |
+| w14a.jsonl | 29 |
 | w1a.jsonl | 176 |
 | w1b.jsonl | 115 |
 | w1c.jsonl | 99 |

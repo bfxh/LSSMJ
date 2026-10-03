@@ -174,3 +174,5 @@
    `W11A-040` 的 deadzone 代码片段只作工程参照。
 8. **Apple 文档只到 JSON 摘要层**：NSEvent/UITouch/PencilKit 的完整 API（预测触点、合并触点、
    压力阶段）未逐节核——`W11A-049/050` 只支撑"能力字段存在"这一层结论。
+
+> **补锚更新（w14a）**：第 3 项（Raw Input）与第 4 项（Android）已补——MS Raw Input 官方两页（`WM_INPUT` 低层 vs `WM_APPCOMMAND` 高层、`DefRawInputProc`，`W14A-020..023`）；Android 输入文档（`onTouchEvent(MotionEvent)`、`getPointerId`、`ACTION_POINTER_DOWN/UP`、historical 批次，`W14A-015..018`）。

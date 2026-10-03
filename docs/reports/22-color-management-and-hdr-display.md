@@ -165,3 +165,5 @@
    `developer.apple.com` 的完整页面为 JS 渲染未逐节核；EDR headroom 的 API 细节（`W10B-038/039`）未展开。
 8. **动态 HDR 元数据只取到厂商 marketing 页**（`W10B-047`）：Dolby Vision 的元数据规范（ST 2094 系列）为付费文档，
    未核；本轮结论「列观察项」不受影响。
+
+> **补锚更新（w14a）**：第 1 项已补——Android 宽色域/HDR 文档经 `developer.android.google.cn` 镜像取得（sRGB 默认 + Display P3 档 + `ColorSpace.Named` + PQ/HLG 线格式，`W14A-012..014/019`）；Vulkan 色彩空间枚举用 WSI 规范正文补上（`W14A-010/011`）。**BT.2100 正文仍未取到**（ITU 直链 404/登录墙），PQ/HLG 技术细节仍由 Skia 常数与 DXGI/wgpu 枚举支撑。

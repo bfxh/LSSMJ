@@ -176,3 +176,5 @@
    实时渲染的稀疏驻留收益未验证。
 8. **碎片治理只到研究层**：compaction（`W12A-050`）与 swap-aware（`W12A-051`）都没有在实时渲染器上的
    公开读数；本轮只把碎片率列为观测指标，治理策略留压力档。
+
+> **补锚更新（w14a）**：第 3 项（wgpu 内存提示）、第 4 项（Metal 存储模式）已补——`MemoryHints::{Performance,MemoryUsage,Manual}` + `DeviceDescriptor.memory_hints`（`W14A-026/027`）；`MTLStorageMode` 四档 shared/private/managed/memoryless（`W14A-028/029`）。第 5 项（Android）部分补（色彩/HDR 已取，图形内存页仍未取）；第 6 项（D3D12 copy 页）部分补（改用资源屏障页：`COPY_DEST` 初始状态硬约束与状态提升，`W14A-024/025`）。

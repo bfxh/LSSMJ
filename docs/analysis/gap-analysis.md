@@ -64,12 +64,16 @@
 - **第十二轮（显示拓扑 / DPI 缩放 / 窗口合成）**：`w13a` **49** ✅——统一虚拟桌面坐标系、
   逐屏/逐窗口缩放两字段、缩放变化=一级失效源、Windows per-monitor v2、Wayland 分数缩放、
   可用区语义、交换链能力集与 currentExtent、VRR 与允许撕裂绑定；新增判据 C21。任务表轨 15（T-DP-01..05）/M8。
+- **第十三轮（补锚批）**：`w14a` **29** ✅——AccessKit 三平台适配器源码（Windows UIA/macOS NSView/Unix AT-SPI）、
+  Android 色彩·HDR·输入（google.cn 镜像）、MS Raw Input、D3D12 资源状态硬约束、wgpu `MemoryHints`、
+  Metal `MTLStorageMode` 四档、Vulkan `VkColorSpaceKHR` 枚举；不新增判据，缩小 C18–C21 的证据边界。
 - **仍然开放的缺口（自愿续跑，编号段空闲）**：Karis/Frostbite/Hoffman course notes 全文（PDF 截断，`w7e`）；
   RTG II 全文与 ReSTIR PDF（`w7e`）；MediaCodec/FFmpeg 文档正文（`w7f`）；Noesis 官网（403）；
   米哈游角色 shader 官方一手（仅社区还原，w8a 已标注）；Marschner/X-Toon 正文 PDF（仅摘要）；
   AFBC/Apple memoryless render target（文档未达，`w8b` 留档）；SMPTE RDD5/Kolb 1995/ARRI White Paper（付费/403，`w8c` 留档）；
-  Android 宽色域/HDR 官方文档（本机网络超时，`w10b` 留档）；Skia 官网文档（超时；已用仓库内 color.md 替代）；
-  BT.2100 正文 PDF（ITU 直链 404，只取到条目页）与 SMPTE ST 2084（付费）；
+  Skia 官网文档（超时；已用仓库内 color.md 替代）；
+  **补锚后仍缺**：BT.2100 正文 PDF 与 SMPTE ST 2084（ITU 404/登录墙、SMPTE 付费）；Android **图形内存**与**显示 DPI/scaling** 文档；
+  D3D12 "copying and accessing resource data" 专页（404，已用资源屏障页替代）；Wayland 协议原文（gitlab 反爬，用 wayland.app 镜像）；
   场景档 P5 前的必读清单见 `papers/rtg-and-denoisers.md` 末节。
 
 > **范围裁决（用户 2026-10-03）**：本项目 = **渲染引擎 + 前端范式**。**输入系统**纳入分析（第十轮执行）；
