@@ -252,6 +252,25 @@ pub(crate) fn readback_f32(headless: &Headless, buf: &wgpu::Buffer) -> Vec<f32> 
     bytemuck::allocation::pod_collect_to_vec(&data)
 }
 
+/// 缓冲回读（u32；长度 = buf.size()/4）。
+pub(crate) fn readback_u32(headless: &Headless, buf: &wgpu::Buffer) -> Vec<u32> {
+    let device = &headless.device;
+    let download = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("readback-u32"),
+        size: buf.size(),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    enc.copy_buffer_to_buffer(buf, 0, &download, 0, buf.size());
+    headless.queue.submit([enc.finish()]);
+    let slice = download.slice(..);
+    slice.map_async(wgpu::MapMode::Read, |_| {});
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    let data = slice.get_mapped_range().unwrap();
+    bytemuck::allocation::pod_collect_to_vec(&data)
+}
+
 pub(crate) fn storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,

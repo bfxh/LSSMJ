@@ -15,7 +15,7 @@
 //! 教训留档：base/前缀 + write_buffer 路线曾出现"输入逐位一致、输出随机"的未解非确定性
 //! （证据在 w15c 判据档），故弃用该机械；本片全程不 write_buffer，需要 GPU 顺序时走 GPU scan。
 
-use crate::jfa::{Headless, readback_f32, storage_entry};
+use crate::jfa::{Headless, readback_f32, readback_u32, storage_entry, uniform_entry};
 use wgpu::util::DeviceExt;
 
 #[repr(C)]
@@ -323,4 +323,194 @@ fn extract_region(sdf: &[f32], n: u32, lo: [u32; 3], hi: [u32; 3]) -> Vec<f32> {
         }
     }
     out
+}
+
+/// 稠密网格（T-GC-05 第三片）：顶点按 cell 序打包 + 索引重映射。
+pub struct CompactMesh {
+    /// 稠密顶点（顺序 = cell 线性索引序，逐位保真）
+    pub positions: Vec<[f32; 3]>,
+    /// 重映射后的三角索引（引用 `positions`）
+    pub indices: Vec<u32>,
+    pub vertex_count: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct CP {
+    n: u32,
+    count: u32,
+    _p0: u32,
+    _p1: u32,
+}
+
+/// 稀疏 `GsnMesh`（n³ 槽位）→ 稠密流：GPU scan（flags 排他前缀和 = cell→顶点号）→
+/// 散射顶点 + 重映射索引。当前入口吃回读产物（上传再压）；runner 直出稠密流
+/// （免读写往返）属后续片。
+pub fn compact_mesh(
+    hd: &Headless,
+    mesh: &GsnMesh,
+    mut timer: Option<&mut crate::timer::GpuTimer>,
+) -> CompactMesh {
+    let device = &hd.device;
+    let queue = &hd.queue;
+    let n3 = mesh.flags.len();
+    assert_eq!(n3, (mesh.n * mesh.n * mesh.n) as usize, "flags 长度非 n³");
+    assert_eq!(
+        mesh.indices.len(),
+        mesh.quad_count as usize * 6,
+        "索引长度与四边形数不符"
+    );
+    let count = mesh.indices.len() as u32;
+
+    // cell→顶点号（GPU 驻留）；总数 = 排他和末元素 + 末 flag
+    let cellmap_buf = crate::scan::exclusive_prefix_sum_buf(hd, &mesh.flags, timer.as_deref_mut());
+    let cellmap = readback_u32(hd, &cellmap_buf);
+    let total = cellmap[n3 - 1] + mesh.flags[n3 - 1];
+
+    let pos4: Vec<[f32; 4]> = mesh
+        .positions
+        .iter()
+        .map(|p| [p[0], p[1], p[2], 1.0])
+        .collect();
+    let flags_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("cp-flags"),
+        contents: bytemuck::cast_slice(&mesh.flags),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let pos_in_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("cp-pos-in"),
+        contents: bytemuck::cast_slice(&pos4),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let idx_in_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("cp-idx-in"),
+        contents: bytemuck::cast_slice(&mesh.indices),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let pos_out_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("cp-pos-out"),
+        size: ((total as u64) * 16).max(4),
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let idx_out_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("cp-idx-out"),
+        size: ((count as u64) * 4).max(4),
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("cp-params"),
+        contents: bytemuck::bytes_of(&CP {
+            n: n3 as u32,
+            count,
+            _p0: 0,
+            _p1: 0,
+        }),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+
+    if total > 0 || count > 0 {
+        let module = device.create_shader_module(wgpu::include_wgsl!("compact.wgsl"));
+        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("cp-bgl"),
+            entries: &[
+                storage_entry(0, true),
+                storage_entry(1, true),
+                storage_entry(2, true),
+                storage_entry(3, false),
+                storage_entry(4, true),
+                storage_entry(5, false),
+                uniform_entry(6),
+            ],
+        });
+        let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("cp-pl"),
+            bind_group_layouts: &[Some(&bgl)],
+            immediate_size: 0,
+        });
+        let mk = |label: &str, entry: &str| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(label),
+                layout: Some(&pl),
+                module: &module,
+                entry_point: Some(entry),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                cache: None,
+            })
+        };
+        let scatter = mk("cp-scatter", "scatter_vertices");
+        let remap = mk("cp-remap", "remap_indices");
+        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("cp-bg"),
+            layout: &bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: flags_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: cellmap_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: pos_in_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: pos_out_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: idx_in_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: idx_out_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: params_buf.as_entire_binding(),
+                },
+            ],
+        });
+
+        let mut enc =
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        if total > 0 {
+            let tw = timer.as_mut().and_then(|t| t.writes());
+            let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: None,
+                timestamp_writes: tw,
+            });
+            pass.set_pipeline(&scatter);
+            pass.set_bind_group(0, &bg, &[]);
+            pass.dispatch_workgroups((n3 as u32).div_ceil(64), 1, 1);
+        }
+        if count > 0 {
+            let tw = timer.as_mut().and_then(|t| t.writes());
+            let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: None,
+                timestamp_writes: tw,
+            });
+            pass.set_pipeline(&remap);
+            pass.set_bind_group(0, &bg, &[]);
+            pass.dispatch_workgroups(count.div_ceil(64), 1, 1);
+        }
+        queue.submit([enc.finish()]);
+    }
+
+    let mut positions = Vec::with_capacity(total as usize);
+    for c in readback_f32(hd, &pos_out_buf).as_chunks::<4>().0 {
+        positions.push([c[0], c[1], c[2]]);
+    }
+    let mut indices = readback_u32(hd, &idx_out_buf);
+    indices.truncate(count as usize);
+
+    CompactMesh {
+        positions,
+        indices,
+        vertex_count: total,
+    }
 }
