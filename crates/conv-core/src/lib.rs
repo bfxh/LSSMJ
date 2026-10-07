@@ -15,6 +15,7 @@ pub mod gaussian;
 pub mod gsn;
 pub mod jfa;
 pub mod mesh_sdf_gpu;
+pub mod ply;
 pub mod scan;
 pub mod timer;
 
