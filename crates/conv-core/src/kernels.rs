@@ -266,7 +266,7 @@ fn jacobi_eigen(mut a: [[f32; 3]; 3]) -> ([f32; 3], [[f32; 3]; 3]) {
 }
 
 /// 由正交基（`cols[c]` = 第 c 轴）提取四元数 (x,y,z,w)（Shepperd；M 的列 = cols）。
-fn quat_from_cols(cols: &[[f32; 3]; 3]) -> [f32; 4] {
+pub(crate) fn quat_from_cols(cols: &[[f32; 3]; 3]) -> [f32; 4] {
     let (m00, m01, m02) = (cols[0][0], cols[1][0], cols[2][0]);
     let (m10, m11, m12) = (cols[0][1], cols[1][1], cols[2][1]);
     let (m20, m21, m22) = (cols[0][2], cols[1][2], cols[2][2]);
