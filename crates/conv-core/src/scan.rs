@@ -45,7 +45,7 @@ pub(crate) fn exclusive_prefix_sum_buf(
             contents: bytemuck::cast_slice(data),
             usage: wgpu::BufferUsages::STORAGE,
         });
-    scan_buffers(hd, &in_buf, data.len() as u32, timer)
+    exclusive_prefix_sum_buf_from(hd, &in_buf, data.len() as u32, timer)
 }
 
 /// 对既有输入缓冲（长度 n 个 u32）跑三段式扫描——免上传往返（runner 直出链路用）。
@@ -56,26 +56,29 @@ pub(crate) fn exclusive_prefix_sum_buf_from(
     timer: Option<&mut crate::timer::GpuTimer>,
 ) -> wgpu::Buffer {
     assert!(n > 0, "扫描长度须 ≥ 1");
-    scan_buffers(hd, in_buf, n, timer)
-}
-
-fn scan_buffers(
-    hd: &Headless,
-    in_buf: &wgpu::Buffer,
-    n: u32,
-    mut timer: Option<&mut crate::timer::GpuTimer>,
-) -> wgpu::Buffer {
-    let nb = n.div_ceil(WG);
-    assert!(nb > 0 && (nb as u64) <= 1 << 16, "块数超上限（nb={nb}）");
-    let device = &hd.device;
-    let queue = &hd.queue;
-
-    let out_buf = device.create_buffer(&wgpu::BufferDescriptor {
+    let out_buf = hd.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("scan-out"),
         size: (n * 4) as u64,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
+    exclusive_prefix_sum_into(hd, in_buf, &out_buf, n, timer);
+    out_buf
+}
+
+/// 三段式扫描写入**既有**输出缓冲（绑定组可先建、数据流后走的场景用）。
+pub(crate) fn exclusive_prefix_sum_into(
+    hd: &Headless,
+    in_buf: &wgpu::Buffer,
+    out_buf: &wgpu::Buffer,
+    n: u32,
+    mut timer: Option<&mut crate::timer::GpuTimer>,
+) {
+    let nb = n.div_ceil(WG);
+    assert!(nb > 0 && (nb as u64) <= 1 << 16, "块数超上限（nb={nb}）");
+    let device = &hd.device;
+    let queue = &hd.queue;
+
     let sums_buf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("scan-sums"),
         size: (nb * 4) as u64,
@@ -169,6 +172,4 @@ fn scan_buffers(
         pass.dispatch_workgroups(wgs, 1, 1);
     }
     queue.submit([enc.finish()]);
-
-    out_buf
 }
