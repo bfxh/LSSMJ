@@ -61,7 +61,7 @@ fn jfa_matches_cpu_brute() {
     let n = 32;
     let seeds = seed_points(n, 128);
     let headless = headless_device();
-    let gpu = jfa_distance_field(&headless, &seeds, n);
+    let gpu = jfa_distance_field(&headless, &seeds, n, None);
     let cpu = cpu_brute(n, &seeds);
     let mut sum = 0f64;
     let mut max_err = 0f32;
@@ -93,7 +93,7 @@ fn jfa_deterministic_bitwise() {
     let n = 32;
     let seeds = seed_points(n, 128);
     let headless = headless_device();
-    let a = jfa_distance_field(&headless, &seeds, n);
-    let b = jfa_distance_field(&headless, &seeds, n);
+    let a = jfa_distance_field(&headless, &seeds, n, None);
+    let b = jfa_distance_field(&headless, &seeds, n, None);
     assert_eq!(fnv(&a), fnv(&b), "bitwise determinism across runs");
 }
