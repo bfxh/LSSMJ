@@ -6,7 +6,8 @@ struct KP {
     n: u32,
     count: u32,
     side: u32,   // 支撑窗边长（cell）= 2R+1
-    _pad: u32,
+    total: u32,  // count × side³（grid-stride 上界）
+    stride: u32, // 实际派发线程数（grid-stride 步长）
 };
 
 @group(0) @binding(0) var<storage, read> centers : array<f32>;
@@ -29,36 +30,37 @@ fn rotate_inv(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
 fn splat(@builtin(global_invocation_id) gid: vec3<u32>) {
     let side = kp.side;
     let box_vol = side * side * side;
-    let p = gid.x / box_vol;
-    if (p >= kp.count) {
-        return;
-    }
-    let cell = gid.x % box_vol;
     let half = side / 2u;
-    let off = vec3<i32>(i32(cell % side), i32((cell / side) % side), i32(cell / (side * side)))
-        - vec3<i32>(i32(half));
+    var g = gid.x;
+    loop {
+        if (g >= kp.total) {
+            break;
+        }
+        let p = g / box_vol;
+        let cell = g % box_vol;
+        let off = vec3<i32>(i32(cell % side), i32((cell / side) % side), i32(cell / (side * side)))
+            - vec3<i32>(i32(half));
 
-    let c = vec3<f32>(centers[3u * p], centers[3u * p + 1u], centers[3u * p + 2u]);
-    let q = vec4<f32>(rots[4u * p], rots[4u * p + 1u], rots[4u * p + 2u], rots[4u * p + 3u]);
-    let s = vec3<f32>(scales[3u * p], scales[3u * p + 1u], scales[3u * p + 2u]);
+        let c = vec3<f32>(centers[3u * p], centers[3u * p + 1u], centers[3u * p + 2u]);
+        let q = vec4<f32>(rots[4u * p], rots[4u * p + 1u], rots[4u * p + 2u], rots[4u * p + 3u]);
+        let s = vec3<f32>(scales[3u * p], scales[3u * p + 1u], scales[3u * p + 2u]);
 
-    let h = 2.0 / (f32(kp.n) - 1.0);
-    let ci = (c + vec3<f32>(1.0)) / h;
-    let v = vec3<i32>(floor(ci)) + off;
-    if (any(v < vec3<i32>(0)) || any(v >= vec3<i32>(i32(kp.n)))) {
-        return;
+        let h = 2.0 / (f32(kp.n) - 1.0);
+        let ci = (c + vec3<f32>(1.0)) / h;
+        let v = vec3<i32>(floor(ci)) + off;
+        if (all(v >= vec3<i32>(0)) && all(v < vec3<i32>(i32(kp.n)))) {
+            let vw = vec3<f32>(v) * h - vec3<f32>(1.0);
+            let u = rotate_inv(q, vw - c);
+            let m = u / s;
+            let nd2 = dot(m, m);
+            if (nd2 <= CUT2) {
+                let wq = u32(round(exp(-0.5 * nd2) * Q));
+                if (wq != 0u) {
+                    let lin = u32(v.x) + u32(v.y) * kp.n + u32(v.z) * kp.n * kp.n;
+                    atomicAdd(&field[lin], wq);
+                }
+            }
+        }
+        g = g + kp.stride;
     }
-    let vw = vec3<f32>(v) * h - vec3<f32>(1.0);
-    let u = rotate_inv(q, vw - c);
-    let m = u / s;
-    let nd2 = dot(m, m);
-    if (nd2 > CUT2) {
-        return;
-    }
-    let wq = u32(round(exp(-0.5 * nd2) * Q));
-    if (wq == 0u) {
-        return;
-    }
-    let lin = u32(v.x) + u32(v.y) * kp.n + u32(v.z) * kp.n * kp.n;
-    atomicAdd(&field[lin], wq);
 }
