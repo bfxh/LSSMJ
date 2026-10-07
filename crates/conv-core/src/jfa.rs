@@ -3,10 +3,11 @@
 //! 语义：N³ index 网格，点种子（index 坐标），输出每体素到最近种子的欧氏距离。
 //! 判据：JFA 对点种子给出精确最近种子距离（label 平局不影响距离值），
 //! `tests/jfa_gpu.rs` 用 CPU 暴力参照对拍 + 两次运行逐位确定性。
+//! 注意：JFA 是近似算法（Rong-Tan 2006 口径），对拍带见判据测试。
 
 use wgpu::util::DeviceExt;
 
-const INVALID: u32 = u32::MAX;
+pub(crate) const INVALID: u32 = u32::MAX;
 const WG: u32 = 4; // workgroup_size(4,4,4)
 
 pub struct Headless {
@@ -39,10 +40,9 @@ struct Params {
     n: u32,
 }
 
-/// JFA 距离场：`seeds` 为 index 坐标（[0,n)³ 内的整数位置），返回每体素最近种子距离（f32）。
+/// JFA 距离场（CPU 种子便捷入口）：`seeds` 为 index 坐标，返回每体素最近种子距离（index 单位）。
 pub fn jfa_distance_field(headless: &Headless, seeds: &[[f32; 3]], n: u32) -> Vec<f32> {
     let device = &headless.device;
-    let queue = &headless.queue;
     let count = (n * n * n) as usize;
 
     // label 初始化：种子所在体素写自身索引，其余 INVALID
@@ -57,12 +57,6 @@ pub fn jfa_distance_field(headless: &Headless, seeds: &[[f32; 3]], n: u32) -> Ve
         contents: bytemuck::cast_slice(&labels),
         usage: wgpu::BufferUsages::STORAGE,
     });
-    let label_b = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("jfa-label-b"),
-        size: (count * 4) as u64,
-        usage: wgpu::BufferUsages::STORAGE,
-        mapped_at_creation: false,
-    });
     let seeds_buf = {
         // WGSL array<vec4<f32>> 步长 16——Rust 侧必须按 16 字节填充（vec3 步长 12 会错位）
         let padded: Vec<[f32; 4]> = seeds.iter().map(|s| [s[0], s[1], s[2], 0.0]).collect();
@@ -72,22 +66,40 @@ pub fn jfa_distance_field(headless: &Headless, seeds: &[[f32; 3]], n: u32) -> Ve
             usage: wgpu::BufferUsages::STORAGE,
         })
     };
-    let params = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("jfa-params"),
-        size: 8,
-        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
     let dist_buf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("jfa-dist"),
         size: (count * 4) as u64,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
-    let download = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("jfa-download"),
+    jfa_run(headless, &label_a, &seeds_buf, n, &dist_buf);
+    readback_f32(headless, &dist_buf)
+}
+
+/// JFA 泛洪（步长 n/2..1）+ 终距离趟。label 缓冲须已按 INVALID/种子索引初始化；
+/// seeds 缓冲为 array<vec4<f32>>（index 坐标）；距离写入调用方提供的 dist 缓冲（index 单位），
+/// 符号与回读由调用方决定——mesh→SDF 链路因此不中断 GPU 驻留。
+pub(crate) fn jfa_run(
+    headless: &Headless,
+    label_a: &wgpu::Buffer,
+    seeds_buf: &wgpu::Buffer,
+    n: u32,
+    dist_buf: &wgpu::Buffer,
+) {
+    let device = &headless.device;
+    let queue = &headless.queue;
+    let count = (n * n * n) as usize;
+
+    let label_b = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("jfa-label-b"),
         size: (count * 4) as u64,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        usage: wgpu::BufferUsages::STORAGE,
+        mapped_at_creation: false,
+    });
+    let params = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("jfa-params"),
+        size: 8,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
 
@@ -153,7 +165,7 @@ pub fn jfa_distance_field(headless: &Headless, seeds: &[[f32; 3]], n: u32) -> Ve
         })
     };
 
-    let mut label_src = &label_a;
+    let mut label_src = label_a;
     let mut label_dst = &label_b;
     let wg = n.div_ceil(WG);
     let mut step = n / 2;
@@ -189,9 +201,21 @@ pub fn jfa_distance_field(headless: &Headless, seeds: &[[f32; 3]], n: u32) -> Ve
         pass.set_bind_group(0, &dist_bg, &[]);
         pass.dispatch_workgroups(wg, wg, wg);
     }
-    enc.copy_buffer_to_buffer(&dist_buf, 0, &download, 0, (count * 4) as u64);
     queue.submit([enc.finish()]);
+}
 
+/// 缓冲回读（f32）。
+pub(crate) fn readback_f32(headless: &Headless, buf: &wgpu::Buffer) -> Vec<f32> {
+    let device = &headless.device;
+    let download = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("readback"),
+        size: buf.size(),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    enc.copy_buffer_to_buffer(buf, 0, &download, 0, buf.size());
+    headless.queue.submit([enc.finish()]);
     let slice = download.slice(..);
     slice.map_async(wgpu::MapMode::Read, |_| {});
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
@@ -199,7 +223,7 @@ pub fn jfa_distance_field(headless: &Headless, seeds: &[[f32; 3]], n: u32) -> Ve
     bytemuck::allocation::pod_collect_to_vec(&data)
 }
 
-fn storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
+pub(crate) fn storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::COMPUTE,
@@ -212,7 +236,7 @@ fn storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
     }
 }
 
-fn uniform_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+pub(crate) fn uniform_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::COMPUTE,
