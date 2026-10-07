@@ -14,6 +14,7 @@ pub mod budget;
 pub mod gaussian;
 pub mod gsn;
 pub mod jfa;
+pub mod kernels;
 pub mod mesh_sdf_gpu;
 pub mod ply;
 pub mod scan;
