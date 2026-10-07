@@ -1,7 +1,8 @@
 //! C22 逐边 GPU 计时探针（T-GC-06）：三条转换腿各 N 次实测，记档 min/median/p95/max（ms）。
 //! 第一片只记档（先量后改）；本片（第二片）钉阈值——P95 棘轮上限 = w15d 记档 p95 × 2（红档），
 //! 超 1.5× 记档为黄档（只告警）；档位口径沿 gate_all 计时软门先例（W3H-051/052）。
-//! `budget_gate_canary` 独立构造越界样本先验红（门必须会红）。
+//! `budget_gate_canary` 独立构造越界样本先验红（门必须会红）；
+//! `budget_degrade_canary` 钉降级阶梯的序（先降旋钮再降腿）与实效（降档必须落回合成预算）。
 //! 性能类门：安静机独占跑（04-ci-and-gates §B.3）。
 //! 产出：`scratch/w15d/gpu-timings.json`。
 
@@ -185,5 +186,72 @@ fn budget_gate_canary() {
     assert!(
         red.is_some(),
         "金丝雀失败：100× 越界样本未判红 ⇒ 预算门失效"
+    );
+}
+
+/// 预算降级金丝雀（先验红 + 实效锚到真实测量）：规则侧钉死"先降旋钮再降腿"的序；
+/// 观测侧在 GPU 上实跑全档 vs 降档分辨率——合成预算 = 全档实测的一半，
+/// 降档读数必须落回预算内（否则降级是纸面动作，此测试判红）。
+#[test]
+fn budget_degrade_canary() {
+    use conv_core::budget::{BudgetPlan, BudgetResponse, respond};
+
+    // ---- 规则侧（独立构造样本，不依赖 GPU）----
+    let nominal = BudgetPlan::nominal();
+    assert_eq!(
+        respond(false, nominal),
+        BudgetResponse::Keep,
+        "预算内不得动旋钮"
+    );
+    let step1 = match respond(true, nominal) {
+        BudgetResponse::Degrade(p) => p,
+        other => panic!("超阈未降旋钮 ⇒ 阶梯失效：{other:?}"),
+    };
+    assert!(
+        step1.voxel_resolution < nominal.voxel_resolution,
+        "降档必须严减旋钮（{} 未小于 {}）",
+        step1.voxel_resolution,
+        nominal.voxel_resolution
+    );
+    // 一路到旋钮尽 ⇒ 必须降腿（"先降旋钮再降腿"的序）
+    let mut plan = step1;
+    let mut dropped = false;
+    for _ in 0..8 {
+        match respond(true, plan) {
+            BudgetResponse::Degrade(next) => plan = next,
+            BudgetResponse::DropLeg => {
+                dropped = true;
+                break;
+            }
+            BudgetResponse::Keep => panic!("超阈路径出现 Keep ⇒ 阶梯失效"),
+        }
+    }
+    assert!(dropped, "旋钮耗尽后必须降腿");
+
+    // ---- 观测侧（真实 GPU 测量）----
+    let _gpu = GPU_LOCK.lock().unwrap();
+    let hd = headless_device();
+    let (verts, faces) = icosphere(2, R);
+    let measure = |n: u32| {
+        let mut best = f64::INFINITY;
+        for _ in 0..3 {
+            let mut t =
+                GpuTimer::try_new(&hd.device, hd.timestamp_period, 64).expect("timer unavailable");
+            mesh_to_sdf_gpu(&hd, &verts, &faces, n, Some(&mut t));
+            best = best.min(t.resolve_ms(&hd).iter().sum::<f64>());
+        }
+        best
+    };
+    let t_full = measure(nominal.voxel_resolution);
+    // 合成预算：全档实测的一半——构造自观测，不是硬编码阈值
+    let budget = t_full * 0.5;
+    let t_degraded = measure(step1.voxel_resolution);
+    assert!(
+        t_degraded <= budget,
+        "降档后未落回合成预算：full={t_full:.4}ms budget={budget:.4}ms degraded={t_degraded:.4}ms"
+    );
+    println!(
+        "DEGRADE-CANARY full={t_full:.4}ms -> n={} {t_degraded:.4}ms (合成预算 {budget:.4}ms)",
+        step1.voxel_resolution
     );
 }
