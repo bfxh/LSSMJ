@@ -1,0 +1,15 @@
+[package]
+name = "conv-core"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "LSSMJ 表示转换核心：体素/隐式场·粒子·高斯·网格的高速互转（T-GC 轨第一片：CPU 腿 + JFA GPU 积木）"
+
+[dependencies]
+fast-surface-nets = "0.2.1"
+wgpu = "30.0.0"
+pollster = "0.4"
+bytemuck = "1"
+
+[profile.release]
+incremental = false
