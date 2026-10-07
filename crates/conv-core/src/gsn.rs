@@ -1,12 +1,17 @@
-//! GPU Surface Nets（T-GC-02）：SDF→mesh，逐语义复刻 fast-surface-nets 0.2.1。
+//! GPU Surface Nets（T-GC-02；分块 = T-GC-05 第一片）：SDF→mesh，逐语义复刻 fast-surface-nets 0.2.1。
 //!
 //! 设计：顶点稀疏存储（槽位 = cell 线性索引，n³ 布局），判据用 CPU 侧 `surface_points`
 //! 做 cell 映射对拍——无需 GPU 压缩（compaction 属后续片）。
+//! 分块契约（T-GC-05 第一片，锚 `W15A-034/035`）：cell 域 [0, n−1) 按 `chunk_cells` 分块；
+//!   每块在"值切片 [origin, b]（含 1-voxel halo：origin = 块起−1，钳 0）+ cell 运行区间
+//!   [origin, b)"上执行，quad 归属过滤 cell ≥ 块起（halo 层的 quad 属邻块）——
+//!   顶点/索引槽位保持全局 n³ 布局 ⇒ 分块与整块输出**全缓冲逐位可对拍**（接缝零缝判据）。
+//!   空块跳过：值块 [a, b]³ 双符号并存才运行（保守占据检测；块哈希 + GPU 遍历属后续片）。
 //! 顺序口径：四边形槽位 = atomicAdd（执行序，非确定）；判据在读回侧按"四顶点规范键"
 //! 排序后对拍——四边形集合与绕序确定 ⇒ 排序流逐位确定。
 //! 教训留档：base/前缀 + write_buffer 路线曾出现"输入逐位一致、输出随机"的未解非确定性
 //! （counts/base 读回一致、纯 kernel、identity-stub 稳定——证据在 w15c 判据档），
-//! 故本片弃用该机械；若后续需要 GPU 顺序，走 GPU scan（规范保证）而非 write_buffer。
+//! 故弃用该机械；本片每块 params 用独立缓冲（不 write_buffer），需要 GPU 顺序时走 GPU scan。
 
 use crate::jfa::{Headless, readback_f32, storage_entry, uniform_entry};
 use wgpu::util::DeviceExt;
@@ -18,6 +23,14 @@ struct P {
     _pad0: u32,
     _pad1: u32,
     _pad2: u32,
+    nv: [u32; 3],
+    _pad3: u32,
+    origin: [u32; 3],
+    _pad4: u32,
+    hi: [u32; 3],
+    _pad5: u32,
+    chunk_min: [u32; 3],
+    _pad6: u32,
 }
 
 pub struct GsnMesh {
@@ -32,18 +45,37 @@ pub struct GsnMesh {
     pub n: u32,
 }
 
-/// GPU Surface Nets：`sdf` 为 index 单位（[0,n)³），cell 范围与 CPU 版一致（[0,n−2]³）。
-pub fn surface_nets_gpu(hd: &Headless, sdf: &[f32], n: u32) -> GsnMesh {
+/// 分块运行统计（空块跳过可观察）。
+pub struct ChunkStats {
+    pub chunks: u32,
+    pub active: u32,
+}
+
+/// GPU Surface Nets（整块 = 单块运行器的退化情形）。
+pub fn surface_nets_gpu(
+    hd: &Headless,
+    sdf: &[f32],
+    n: u32,
+    timer: Option<&mut crate::timer::GpuTimer>,
+) -> GsnMesh {
+    surface_nets_gpu_chunked(hd, sdf, n, n - 1, timer).0
+}
+
+/// 分块 GPU Surface Nets：cell 域 [0, n−1) 按 `chunk_cells` 均分（末块可短）。
+/// 1-voxel halo 契约 + 空块跳过；输出槽位与整块同布局（全局 n³）。
+pub fn surface_nets_gpu_chunked(
+    hd: &Headless,
+    sdf: &[f32],
+    n: u32,
+    chunk_cells: u32,
+    mut timer: Option<&mut crate::timer::GpuTimer>,
+) -> (GsnMesh, ChunkStats) {
+    assert!(chunk_cells >= 1, "chunk_cells 必须 ≥ 1");
     let device = &hd.device;
     let queue = &hd.queue;
     let count = (n * n * n) as usize;
 
-    let sdf_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("gsn-sdf"),
-        contents: bytemuck::cast_slice(sdf),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-    // 零初始化：非表面槽位不写，但逐位确定性判据要哈希全缓冲
+    // 共享缓冲：全局 n³ 槽位（各块写入互不相交或同值重叠——halo cell 被两块重写同值）
     let vtx_pos_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("gsn-vtx-pos"),
         contents: &vec![0u8; count * 16],
@@ -53,16 +85,6 @@ pub fn surface_nets_gpu(hd: &Headless, sdf: &[f32], n: u32) -> GsnMesh {
         label: Some("gsn-vtx-flag"),
         contents: &vec![0u8; count * 4],
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-    });
-    let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("gsn-params"),
-        contents: bytemuck::bytes_of(&P {
-            n,
-            _pad0: 0,
-            _pad1: 0,
-            _pad2: 0,
-        }),
-        usage: wgpu::BufferUsages::UNIFORM,
     });
     let counter_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("gsn-counter"),
@@ -111,58 +133,117 @@ pub fn surface_nets_gpu(hd: &Headless, sdf: &[f32], n: u32) -> GsnMesh {
         cache: None,
     });
 
-    let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("gsn-bg"),
-        layout: &bgl,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: sdf_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: vtx_pos_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: vtx_flag_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: params_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 4,
-                resource: counter_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 5,
-                resource: idx_buf.as_entire_binding(),
-            },
-        ],
-    });
-
-    let dispatch_3d = |pipe: &wgpu::ComputePipeline| {
-        let mut enc =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-        {
-            let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: None,
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(pipe);
-            pass.set_bind_group(0, &bg, &[]);
-            let wg = n.div_ceil(4);
-            pass.dispatch_workgroups(wg, wg, wg);
-        }
-        queue.submit([enc.finish()]);
+    let cell_axis = n - 1;
+    let per_axis = cell_axis.div_ceil(chunk_cells);
+    let mut stats = ChunkStats {
+        chunks: 0,
+        active: 0,
     };
 
-    // ① 顶点生成 ② 四边发射（atomicAdd 槽位）
-    dispatch_3d(&gen_pipe);
-    dispatch_3d(&emit_pipe);
+    for cz in 0..per_axis {
+        for cy in 0..per_axis {
+            for cx in 0..per_axis {
+                let a = [cx * chunk_cells, cy * chunk_cells, cz * chunk_cells];
+                let b = [
+                    (a[0] + chunk_cells).min(cell_axis),
+                    (a[1] + chunk_cells).min(cell_axis),
+                    (a[2] + chunk_cells).min(cell_axis),
+                ];
+                stats.chunks += 1;
+                if !block_has_both_signs(sdf, n, a, b) {
+                    continue;
+                }
+                stats.active += 1;
+                // 1-voxel halo：运行区间与值切片同起（块起−1，钳 0）；切片上界 = cell 区间上界
+                let origin = [
+                    a[0].saturating_sub(1),
+                    a[1].saturating_sub(1),
+                    a[2].saturating_sub(1),
+                ];
+                let nv = [
+                    b[0] - origin[0] + 1,
+                    b[1] - origin[1] + 1,
+                    b[2] - origin[2] + 1,
+                ];
+                let region = extract_region(sdf, n, origin, b);
+                let sdf_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("gsn-sdf-slice"),
+                    contents: bytemuck::cast_slice(&region),
+                    usage: wgpu::BufferUsages::STORAGE,
+                });
+                let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("gsn-params"),
+                    contents: bytemuck::bytes_of(&P {
+                        n,
+                        _pad0: 0,
+                        _pad1: 0,
+                        _pad2: 0,
+                        nv,
+                        _pad3: 0,
+                        origin,
+                        _pad4: 0,
+                        hi: b,
+                        _pad5: 0,
+                        chunk_min: a,
+                        _pad6: 0,
+                    }),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("gsn-bg"),
+                    layout: &bgl,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: sdf_buf.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: vtx_pos_buf.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: vtx_flag_buf.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: params_buf.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: counter_buf.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 5,
+                            resource: idx_buf.as_entire_binding(),
+                        },
+                    ],
+                });
 
-    // ③ 回读
+                for pipe in [&gen_pipe, &emit_pipe] {
+                    let mut enc = device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+                    let tw = timer.as_deref_mut().and_then(|t| t.writes());
+                    {
+                        let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                            label: None,
+                            timestamp_writes: tw,
+                        });
+                        pass.set_pipeline(pipe);
+                        pass.set_bind_group(0, &bg, &[]);
+                        pass.dispatch_workgroups(
+                            (b[0] - origin[0]).div_ceil(4),
+                            (b[1] - origin[1]).div_ceil(4),
+                            (b[2] - origin[2]).div_ceil(4),
+                        );
+                    }
+                    queue.submit([enc.finish()]);
+                }
+            }
+        }
+    }
+
+    // 回读（与整块同布局；空块跳过时零初始化缓冲即空输出）
     let quad_count = readback_f32(hd, &counter_buf)
         .into_iter()
         .map(f32::to_bits)
@@ -183,11 +264,54 @@ pub fn surface_nets_gpu(hd: &Headless, sdf: &[f32], n: u32) -> GsnMesh {
         .map(f32::to_bits)
         .collect();
 
-    GsnMesh {
-        positions,
-        flags,
-        indices,
-        quad_count,
-        n,
+    (
+        GsnMesh {
+            positions,
+            flags,
+            indices,
+            quad_count,
+            n,
+        },
+        stats,
+    )
+}
+
+/// 值块 [a, b]³（每轴闭区间）双符号并存 ⇒ 可能存在表面 cell（保守占据检测，空块跳过用）。
+fn block_has_both_signs(sdf: &[f32], n: u32, a: [u32; 3], b: [u32; 3]) -> bool {
+    let (mut pos, mut neg) = (false, false);
+    for z in a[2]..=b[2] {
+        for y in a[1]..=b[1] {
+            let base = (y * n + z * n * n) as usize;
+            for x in a[0]..=b[0] {
+                if sdf[base + x as usize] < 0.0 {
+                    neg = true;
+                } else {
+                    pos = true;
+                }
+                if pos && neg {
+                    return true;
+                }
+            }
+        }
     }
+    false
+}
+
+/// 值切片提取：每轴闭区间 [lo, hi]（lo = 块起−1 的 halo，hi = cell 区间上界）。
+fn extract_region(sdf: &[f32], n: u32, lo: [u32; 3], hi: [u32; 3]) -> Vec<f32> {
+    let w = [
+        (hi[0] - lo[0] + 1) as usize,
+        (hi[1] - lo[1] + 1) as usize,
+        (hi[2] - lo[2] + 1) as usize,
+    ];
+    let mut out = Vec::with_capacity(w[0] * w[1] * w[2]);
+    for z in lo[2]..=hi[2] {
+        for y in lo[1]..=hi[1] {
+            let base = (y * n + z * n * n) as usize;
+            for x in lo[0]..=hi[0] {
+                out.push(sdf[base + x as usize]);
+            }
+        }
+    }
+    out
 }
