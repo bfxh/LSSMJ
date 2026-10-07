@@ -2,6 +2,10 @@
 //! （点种子下 JFA 给出精确最近种子距离——label 平局不影响距离值。）
 
 use conv_core::{Lcg, jfa::headless_device, jfa::jfa_distance_field};
+use std::sync::Mutex;
+
+// GPU 测试必须串行：并行建设备会死锁（本机实测惯犯）——全局互斥锁保证任何线程配置下安全
+static GPU_LOCK: Mutex<()> = Mutex::new(());
 
 fn seed_points(n: u32, k: usize) -> Vec<[f32; 3]> {
     let mut rng = Lcg::new(0x5eed_2026_1007);
@@ -51,6 +55,7 @@ fn fnv(data: &[f32]) -> u64 {
 
 #[test]
 fn jfa_matches_cpu_brute() {
+    let _gpu = GPU_LOCK.lock().unwrap();
     // JFA 是近似算法（Rong-Tan 2006 口径："approximation to the distance transform"）——
     // 判据 = 对拍带：mean 极小 + max ≤ 1 体素间距；罕见体素的标签失准计入近似口径。
     let n = 32;
@@ -84,6 +89,7 @@ fn jfa_matches_cpu_brute() {
 
 #[test]
 fn jfa_deterministic_bitwise() {
+    let _gpu = GPU_LOCK.lock().unwrap();
     let n = 32;
     let seeds = seed_points(n, 128);
     let headless = headless_device();

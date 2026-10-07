@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::f32::consts::PI;
 
 pub mod jfa;
+pub mod mesh_sdf_gpu;
 
 /// 域边长（index 坐标 [0, N)），网格间距 1；世界坐标由调用方缩放。
 pub const GRID: u32 = 64;
