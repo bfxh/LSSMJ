@@ -1,18 +1,18 @@
 # 账本统计（机器生成）
 
-- 生成日期：2026-10-03
+- 生成日期：2026-10-07
 - 复算命令：`python tools/ledger.py report --out docs/analysis/ledger-stats.md`
-- 账本文件：55 个 jsonl
+- 账本文件：56 个 jsonl
 
-**总条目（通过校验）：4499**；被拒条目：0；覆盖目标数：575；带 lesson 字段：4485
+**总条目（通过校验）：4522**；被拒条目：25；覆盖目标数：596；带 lesson 字段：4508
 
 ## 深度分布
 
 | depth | 条数 |
 | --- | --- |
-| source | 2418 |
-| doc | 1371 |
-| paper | 672 |
+| source | 2410 |
+| doc | 1375 |
+| paper | 699 |
 | web | 38 |
 
 ## 波次文件分布
@@ -25,6 +25,7 @@
 | w12a.jsonl | 54 |
 | w13a.jsonl | 49 |
 | w14a.jsonl | 29 |
+| w15a.jsonl | 48 |
 | w1a.jsonl | 176 |
 | w1b.jsonl | 115 |
 | w1c.jsonl | 99 |
@@ -45,7 +46,7 @@
 | w3e.jsonl | 68 |
 | w3f.jsonl | 60 |
 | w3g.jsonl | 81 |
-| w3h.jsonl | 94 |
+| w3h.jsonl | 69 |
 | w4a.jsonl | 62 |
 | w4b.jsonl | 26 |
 | w4c.jsonl | 134 |
@@ -104,8 +105,31 @@
 | thorvg | 35 |
 | slint | 34 |
 | microsoft-wpf | 29 |
-| qingjian-gates | 29 |
 | unreal-slate-umg | 28 |
+| qingjian-gates | 28 |
 | taa-playdead | 27 |
 | egui | 26 |
-| bshsq | 26 |
+| mineradio | 26 |
+
+## 被拒条目样本（前 20）
+
+- `w3h.jsonl:28` 锚文件不存在: D:/KF/unified-rx-mcp/README.md
+- `w3h.jsonl:29` 锚文件不存在: D:/KF/unified-rx-mcp/README.md
+- `w3h.jsonl:30` 锚文件不存在: D:/KF/unified-rx-mcp/README.md
+- `w3h.jsonl:31` 锚文件不存在: D:/KF/unified-rx-mcp/scripts/stat_judge.py
+- `w3h.jsonl:32` 锚文件不存在: D:/KF/unified-rx-mcp/scripts/stat_judge.py
+- `w3h.jsonl:33` 锚文件不存在: D:/KF/unified-rx-mcp/scripts/local_gate.py
+- `w3h.jsonl:34` 锚文件不存在: D:/KF/unified-rx-mcp/scripts/local_gate.py
+- `w3h.jsonl:35` 锚文件不存在: D:/KF/unified-rx-mcp/scripts/claim_gate.py
+- `w3h.jsonl:36` 锚文件不存在: D:/KF/unified-rx-mcp/scripts/claim_gate.py
+- `w3h.jsonl:37` 锚文件不存在: D:/KF/unified-rx-mcp/scripts/bench_anchor_gate.py
+- `w3h.jsonl:38` 锚文件不存在: D:/KF/unified-rx-mcp/docs/STRESS-AND-PR-GATES.md
+- `w3h.jsonl:39` 锚文件不存在: D:/KF/unified-rx-mcp/docs/STRESS-AND-PR-GATES.md
+- `w3h.jsonl:40` 锚文件不存在: D:/KF/unified-rx-mcp/docs/STRESS-AND-PR-GATES.md
+- `w3h.jsonl:41` 锚文件不存在: D:/KF/unified-rx-mcp/scripts/quality_pact_gate.py
+- `w3h.jsonl:42` 锚文件不存在: D:/KF/unified-rx-mcp/spec/cli-golden.json
+- `w3h.jsonl:43` 锚文件不存在: D:/KF/unified-rx-mcp/LEGACY_FREEZE.md
+- `w3h.jsonl:49` 引文对不上 D:/KF/BSHSQ/scripts/gate_all.sh:89（±5 行内未找到逐字引文）
+- `w3h.jsonl:50` 引文对不上 D:/KF/BSHSQ/scripts/gate_all.sh:109（±5 行内未找到逐字引文）
+- `w3h.jsonl:51` 引文对不上 D:/KF/BSHSQ/scripts/gate_all.sh:135（±5 行内未找到逐字引文）
+- `w3h.jsonl:52` 引文对不上 D:/KF/BSHSQ/scripts/gate_all.sh:147（±5 行内未找到逐字引文）

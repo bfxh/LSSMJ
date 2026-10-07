@@ -75,6 +75,7 @@
 | `w12a.jsonl` | 主代理 | 第十一轮（渲染资源与显存预算） |
 | `w13a.jsonl` | 主代理 | 第十二轮（显示拓扑 / DPI 缩放 / 窗口合成） |
 | `w14a.jsonl` | 主代理 | 第十三轮（补锚批：AccessKit 适配器 / Android / Raw Input / D3D12 / wgpu / Metal / Vulkan 色彩空间） |
+| `w15a.jsonl` | 主代理 | 第十四轮（表示转换：体素/高斯/粒子/多边形实时互转——3DGS 谱系 + 几何经典 + Rust 生态） |
 
 > 状态列由每批完成者更新；`ledger-stats.md` 是最终复算入口。
 
@@ -255,3 +256,19 @@
 | G13 | **补锚批**：把此前"未验证"节里的网络/反爬/路径缺口一次补齐（AccessKit 适配器 / Android 色彩·HDR·输入 / MS Raw Input / D3D12 状态 / wgpu 内存提示 / Metal 存储模式 / Vulkan 色彩空间） | `docs/reports/26-supplementary-anchors.md`（逐项对账表 + 结论精度修正 + 剩余未补清单） | `w14a` **29**（source 11 / doc 18） | ✅ 主代理（Android 经 google.cn 镜像；AccessKit 与 Vulkan 用本地快照） |
 
 > 本批不新增判据；C18/C19/C20/C21 的证据边界缩小。受影响报告的"未验证"节已就地更新（指回 `W14A-xxx`）。
+
+---
+
+## 第十四轮（表示转换：体素/高斯喷溅/粒子/多边形高速实时互转，2026-10-07）
+
+| # | 范围 | 产出 | 账本 | 状态 |
+| --- | --- | --- | --- | --- |
+| G14 | **表示转换层**：①3DGS 谱系（原版/SuGaR/2DGS/GOF/Scaffold/Octree-GS/RadSplat/PhysGaussian/GaussianFormer）②几何转换经典（MC/DC/SurfaceNets/JFA/各向异性核/winding numbers）③Rust 生态实测（rustc 1.99.0 / wgpu v30.0.1 / fast-surface-nets / fidget / bevy_gaussian_splatting / wgpu-3dgs-core / meshopt-rs / nanovdb-rs） | `docs/papers/representation-conversion.md`（三枢纽架构 + 12 边判定表 + crate 组合表 + 门 C22 草案 + 轨 16/M9） | `w15a` **48**（paper 27 / doc 4 / source 17） | ✅ 主代理（arXiv/S2/MERL/NUS PDF + 6 crate 仓快照 @sha；paper/doc 引文另做机械复核 31/31） |
+
+> **范围口径**：用户 2026-10-07——"体素/高斯喷溅/粒子/多边形之间的高速实时转化，Rust + 最新工具链"；
+> 物理本体仍范围外（2026-10-03 口径），转换层只与粒子数据结构接缝。新增判据 **C22（草案）**、
+> ADR **Q1**、任务表**轨 16**（T-GC-01..06）、**里程碑 M9**。
+> 证据边界如实记录：screen-space-fluids 不可达（S2 429）；MC/DC 仅题名锚；三条边待补锚（见报告 §6）。
+> **环境性既有红（非本轮引入，2026-10-07 全量门如实入账）**：w3h 的 25 条锚指向
+> `D:/KF/unified-rx-mcp`——该目录已被用户侧归档（2026-10-04），锚文件不存在 ⇒ verify 全量
+> `rejected=25`（w15a 本身 48/0 绿）。处置留待下一补锚批：对 `D:/KF/ADV` 重锚（内容一致才可）或标注不可达，不许凭记忆重锚。

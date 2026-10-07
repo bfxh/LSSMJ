@@ -166,5 +166,53 @@
   "local_path": "D:/KF/LSSMJ/scratch/src/blitz",
   "fetched_at": "2026-10-01",
   "method": "git clone --depth 1 --filter=blob:none"
+ },
+ {
+  "target": "fast-surface-nets",
+  "url": "https://github.com/bonsairobo/fast-surface-nets-rs",
+  "commit": "2216ac27ad36068b9342dff02231d26c27b3d3df",
+  "local_path": "D:/KF/LSSMJ/scratch/src/fast-surface-nets",
+  "fetched_at": "2026-10-07",
+  "method": "git clone --depth 1 --filter=blob:none"
+ },
+ {
+  "target": "fidget",
+  "url": "https://github.com/mkeeter/fidget",
+  "commit": "e2fda4771ee133dfdec4f249442d017f9cf609af",
+  "local_path": "D:/KF/LSSMJ/scratch/src/fidget",
+  "fetched_at": "2026-10-07",
+  "method": "git clone --depth 1 --filter=blob:none"
+ },
+ {
+  "target": "bevy_gaussian_splatting",
+  "url": "https://github.com/mosure/bevy_gaussian_splatting",
+  "commit": "22c6444af0828d25d06da1624ce5db4547d75003",
+  "local_path": "D:/KF/LSSMJ/scratch/src/fetched-bevy_gaussian_splatting",
+  "fetched_at": "2026-10-07",
+  "method": "gh api contents (README + 2 src snapshots)"
+ },
+ {
+  "target": "wgpu-3dgs-core",
+  "url": "https://github.com/LioQing/wgpu-3dgs-core",
+  "commit": "f64a247a8fef4ba93322b94b21423470c1534335",
+  "local_path": "D:/KF/LSSMJ/scratch/src/fetched-wgpu-3dgs-core",
+  "fetched_at": "2026-10-07",
+  "method": "gh api contents (README)"
+ },
+ {
+  "target": "meshopt-rs",
+  "url": "https://github.com/gwihlidal/meshopt-rs",
+  "commit": "3c8c9126cd98e70f34c6d9c54d02f41af6749406",
+  "local_path": "D:/KF/LSSMJ/scratch/src/fetched-meshopt-rs",
+  "fetched_at": "2026-10-07",
+  "method": "gh api contents (README)"
+ },
+ {
+  "target": "nanovdb-rs",
+  "url": "https://github.com/ototoi/nanovdb-rs",
+  "commit": "3d869c1faea9c1f8d1fadc43a1f0505e4d74faea",
+  "local_path": "D:/KF/LSSMJ/scratch/src/fetched-nanovdb-rs",
+  "fetched_at": "2026-10-07",
+  "method": "gh api contents (README)"
  }
 ]

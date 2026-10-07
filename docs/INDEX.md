@@ -74,6 +74,7 @@
 | `papers/anime-film-look.md` | 泡沫时期科幻动漫画质（效果链 E1–E13；显示域施加=规范级共识） |
 | `papers/real-time-lighting-deep.md` | 实时光影主链（阴影/多光源/AO/GI/混合；P0 游戏向，w9a 128 条） |
 | `papers/animation-runtime.md` | 角色动画运行时（蒙皮/混合图/状态机/IK/根运动/表情与次级运动；w10a 81 条） |
+| `papers/representation-conversion.md` | 表示转换（体素/隐式场·粒子·高斯·网格实时互转：三枢纽架构 + 12 边判定表；w15a 48 条，C22/轨 16/M9） |
 | `platforms/game-ui-middleware.md` | 游戏/应用商业 UI 中间件谱系（Noesis/Coherent/Ultralight/Scaleform 遗产/CEF 路线；许可红线） |
 | `platforms/compositors-and-system-ui.md` | 平台合成器与闭源系统 UI（DWM/UI.Composition/SurfaceFlinger/render server/SwiftUI/WinUI3） |
 | `engines/cpp-2d-rasterizers.md` | C++ 光栅器第二组（Blend2D/ThorVG/NanoVG/Cairo；ThorVG 脏区范式） |
