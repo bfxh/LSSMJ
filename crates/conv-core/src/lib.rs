@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::f32::consts::PI;
 
 pub mod budget;
+pub mod gaussian;
 pub mod gsn;
 pub mod jfa;
 pub mod mesh_sdf_gpu;
