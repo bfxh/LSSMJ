@@ -59,7 +59,9 @@ pub fn mesh_to_sdf_gpu(hd: &Headless, verts: &[[f32; 3]], faces: &[[u32; 3]], n:
             n_tris,
             n,
             density: 1.5,
-            band: 3.0,
+            // 符号带宽 > 比较带宽（3）：样本稀疏导致"到样本距离"略大于"到表面距离"，
+            // 带内体素必须全部投符号，否则带缘出现正负错配（判据首跑抓到）
+            band: 4.5,
         }),
         usage: wgpu::BufferUsages::UNIFORM,
     });

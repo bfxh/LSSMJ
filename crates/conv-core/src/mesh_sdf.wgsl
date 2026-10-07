@@ -86,12 +86,16 @@ fn sign_radial(@builtin(global_invocation_id) gid: vec3<u32>) {
         return; // 带外不投符号（窄带口径）
     }
     let pos = vec3<f32>(gid);
-    let pl = length(pos);
+    // 射线起点 = 球心（world 原点 → index (n-1)/2）。index 单位换算后"原点"语义
+    // 移到了网格角 (0,0,0)（球外！）——判据首跑的符号翻转即此因。
+    let center = vec3<f32>(f32(n) - 1.0) * 0.5;
+    let rel = pos - center;
+    let pl = length(rel);
     var inside = false;
     if (pl < 1e-6) {
         inside = true;
     } else {
-        let dir = pos / pl;
+        let dir = rel / pl;
         var t_exit = 0.0;
         // 逐体素 MT 射线（凸体判据口径；一般网格换 winding/树属后续片）
         for (var t = 0u; t < mp.n_tris; t++) {
@@ -106,7 +110,7 @@ fn sign_radial(@builtin(global_invocation_id) gid: vec3<u32>) {
                 continue;
             }
             let inv = 1.0 / det;
-            let tv = -a; // 射线起点=原点（与 CPU radial_sign 同口径）
+            let tv = center - a; // 射线起点=球心（与 CPU radial_sign 的 world 原点同语义）
             let u = dot(tv, pv) * inv;
             if (u < 0.0 || u > 1.0) {
                 continue;
