@@ -1,0 +1,9 @@
+# 固定工具链（v5 阶段 1）：版本来自一次实际干净构建验证——
+# 2026-10-08 在 x86_64-unknown-linux-gnu 上以 rustc 1.99.0 (b940084d7 2026-09-28)
+# 完整通过 fmt/clippy/--locked lib+cpu_legs+doc tests 与 --all-targets --no-run。
+# 账本 W15C-001 显示作者本机原型同样运行于 rustc 1.99.0（独立旁证，非本次选版依据）。
+# 升级工具链走独立 PR，并重跑同一门集合；不随 CI 镜像默认版本漂移。
+[toolchain]
+channel = "1.99.0"
+profile = "minimal"
+components = ["rustfmt", "clippy"]
