@@ -68,7 +68,7 @@ fn gsn_matches_cpu_per_cell() {
     let _gpu = GPU_LOCK.lock().unwrap();
     let sdf = field_to_voxels(GRID, R);
     let hd = headless_device();
-    let gpu = surface_nets_gpu(&hd, &sdf, GRID).expect("gsn");
+    let gpu = surface_nets_gpu(&hd, &sdf, GRID, None).expect("gsn");
 
     let mut cpu = SurfaceNetsBuffer::default();
     surface_nets(&sdf, &Shape {}, [0; 3], [GRID - 1; 3], &mut cpu);
@@ -133,8 +133,8 @@ fn gsn_deterministic_bitwise() {
     let _gpu = GPU_LOCK.lock().unwrap();
     let sdf = field_to_voxels(GRID, R);
     let hd = headless_device();
-    let a = surface_nets_gpu(&hd, &sdf, GRID).expect("gsn a");
-    let b = surface_nets_gpu(&hd, &sdf, GRID).expect("gsn b");
+    let a = surface_nets_gpu(&hd, &sdf, GRID, None).expect("gsn a");
+    let b = surface_nets_gpu(&hd, &sdf, GRID, None).expect("gsn b");
     // 顶点逐位确定（全缓冲哈希）；索引执行序非确定 ⇒ 规范键排序后逐位对拍
     assert_eq!(fnv_mesh(&a.positions, &[]), fnv_mesh(&b.positions, &[]));
     let qa = canonical_quads(&a.indices, None);

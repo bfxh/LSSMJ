@@ -13,6 +13,10 @@ const WG: u32 = 4; // workgroup_size(4,4,4)
 pub struct Headless {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
+    /// 适配器支持 TIMESTAMP_QUERY 时的每 tick 纳秒数（`Queue::get_timestamp_period` 口径；C22 逐边计时的能力探测）
+    pub timestamp_period: Option<f32>,
+    /// 实际选中的适配器名 + 后端（读数四件套的"机器"口径——本机多适配器，读数必须自带指认）
+    pub adapter_name: String,
 }
 
 /// 无头设备（判据/离线管线用；显示面走引擎侧 T-PH-01）。
@@ -39,9 +43,13 @@ pub fn try_headless_device_sized(need_bytes: u64) -> Result<Headless, String> {
         else {
             continue;
         };
+        // C22：适配器支持 TIMESTAMP_QUERY 就请求它（逐边计时要用），否则退回空特性。
+        let ts = wgpu::Features::TIMESTAMP_QUERY;
+        let want_ts = adapter.features().contains(ts);
+        let feats = if want_ts { ts } else { wgpu::Features::empty() };
         let make_desc = |limits: wgpu::Limits| wgpu::DeviceDescriptor {
             label: Some("conv-core-headless"),
-            required_features: wgpu::Features::empty(),
+            required_features: feats,
             required_limits: limits,
             experimental_features: wgpu::ExperimentalFeatures::disabled(),
             memory_hints: wgpu::MemoryHints::MemoryUsage,
@@ -73,7 +81,18 @@ pub fn try_headless_device_sized(need_bytes: u64) -> Result<Headless, String> {
                 }
             }
         };
-        return Ok(Headless { device, queue });
+        let timestamp_period = if want_ts {
+            Some(queue.get_timestamp_period())
+        } else {
+            None
+        };
+        let info = adapter.get_info();
+        return Ok(Headless {
+            device,
+            queue,
+            timestamp_period,
+            adapter_name: format!("{} ({:?})", info.name, info.backend),
+        });
     }
     Err("no wgpu adapter".into())
 }
@@ -86,7 +105,12 @@ struct Params {
 }
 
 /// JFA 距离场（CPU 种子便捷入口）：`seeds` 为 index 坐标，返回每体素最近种子距离（index 单位）。
-pub fn jfa_distance_field(headless: &Headless, seeds: &[[f32; 3]], n: u32) -> Vec<f32> {
+pub fn jfa_distance_field(
+    headless: &Headless,
+    seeds: &[[f32; 3]],
+    n: u32,
+    timer: Option<&mut crate::timer::GpuTimer>,
+) -> Vec<f32> {
     let device = &headless.device;
     let count = (n * n * n) as usize;
 
@@ -117,7 +141,7 @@ pub fn jfa_distance_field(headless: &Headless, seeds: &[[f32; 3]], n: u32) -> Ve
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
-    jfa_run(headless, &label_a, &seeds_buf, n, &dist_buf);
+    jfa_run(headless, &label_a, &seeds_buf, n, &dist_buf, timer);
     readback_f32(headless, &dist_buf)
 }
 
@@ -130,6 +154,7 @@ pub(crate) fn jfa_run(
     seeds_buf: &wgpu::Buffer,
     n: u32,
     dist_buf: &wgpu::Buffer,
+    mut timer: Option<&mut crate::timer::GpuTimer>,
 ) {
     let device = &headless.device;
     let queue = &headless.queue;
@@ -219,10 +244,11 @@ pub(crate) fn jfa_run(
         let bg = make_bg("jfa-pass-bg", label_src, label_dst);
         let mut enc =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        let tw = timer.as_deref_mut().and_then(|t| t.writes());
         {
             let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: None,
-                timestamp_writes: None,
+                timestamp_writes: tw,
             });
             pass.set_pipeline(&pass_pipe);
             pass.set_bind_group(0, &bg, &[]);
@@ -237,10 +263,11 @@ pub(crate) fn jfa_run(
     queue.write_buffer(&params, 0, bytemuck::bytes_of(&Params { step: 0, n }));
     let dist_bg = make_bg("jfa-dist-bg", label_src, label_dst);
     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    let tw = timer.and_then(|t| t.writes());
     {
         let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: None,
-            timestamp_writes: None,
+            timestamp_writes: tw,
         });
         pass.set_pipeline(&dist_pipe);
         pass.set_bind_group(0, &dist_bg, &[]);
