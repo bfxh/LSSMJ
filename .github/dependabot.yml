@@ -1,0 +1,11 @@
+# 依赖更新仅自动提 PR，不自动合并；wgpu / 工具链类升级需按 v3 §10.6 特别验证。
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: cargo
+    directory: /crates/conv-core
+    schedule:
+      interval: weekly
