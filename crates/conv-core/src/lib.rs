@@ -10,9 +10,15 @@
 use std::collections::{HashMap, HashSet};
 use std::f32::consts::PI;
 
+pub mod budget;
+pub mod gaussian;
 pub mod gsn;
 pub mod jfa;
+pub mod kernels;
 pub mod mesh_sdf_gpu;
+pub mod ply;
+pub mod scan;
+pub mod timer;
 
 /// 域边长（index 坐标 [0, N)），网格间距 1；世界坐标由调用方缩放。
 pub const GRID: u32 = 64;
