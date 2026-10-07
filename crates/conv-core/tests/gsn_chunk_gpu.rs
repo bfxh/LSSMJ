@@ -153,6 +153,25 @@ fn chunked_gsn_odd_chunk_size() {
 }
 
 #[test]
+fn chunked_gsn_dense_block_table() {
+    let _gpu = GPU_LOCK.lock().unwrap();
+    let sdf = field_to_voxels(GRID, R);
+    let hd = headless_device();
+    let whole = surface_nets_gpu(&hd, &sdf, GRID, None);
+    // C=8：8 轴块 = 512 块（密块压力：单趟遍历的展平/索引数学）
+    let (chunked, stats) = surface_nets_gpu_chunked(&hd, &sdf, GRID, 8, None);
+    println!("chunk stats: {}/{} 活跃（C=8）", stats.active, stats.chunks);
+    assert_eq!(stats.chunks, 512, "8 轴块应得 512 块");
+    assert_positions_bitwise_equal(&whole.positions, &chunked.positions);
+    assert_eq!(whole.flags, chunked.flags);
+    assert_eq!(whole.quad_count, chunked.quad_count);
+    assert_eq!(
+        canonical_quads(&whole.indices),
+        canonical_quads(&chunked.indices)
+    );
+}
+
+#[test]
 fn chunked_gsn_skips_empty_blocks() {
     let _gpu = GPU_LOCK.lock().unwrap();
     // 小球（R=0.3）：球面只穿中段块，角落块全正 ⇒ 必须被跳过
