@@ -33,7 +33,12 @@ pub struct GsnMesh {
 }
 
 /// GPU Surface Nets：`sdf` 为 index 单位（[0,n)³），cell 范围与 CPU 版一致（[0,n−2]³）。
-pub fn surface_nets_gpu(hd: &Headless, sdf: &[f32], n: u32) -> GsnMesh {
+pub fn surface_nets_gpu(
+    hd: &Headless,
+    sdf: &[f32],
+    n: u32,
+    mut timer: Option<&mut crate::timer::GpuTimer>,
+) -> GsnMesh {
     let device = &hd.device;
     let queue = &hd.queue;
     let count = (n * n * n) as usize;
@@ -142,13 +147,15 @@ pub fn surface_nets_gpu(hd: &Headless, sdf: &[f32], n: u32) -> GsnMesh {
         ],
     });
 
-    let dispatch_3d = |pipe: &wgpu::ComputePipeline| {
+    let dispatch_3d = |pipe: &wgpu::ComputePipeline,
+                       timer: &mut Option<&mut crate::timer::GpuTimer>| {
         let mut enc =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        let tw = timer.as_deref_mut().and_then(|t| t.writes());
         {
             let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: None,
-                timestamp_writes: None,
+                timestamp_writes: tw,
             });
             pass.set_pipeline(pipe);
             pass.set_bind_group(0, &bg, &[]);
@@ -159,8 +166,8 @@ pub fn surface_nets_gpu(hd: &Headless, sdf: &[f32], n: u32) -> GsnMesh {
     };
 
     // ① 顶点生成 ② 四边发射（atomicAdd 槽位）
-    dispatch_3d(&gen_pipe);
-    dispatch_3d(&emit_pipe);
+    dispatch_3d(&gen_pipe, &mut timer);
+    dispatch_3d(&emit_pipe, &mut timer);
 
     // ③ 回读
     let quad_count = readback_f32(hd, &counter_buf)
