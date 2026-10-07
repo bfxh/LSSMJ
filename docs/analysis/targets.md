@@ -77,6 +77,7 @@
 | `w14a.jsonl` | 主代理 | 第十三轮（补锚批：AccessKit 适配器 / Android / Raw Input / D3D12 / wgpu / Metal / Vulkan 色彩空间） |
 | `w15a.jsonl` | 主代理 | 第十四轮（表示转换：体素/高斯/粒子/多边形实时互转——3DGS 谱系 + 几何经典 + Rust 生态） |
 | `w15b.jsonl` | 主代理 | 第十四轮补锚批（w3h 修复 + DC 全文 + FLIP/MPM-Snow/屏幕空间流体 + SuGaR binding + Bourke） |
+| `w15c.jsonl` | 主代理 | 第十四轮 C22 CPU 参照实测（conv-proto 五判据 + 两处仪器错留档 + mesh→粒子锚） |
 
 > 状态列由每批完成者更新；`ledger-stats.md` 是最终复算入口。
 
@@ -278,3 +279,4 @@
 | # | 范围 | 产出 | 账本 | 状态 |
 | --- | --- | --- | --- | --- |
 | G14b | **w15b 补锚批**（2026-10-07 同日）：①w3h 修复=18 条归档快照重锚（7z -so → .txt，字节数逐一吻合）+ 5 条 BSHSQ 行号重锚 + 1 条否证记档（gate_all.sh 计时门"只报读数"→软门，演进否证按时间戳入档）+ 1 条迁移重锚；②DC 全文锚（Rice PDF，real-time 破坏性修改）；③screen-space-fluids / Zhu-Bridson FLIP / Stomakhin MPM-Snow 摘要锚（**OpenAlex 路线**，S2 429 持续）；④SuGaR binding（mesh→高斯腿）；⑤Bourke 参考页（MC doc 锚） | 报告 §6 就地更新（指回 `W15B-xxx`） | `w15b` **15**（paper 12 / doc 2 / source 1） | ✅ 主代理；全量门 **4562 / 0**；仍缺 mesh→粒子、体素→高斯两锚（报告 §6.4） |
+| G14c | **C22 CPU 参照实测**（2026-10-07 同日）：`scratch/conv-proto`（edition 2024 + fast-surface-nets 0.2.1）四条腿五判据 **GATE ALL PASS**——J2 max_err 恰=弦差上界 0.01331；J3a 体积相对误差 0.00193；J3b χ=2；J3c 逐位确定性哈希；J4 粒子场 mean_err 0.00548；SN 1.182ms/21072 三角≈17.8M tri/s（交叉验证 README 口径）；**判据首跑连抓两处仪器错**（tess_bound 量错位置 + 射线起点错，被测实现零错）+ mesh→粒子锚（Öztireli TVCG 2012 / EG2013） | 报告新增 §8 实测节（`W15C-001..009`） | `w15c` **11**（source 9 / paper 2） | ✅ 主代理；全量门 **4573 / 0**；GPU 版与 JFA 待实施（等代码归属拍板） |

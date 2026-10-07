@@ -6,9 +6,10 @@
 > crate 快照 `scratch/src/{fast-surface-nets,fidget}`（浅克隆 @2216ac2/@e2fda47）与
 > `scratch/src/fetched-*`（gh api 抓取 @sha 见 `targets-lock.json`）。
 > **账本**：`docs/analysis/ledger/w15a.jsonl` **48 条** + 同日补锚批 `w15b.jsonl` **15 条**
-> （合计 **63 / verify rejected=0**；w15a = paper 27 / doc 4 / source 17，w15b = paper 12 / doc 2 / source 1）。
-> 本报告每条主张都指到 `W15A-xxx` / `W15B-xxx`；
-> paper/doc 行的引文另做过一道机械复核（逐字命中抓取快照，`assemble*.py` 输出：w15a 31/31、w15b 14/14）。
+> + CPU 参照实测批 `w15c.jsonl` **11 条**（合计 **74 / verify rejected=0**；
+> w15a = paper 27 / doc 4 / source 17，w15b = paper 12 / doc 2 / source 1，w15c = source 9 / paper 2）。
+> 本报告每条主张都指到 `W15A-xxx` / `W15B-xxx` / `W15C-xxx`；
+> paper/doc 行的引文另做过一道机械复核（逐字命中抓取快照，`assemble*.py` 输出：w15a 31/31、w15b 14/14、w15c 2/2）。
 > **范围口径**：用户 2026-10-07——"体素/高斯喷溅/粒子/多边形之间的高速实时转化，Rust + 最新工具链"。
 > **物理本体仍范围外**（2026-10-03 口径不变，用户侧已有实现）：本层只做**表示转换**与其判据，
 > 与物理引擎之间只保留数据接缝（粒子状态进/出）。
@@ -169,7 +170,8 @@
 
 ## 6. 未验证项（不许当结论；w15b 补锚批已就地更新）
 
-1. **本机零实测**：全部数字是论文/README 口径（机器、驱动、版本未标注的已如实照录）；C22 全部"待实现"。
+1. **本机 CPU 参照实测已落地（w15c，2026-10-07，见 §8）**：四条腿 + 五道机器判据全绿（GATE ALL PASS）；
+   论文侧数字仍是论文口径；**GPU 版未实测**（等代码归属拍板）。
 2. ~~screen-space-fluids 抓取不可达~~ **已补锚（w15b）**：Goswami 2010 经 OpenAlex 取得摘要——
    "只从表面粒子光栅化部分距离场" + "Z 索引并行排序消除网格/层次结构内存开销" + "很高帧率"
    （`W15B-010/011/012`）。粒子→SDF→体渲染全链（不出 mesh 的替代路线）与"莫顿序可绕开稀疏树"
@@ -177,10 +179,11 @@
 3. **MC/DC 锚升级**：dual-contouring 已升级全文锚（Rice 托管 PDF：Hermite 网格 contouring +
    **real-time** 破坏性修改演示，`W15B-002/003`）；**marching-cubes 1987 主文仍不可达**
    （ACM 付费墙，各大学镜像 404/证书坏），补 Bourke 权威参考页 doc 锚（`W15B-014/015`），题名锚保留。
-4. **边锚补齐情况（w15b 后）**：体素↔粒子已锚（Zhu & Bridson 2005 FLIP：粒子云+辅助网格分工 +
+4. **边锚补齐情况（w15b/w15c 后）**：体素↔粒子已锚（Zhu & Bridson 2005 FLIP：粒子云+辅助网格分工 +
    逐帧表面重建，`W15B-004..006`）；粒子↔网格的拓扑价值与"条件数与粒子数无关"已锚（MPM Snow，
-   `W15B-007..009`）；mesh→高斯已锚（SuGaR binding，`W15B-013`）。**仍缺一手锚**：
-   mesh→粒子（几何→粒子初始采样）与体素→高斯（无解码器工程近似）。
+   `W15B-007..009`）；mesh→高斯已锚（SuGaR binding，`W15B-013`）；**mesh→粒子已锚**
+   （Öztireli & Gross TVCG 2012 蓝噪声面采样 + EG2013 direct Poisson disk，`W15C-010/011`）。
+   **仅剩一手锚缺**：体素→高斯（无解码器工程近似——Octree-GS/Scaffold 锚定的是"有解码器"路线）。
 5. **w3h 环境性红已修复（w15b，`W15B-001`）**：18 条 unified-rx-mcp 锚自归档快照重锚
    （字节数与归档清单逐一吻合）+ 5 条 BSHSQ 行号重锚 + 1 条**否证记档**（gate_all.sh 计时门已从
    "只报读数不判红"演进为软门 >2× 红/>1.5× 黄——原观察被演进否证，按时间戳入档）+
@@ -193,13 +196,37 @@
 ## 7. 复算命令
 
 ```bash
-# 账本门（w15a 48 + w15b 15 = 63 条 / rejected=0；全量 4562 / 0）
+# 账本门（w15a 48 + w15b 15 + w15c 11 = 74 条 / rejected=0；全量 4573 / 0）
 python tools/ledger.py verify --file docs/analysis/ledger/w15a.jsonl
 python tools/ledger.py verify --file docs/analysis/ledger/w15b.jsonl
-python tools/ledger.py stats  --file docs/analysis/ledger/w15a.jsonl
-# 装配 + paper/doc 引文机械复核（应输出 w15a 31/31、w15b 14/14 命中）
+python tools/ledger.py verify --file docs/analysis/ledger/w15c.jsonl
+# 装配 + paper/doc 引文机械复核（应输出 w15a 31/31、w15b 14/14、w15c 2/2 命中）
 python scratch/w15a/assemble.py
 python scratch/w15b/assemble_w15b.py
+python scratch/w15c/assemble_w15c.py
+# CPU 参照实测（五判据应 GATE ALL PASS；读数见 scratch/w15c/proto-results.json）
+cd scratch/conv-proto && CARGO_INCREMENTAL=0 cargo run --release
 # 工具链口径
 rustc --version   # rustc 1.99.0 (b940084d7 2026-09-28)
 ```
+
+## 8. CPU 参照实测（2026-10-07，本机 release，rustc 1.99.0；原型 `scratch/conv-proto/`）
+
+四条腿 + 五道机器判据，**GATE ALL PASS**（账本 `W15C-001..009`）：
+
+| 腿 | 实现口径 | 本机读数 | 判据 | 结果 |
+| --- | --- | --- | --- | --- |
+| 解析场→体素 | 64³ 全格采样 | 0.194 ms / 262144 体素（1351 M/s） | —（腿2/3 的输入） | — |
+| mesh→SDF | icosphere(320 面) 暴力点-三角 + 径向出射符号，窄带 ±3H | 104.3 ms / 42408 带内点（391 k点/s） | J2：max_err=0.01331 **恰等于弦差上界** tess_bound=0.01331 ≤ +1.5H=0.06093 | ✅ |
+| SDF→mesh | Surface Nets（fast-surface-nets 0.2.1） | **1.182 ms / 21072 三角 ≈ 17.8M tri/s**（与 README 20M/s 口径交叉验证，`W15A-032`） | J3a 体积相对误差 0.00193 ≤ 0.03；J3b χ=2（亏格 0）；J3c 同输入逐位哈希相同（`ea3ea1f97bf4bef9`） | ✅✅✅ |
+| 粒子→无符号场 | 4096 Fibonacci 球面粒子，naive 最近粒子（JFA 的 CPU 替身口径） | 107.3 ms / 28032 带内点 | J4：mean_err=0.00548 ≤ 0.05（max 0.02722） | ✅ |
+
+**判据首跑连抓两处仪器错**（被测实现零错——"先量后改"的直接兑现，`W15C-006/007`）：
+① 弦差上界量在球面**顶点**上（构造保证恒为 0——"参照量恒零"是仪器错的签名），修正为**面心**；
+② 径向出射符号的射线起点误写成 `p`（应为原点）⇒ 全部内部点翻号；换符号方法后误差值逐位相同
+（0.18380）成为排除法线索，锁定共享输入路径。修复后 J2 的最坏误差**恰好贴着理论下界走**
+（= 弦差上界），余量全部留给分辨率预算——这是解析对拍的理想读数形态。
+
+**边界**：本表为 CPU 单线程参照读数（narrow-band 口径、凸体测试对象）；GPU compute 版与
+JFA/莫顿序方案未实测，实施时以此表为对账基线。原型代码暂在 `scratch/conv-proto/`（未入仓），
+代码归属拍板后迁移并接入门禁。
