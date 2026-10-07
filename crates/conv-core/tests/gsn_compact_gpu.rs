@@ -3,7 +3,7 @@
 
 use conv_core::{
     GRID, field_to_voxels,
-    gsn::{compact_mesh, surface_nets_gpu},
+    gsn::{compact_mesh, surface_nets_gpu, surface_nets_gpu_chunked, surface_nets_gpu_compact},
     jfa::headless_device,
 };
 use std::sync::Mutex;
@@ -14,6 +14,18 @@ const R: f32 = 0.75;
 
 fn cell_of(slot: u32, n: u32) -> [u32; 3] {
     [slot % n, (slot / n) % n, slot / (n * n)]
+}
+
+fn cell_lin(c: [u32; 3]) -> u32 {
+    c[0] + c[1] * GRID + c[2] * GRID * GRID
+}
+
+/// 稠密顶点号 → cell 线性号（第 i 个稠密顶点 = 第 i 个 flagged cell）。
+fn dense_of(flags: &[u32]) -> Vec<u32> {
+    (0..flags.len() as u32)
+        .filter(|&i| flags[i as usize] == 1)
+        .map(|c| cell_lin(cell_of(c, GRID)))
+        .collect()
 }
 
 /// 把三角形两端顶点经 `m` 映射成 cell 线性号后规范化（两个三角各自升序，quad 内字典序）。
@@ -67,11 +79,7 @@ fn compact_mesh_dense_matches_sparse_bitwise() {
     }
 
     // ③ 索引重映射：稠密索引 → cell（第 i 个稠密顶点 = 第 i 个 flagged cell）后与稀疏规范一致
-    let cell_lin = |c: [u32; 3]| c[0] + c[1] * GRID + c[2] * GRID * GRID;
-    let dense_cells: Vec<u32> = flagged
-        .iter()
-        .map(|&c| cell_lin(cell_of(c, GRID)))
-        .collect();
+    let dense_cells = dense_of(&whole.flags);
     assert!(
         compact
             .indices
@@ -125,4 +133,75 @@ fn compact_mesh_empty_input() {
     assert_eq!(compact.vertex_count, 0);
     assert!(compact.positions.is_empty());
     assert!(compact.indices.is_empty());
+}
+
+#[test]
+fn direct_compact_matches_two_step_bitwise() {
+    let _gpu = GPU_LOCK.lock().unwrap();
+    let sdf = field_to_voxels(GRID, R);
+    let hd = headless_device();
+    // 直出（runner 免稀疏回写）vs 两步法（稀疏回读 + compact_mesh）
+    let (direct, stats) = surface_nets_gpu_compact(&hd, &sdf, GRID, 16, None);
+    let (sparse, _) = surface_nets_gpu_chunked(&hd, &sdf, GRID, 16, None);
+    let two_step = compact_mesh(&hd, &sparse, None);
+    println!(
+        "direct: {} 顶点 / {} 四边形（活跃块 {}/{}）",
+        direct.vertex_count,
+        direct.indices.len() / 6,
+        stats.active,
+        stats.chunks
+    );
+
+    // ① 计数
+    assert_eq!(direct.vertex_count, two_step.vertex_count, "顶点数不一致");
+    assert_eq!(direct.positions.len(), two_step.positions.len());
+    assert_eq!(direct.indices.len(), two_step.indices.len());
+
+    // ② 稠密顶点逐位（两侧均为 cell 序）
+    let diff = direct
+        .positions
+        .iter()
+        .zip(&two_step.positions)
+        .filter(|(x, y)| {
+            x[0].to_bits() != y[0].to_bits()
+                || x[1].to_bits() != y[1].to_bits()
+                || x[2].to_bits() != y[2].to_bits()
+        })
+        .count();
+    assert_eq!(diff, 0, "稠密顶点非逐位一致（{diff} 项）");
+
+    // ③ 规范四边形（同一 dense→cell 映射）
+    let dense_cells = dense_of(&sparse.flags);
+    let q_direct = canonical_quads_map(&direct.indices, |v| dense_cells[v as usize]);
+    let q_two = canonical_quads_map(&two_step.indices, |v| dense_cells[v as usize]);
+    assert_eq!(q_direct, q_two, "规范四边形集合不一致");
+}
+
+#[test]
+fn direct_compact_deterministic_bitwise() {
+    let _gpu = GPU_LOCK.lock().unwrap();
+    let sdf = field_to_voxels(GRID, R);
+    let hd = headless_device();
+    let (a, _) = surface_nets_gpu_compact(&hd, &sdf, GRID, 16, None);
+    let (b, _) = surface_nets_gpu_compact(&hd, &sdf, GRID, 16, None);
+    assert_eq!(a.vertex_count, b.vertex_count);
+    let diff = a
+        .positions
+        .iter()
+        .zip(&b.positions)
+        .filter(|(x, y)| {
+            x[0].to_bits() != y[0].to_bits()
+                || x[1].to_bits() != y[1].to_bits()
+                || x[2].to_bits() != y[2].to_bits()
+        })
+        .count();
+    assert_eq!(diff, 0, "直出稠密顶点非确定（差异 {diff} 项）");
+    // 索引：原子序非确定 ⇒ 规范比较（映射由 flags 重建）
+    let flags = surface_nets_gpu(&hd, &sdf, GRID, None).flags;
+    let dense_cells = dense_of(&flags);
+    assert_eq!(
+        canonical_quads_map(&a.indices, |v| dense_cells[v as usize]),
+        canonical_quads_map(&b.indices, |v| dense_cells[v as usize]),
+        "直出索引规范集合非确定"
+    );
 }

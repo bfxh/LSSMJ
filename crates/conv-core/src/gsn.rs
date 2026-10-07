@@ -1,21 +1,25 @@
 //! GPU Surface Nets（T-GC-02；分块 = T-GC-05）：SDF→mesh，逐语义复刻 fast-surface-nets 0.2.1。
 //!
 //! 设计：顶点稀疏存储（槽位 = cell 线性索引，n³ 布局），判据用 CPU 侧 `surface_points`
-//! 做 cell 映射对拍——无需 GPU 压缩（compaction 属后续片）。
+//! 做 cell 映射对拍。
 //! 分块契约（T-GC-05 第一片，锚 `W15A-034/035`）：cell 域 [0, n−1) 按 `chunk_cells` 分块；
 //!   每块在"值切片 [origin, b]（含 1-voxel halo：origin = 块起−1，钳 0）+ cell 运行区间
 //!   [origin, b)"上执行，quad 归属过滤 cell ≥ 块起（halo 层的 quad 属邻块）——
 //!   顶点/索引槽位保持全局 n³ 布局 ⇒ 分块与整块输出**全缓冲逐位可对拍**（接缝零缝判据）。
 //! 遍历口径（T-GC-05 第二片）：块表 = 活跃块列表（值块 [a, b]³ 双符号并存的保守占据检测）；
-//!   每块 params 与值切片打包进数组/单缓冲，**单趟 dispatch 跑全部活跃块**（2 次提交/
-//!   2 个 pass，替换第一片的"每块 2 提交 + 每块 bind group"）；块哈希结构（无界场景）与
-//!   GPU 侧占据检测/indirect dispatch 属后续片。
+//!   每块 params 与值切片打包进数组/单缓冲，**单趟 dispatch 跑全部活跃块**；块哈希结构
+//!   （无界场景）与 GPU 侧占据检测/indirect dispatch 属后续片。
+//! 稠密化（T-GC-05 第三/四片）：`compact_mesh`（吃回读产物）与 `surface_nets_gpu_compact`
+//!   （runner 直出，gen/emit 后全程 GPU 驻留，免稀疏 n³ 回写往返）共用同一条后链
+//!   `compact_chain`（scan → 散射 + 重映射）。
 //! 顺序口径：四边形槽位 = atomicAdd（执行序，非确定）；判据在读回侧按"四顶点规范键"
 //! 排序后对拍——四边形集合与绕序确定 ⇒ 排序流逐位确定。
 //! 教训留档：base/前缀 + write_buffer 路线曾出现"输入逐位一致、输出随机"的未解非确定性
 //! （证据在 w15c 判据档），故弃用该机械；本片全程不 write_buffer，需要 GPU 顺序时走 GPU scan。
 
-use crate::jfa::{Headless, readback_f32, readback_u32, storage_entry, uniform_entry};
+use crate::jfa::{
+    Headless, readback_f32, readback_u32, readback_u32_slice, storage_entry, uniform_entry,
+};
 use wgpu::util::DeviceExt;
 
 #[repr(C)]
@@ -53,25 +57,32 @@ pub struct ChunkStats {
     pub active: u32,
 }
 
-/// GPU Surface Nets（整块 = 单块运行器的退化情形）。
-pub fn surface_nets_gpu(
-    hd: &Headless,
-    sdf: &[f32],
-    n: u32,
-    timer: Option<&mut crate::timer::GpuTimer>,
-) -> GsnMesh {
-    surface_nets_gpu_chunked(hd, sdf, n, n - 1, timer).0
+/// 稠密网格（T-GC-05 第三片）：顶点按 cell 序打包 + 索引重映射。
+pub struct CompactMesh {
+    /// 稠密顶点（顺序 = cell 线性索引序，逐位保真）
+    pub positions: Vec<[f32; 3]>,
+    /// 重映射后的三角索引（引用 `positions`）
+    pub indices: Vec<u32>,
+    pub vertex_count: u32,
 }
 
-/// 分块 GPU Surface Nets：cell 域 [0, n−1) 按 `chunk_cells` 均分（末块可短）。
-/// 1-voxel halo 契约 + 空块跳过 + 单趟遍历；输出槽位与整块同布局（全局 n³）。
-pub fn surface_nets_gpu_chunked(
+/// 一次分块运行的 GPU 驻留产物（稀疏缓冲未回读）。
+struct BlocksRun {
+    vtx_pos_buf: wgpu::Buffer,
+    vtx_flag_buf: wgpu::Buffer,
+    idx_buf: wgpu::Buffer,
+    counter_buf: wgpu::Buffer,
+    stats: ChunkStats,
+}
+
+/// 块表 + gen/emit 两个 pass（T-GC-05 第一/二片的前半，各入口共用）。
+fn run_blocks(
     hd: &Headless,
     sdf: &[f32],
     n: u32,
     chunk_cells: u32,
     mut timer: Option<&mut crate::timer::GpuTimer>,
-) -> (GsnMesh, ChunkStats) {
+) -> BlocksRun {
     assert!(chunk_cells >= 1, "chunk_cells 必须 ≥ 1");
     let device = &hd.device;
     let queue = &hd.queue;
@@ -252,23 +263,54 @@ pub fn surface_nets_gpu_chunked(
         }
     }
 
-    // ④ 回读（与整块同布局；无活跃块时零初始化缓冲即空输出）
-    let quad_count = readback_f32(hd, &counter_buf)
+    BlocksRun {
+        vtx_pos_buf,
+        vtx_flag_buf,
+        idx_buf,
+        counter_buf,
+        stats,
+    }
+}
+
+/// GPU Surface Nets（整块 = 单块运行器的退化情形）。
+pub fn surface_nets_gpu(
+    hd: &Headless,
+    sdf: &[f32],
+    n: u32,
+    timer: Option<&mut crate::timer::GpuTimer>,
+) -> GsnMesh {
+    surface_nets_gpu_chunked(hd, sdf, n, n - 1, timer).0
+}
+
+/// 分块 GPU Surface Nets：cell 域 [0, n−1) 按 `chunk_cells` 均分（末块可短）。
+/// 1-voxel halo 契约 + 空块跳过 + 单趟遍历；输出槽位与整块同布局（全局 n³）。
+pub fn surface_nets_gpu_chunked(
+    hd: &Headless,
+    sdf: &[f32],
+    n: u32,
+    chunk_cells: u32,
+    timer: Option<&mut crate::timer::GpuTimer>,
+) -> (GsnMesh, ChunkStats) {
+    let run = run_blocks(hd, sdf, n, chunk_cells, timer);
+    let count = (n * n * n) as usize;
+
+    // 回读（与整块同布局；无活跃块时零初始化缓冲即空输出）
+    let quad_count = readback_f32(hd, &run.counter_buf)
         .into_iter()
         .map(f32::to_bits)
         .next()
         .unwrap_or(0);
-    let mut indices = readback_f32(hd, &idx_buf)
+    let mut indices = readback_f32(hd, &run.idx_buf)
         .into_iter()
         .map(f32::to_bits)
         .collect::<Vec<u32>>();
     indices.truncate((quad_count as usize) * 6);
     let mut positions = Vec::with_capacity(count);
-    let pos_raw = readback_f32(hd, &vtx_pos_buf);
+    let pos_raw = readback_f32(hd, &run.vtx_pos_buf);
     for chunk in pos_raw.as_chunks::<4>().0 {
         positions.push([chunk[0], chunk[1], chunk[2]]);
     }
-    let flags: Vec<u32> = readback_f32(hd, &vtx_flag_buf)
+    let flags: Vec<u32> = readback_f32(hd, &run.vtx_flag_buf)
         .into_iter()
         .map(f32::to_bits)
         .collect();
@@ -281,78 +323,50 @@ pub fn surface_nets_gpu_chunked(
             quad_count,
             n,
         },
-        stats,
+        run.stats,
     )
 }
 
-/// 值块 [a, b]³（每轴闭区间）双符号并存 ⇒ 可能存在表面 cell（保守占据检测，空块跳过用）。
-fn block_has_both_signs(sdf: &[f32], n: u32, a: [u32; 3], b: [u32; 3]) -> bool {
-    let (mut pos, mut neg) = (false, false);
-    for z in a[2]..=b[2] {
-        for y in a[1]..=b[1] {
-            let base = (y * n + z * n * n) as usize;
-            for x in a[0]..=b[0] {
-                if sdf[base + x as usize] < 0.0 {
-                    neg = true;
-                } else {
-                    pos = true;
-                }
-                if pos && neg {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
-/// 值切片提取：每轴闭区间 [lo, hi]（lo = 块起−1 的 halo，hi = cell 区间上界）。
-fn extract_region(sdf: &[f32], n: u32, lo: [u32; 3], hi: [u32; 3]) -> Vec<f32> {
-    let w = [
-        (hi[0] - lo[0] + 1) as usize,
-        (hi[1] - lo[1] + 1) as usize,
-        (hi[2] - lo[2] + 1) as usize,
-    ];
-    let mut out = Vec::with_capacity(w[0] * w[1] * w[2]);
-    for z in lo[2]..=hi[2] {
-        for y in lo[1]..=hi[1] {
-            let base = (y * n + z * n * n) as usize;
-            for x in lo[0]..=hi[0] {
-                out.push(sdf[base + x as usize]);
-            }
-        }
-    }
-    out
-}
-
-/// 稠密网格（T-GC-05 第三片）：顶点按 cell 序打包 + 索引重映射。
-pub struct CompactMesh {
-    /// 稠密顶点（顺序 = cell 线性索引序，逐位保真）
-    pub positions: Vec<[f32; 3]>,
-    /// 重映射后的三角索引（引用 `positions`）
-    pub indices: Vec<u32>,
-    pub vertex_count: u32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct CP {
+/// 分块 GSN **直出稠密流**（T-GC-05 第四片）：gen/emit 之后全程 GPU 驻留——
+/// scan(flags) → 散射顶点 + 重映射索引 → 只回读稠密流（免稀疏 n³ 回写往返）。
+/// 语义与 `surface_nets_gpu_chunked` + `compact_mesh` 两步法等价（判据对拍两者）。
+pub fn surface_nets_gpu_compact(
+    hd: &Headless,
+    sdf: &[f32],
     n: u32,
-    count: u32,
-    _p0: u32,
-    _p1: u32,
+    chunk_cells: u32,
+    mut timer: Option<&mut crate::timer::GpuTimer>,
+) -> (CompactMesh, ChunkStats) {
+    let run = run_blocks(hd, sdf, n, chunk_cells, timer.as_deref_mut());
+    let quad_count = readback_u32(hd, &run.counter_buf)
+        .first()
+        .copied()
+        .unwrap_or(0);
+    let count = quad_count * 6;
+    let n3 = n * n * n;
+    let (pos_out_buf, idx_out_buf, total) = compact_chain(
+        hd,
+        &run.vtx_flag_buf,
+        &run.vtx_pos_buf,
+        &run.idx_buf,
+        n3,
+        count,
+        timer,
+    );
+    (
+        readback_dense(hd, &pos_out_buf, &idx_out_buf, total, count),
+        run.stats,
+    )
 }
 
-/// 稀疏 `GsnMesh`（n³ 槽位）→ 稠密流：GPU scan（flags 排他前缀和 = cell→顶点号）→
-/// 散射顶点 + 重映射索引。当前入口吃回读产物（上传再压）；runner 直出稠密流
-/// （免读写往返）属后续片。
+/// 稀疏 `GsnMesh`（n³ 槽位）→ 稠密流：上传稀疏三件套 → 同一后链 → 回读稠密流。
+/// （runner 直出免往返见 `surface_nets_gpu_compact`。）
 pub fn compact_mesh(
     hd: &Headless,
     mesh: &GsnMesh,
-    mut timer: Option<&mut crate::timer::GpuTimer>,
+    timer: Option<&mut crate::timer::GpuTimer>,
 ) -> CompactMesh {
     let device = &hd.device;
-    let queue = &hd.queue;
     let n3 = mesh.flags.len();
     assert_eq!(n3, (mesh.n * mesh.n * mesh.n) as usize, "flags 长度非 n³");
     assert_eq!(
@@ -361,12 +375,6 @@ pub fn compact_mesh(
         "索引长度与四边形数不符"
     );
     let count = mesh.indices.len() as u32;
-
-    // cell→顶点号（GPU 驻留）；总数 = 排他和末元素 + 末 flag
-    let cellmap_buf = crate::scan::exclusive_prefix_sum_buf(hd, &mesh.flags, timer.as_deref_mut());
-    let cellmap = readback_u32(hd, &cellmap_buf);
-    let total = cellmap[n3 - 1] + mesh.flags[n3 - 1];
-
     let pos4: Vec<[f32; 4]> = mesh
         .positions
         .iter()
@@ -375,7 +383,7 @@ pub fn compact_mesh(
     let flags_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("cp-flags"),
         contents: bytemuck::cast_slice(&mesh.flags),
-        usage: wgpu::BufferUsages::STORAGE,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
     });
     let pos_in_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("cp-pos-in"),
@@ -387,6 +395,39 @@ pub fn compact_mesh(
         contents: bytemuck::cast_slice(&mesh.indices),
         usage: wgpu::BufferUsages::STORAGE,
     });
+    let (pos_out_buf, idx_out_buf, total) = compact_chain(
+        hd,
+        &flags_buf,
+        &pos_in_buf,
+        &idx_in_buf,
+        n3 as u32,
+        count,
+        timer,
+    );
+    readback_dense(hd, &pos_out_buf, &idx_out_buf, total, count)
+}
+
+/// 稠密化后链（GPU 驻留）：scan(flags) → 散射 + 重映射 → 稠密输出缓冲。
+/// 返回 (稠密位置缓冲, 稠密索引缓冲, 顶点总数)；总数 = scan 尾元素 + 尾 flag。
+fn compact_chain(
+    hd: &Headless,
+    flags_buf: &wgpu::Buffer,
+    pos_in_buf: &wgpu::Buffer,
+    idx_in_buf: &wgpu::Buffer,
+    n3: u32,
+    count: u32,
+    mut timer: Option<&mut crate::timer::GpuTimer>,
+) -> (wgpu::Buffer, wgpu::Buffer, u32) {
+    let device = &hd.device;
+    let queue = &hd.queue;
+    let n3u = n3 as usize;
+    let last = ((n3u - 1) as u64) * 4;
+    let cellmap_buf =
+        crate::scan::exclusive_prefix_sum_buf_from(hd, flags_buf, n3, timer.as_deref_mut());
+    let scan_last = readback_u32_slice(hd, &cellmap_buf, last, 4)[0];
+    let flags_last = readback_u32_slice(hd, flags_buf, last, 4)[0];
+    let total = scan_last + flags_last;
+
     let pos_out_buf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("cp-pos-out"),
         size: ((total as u64) * 16).max(4),
@@ -402,7 +443,7 @@ pub fn compact_mesh(
     let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("cp-params"),
         contents: bytemuck::bytes_of(&CP {
-            n: n3 as u32,
+            n: n3,
             count,
             _p0: 0,
             _p1: 0,
@@ -486,7 +527,7 @@ pub fn compact_mesh(
             });
             pass.set_pipeline(&scatter);
             pass.set_bind_group(0, &bg, &[]);
-            pass.dispatch_workgroups((n3 as u32).div_ceil(64), 1, 1);
+            pass.dispatch_workgroups(n3.div_ceil(64), 1, 1);
         }
         if count > 0 {
             let tw = timer.as_mut().and_then(|t| t.writes());
@@ -501,16 +542,75 @@ pub fn compact_mesh(
         queue.submit([enc.finish()]);
     }
 
+    (pos_out_buf, idx_out_buf, total)
+}
+
+/// 回读稠密输出（位置 total 个 / 索引截到 count）。
+fn readback_dense(
+    hd: &Headless,
+    pos_out_buf: &wgpu::Buffer,
+    idx_out_buf: &wgpu::Buffer,
+    total: u32,
+    count: u32,
+) -> CompactMesh {
     let mut positions = Vec::with_capacity(total as usize);
-    for c in readback_f32(hd, &pos_out_buf).as_chunks::<4>().0 {
+    for c in readback_f32(hd, pos_out_buf).as_chunks::<4>().0 {
         positions.push([c[0], c[1], c[2]]);
     }
-    let mut indices = readback_u32(hd, &idx_out_buf);
+    let mut indices = readback_u32(hd, idx_out_buf);
     indices.truncate(count as usize);
-
     CompactMesh {
         positions,
         indices,
         vertex_count: total,
     }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct CP {
+    n: u32,
+    count: u32,
+    _p0: u32,
+    _p1: u32,
+}
+
+/// 值块 [a, b]³（每轴闭区间）双符号并存 ⇒ 可能存在表面 cell（保守占据检测，空块跳过用）。
+fn block_has_both_signs(sdf: &[f32], n: u32, a: [u32; 3], b: [u32; 3]) -> bool {
+    let (mut pos, mut neg) = (false, false);
+    for z in a[2]..=b[2] {
+        for y in a[1]..=b[1] {
+            let base = (y * n + z * n * n) as usize;
+            for x in a[0]..=b[0] {
+                if sdf[base + x as usize] < 0.0 {
+                    neg = true;
+                } else {
+                    pos = true;
+                }
+                if pos && neg {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// 值切片提取：每轴闭区间 [lo, hi]（lo = 块起−1 的 halo，hi = cell 区间上界）。
+fn extract_region(sdf: &[f32], n: u32, lo: [u32; 3], hi: [u32; 3]) -> Vec<f32> {
+    let w = [
+        (hi[0] - lo[0] + 1) as usize,
+        (hi[1] - lo[1] + 1) as usize,
+        (hi[2] - lo[2] + 1) as usize,
+    ];
+    let mut out = Vec::with_capacity(w[0] * w[1] * w[2]);
+    for z in lo[2]..=hi[2] {
+        for y in lo[1]..=hi[1] {
+            let base = (y * n + z * n * n) as usize;
+            for x in lo[0]..=hi[0] {
+                out.push(sdf[base + x as usize]);
+            }
+        }
+    }
+    out
 }

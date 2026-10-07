@@ -254,15 +254,25 @@ pub(crate) fn readback_f32(headless: &Headless, buf: &wgpu::Buffer) -> Vec<f32> 
 
 /// 缓冲回读（u32；长度 = buf.size()/4）。
 pub(crate) fn readback_u32(headless: &Headless, buf: &wgpu::Buffer) -> Vec<u32> {
+    readback_u32_slice(headless, buf, 0, buf.size())
+}
+
+/// 缓冲区间回读（u32）：自 `offset` 起读 `len` 字节（须为 4 的倍数）。
+pub(crate) fn readback_u32_slice(
+    headless: &Headless,
+    buf: &wgpu::Buffer,
+    offset: u64,
+    len: u64,
+) -> Vec<u32> {
     let device = &headless.device;
     let download = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("readback-u32"),
-        size: buf.size(),
+        label: Some("readback-slice"),
+        size: len,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-    enc.copy_buffer_to_buffer(buf, 0, &download, 0, buf.size());
+    enc.copy_buffer_to_buffer(buf, offset, &download, 0, len);
     headless.queue.submit([enc.finish()]);
     let slice = download.slice(..);
     slice.map_async(wgpu::MapMode::Read, |_| {});
