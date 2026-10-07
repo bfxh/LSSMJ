@@ -5,9 +5,10 @@
 > **抓取物**：`D:/KF/LSSMJ/scratch/w15a/`（`abs/` 摘要文本镜像 + `pages/` 页面与 PDF + `assemble.py` 装配脚本）；
 > crate 快照 `scratch/src/{fast-surface-nets,fidget}`（浅克隆 @2216ac2/@e2fda47）与
 > `scratch/src/fetched-*`（gh api 抓取 @sha 见 `targets-lock.json`）。
-> **账本**：`docs/analysis/ledger/w15a.jsonl` **48 条 / verify rejected=0**
-> （paper 27 / doc 4 / source 17，不同目标 23 组）。本报告每条主张都指到 `W15A-xxx`；
-> paper/doc 行的引文另做过一道机械复核（31/31 逐字命中抓取快照，`assemble.py` 输出）。
+> **账本**：`docs/analysis/ledger/w15a.jsonl` **48 条** + 同日补锚批 `w15b.jsonl` **15 条**
+> （合计 **63 / verify rejected=0**；w15a = paper 27 / doc 4 / source 17，w15b = paper 12 / doc 2 / source 1）。
+> 本报告每条主张都指到 `W15A-xxx` / `W15B-xxx`；
+> paper/doc 行的引文另做过一道机械复核（逐字命中抓取快照，`assemble*.py` 输出：w15a 31/31、w15b 14/14）。
 > **范围口径**：用户 2026-10-07——"体素/高斯喷溅/粒子/多边形之间的高速实时转化，Rust + 最新工具链"。
 > **物理本体仍范围外**（2026-10-03 口径不变，用户侧已有实现）：本层只做**表示转换**与其判据，
 > 与物理引擎之间只保留数据接缝（粒子状态进/出）。
@@ -166,28 +167,39 @@
 - **C17 优化等价性 / C4 帧间金丝雀**：C22 的逐位判据与其同族。
 - **物理边界**（ADR N1 起的范围裁决）：本层只与粒子数据结构接缝；求解器、接触、耦合一概不做。
 
-## 6. 未验证项（不许当结论）
+## 6. 未验证项（不许当结论；w15b 补锚批已就地更新）
 
 1. **本机零实测**：全部数字是论文/README 口径（机器、驱动、版本未标注的已如实照录）；C22 全部"待实现"。
-2. **screen-space-fluids（Goswami et al. 2010）抓取不可达**（Semantic Scholar 持续 429，无镜像命中）——
-   "粒子→屏幕空间渲染（不出 mesh）"这条替代路线本批无锚，w15b 可补。
-3. **marching-cubes / dual-contouring 只有题名锚**（S2 对 1987/2002 老论文无摘要，引文=题名），
-   证据强度低于其余各行；正文相关论断（hermite 保特征等）由 fast-surface-nets README 的对比陈述（`W15A-033`）旁证。
-4. **三条边无一手锚**：体素→粒子、mesh→粒子、mesh→高斯（+体素→高斯的无解码器工程近似）——
-   工程上直接但本批未取证，w15b 补锚后才能升级判定。
-5. **spring-gaus 摘要已抓**（`scratch/w15a/abs/spring-gaus.txt`）但 arXiv id 未解析成锚，未入账。
-6. 3DGS 锚为 v1 摘要口径；后续演进（3DGRT/3DGUT 等）未覆盖。
-7. bevy_gaussian_splatting / wgpu-3dgs-core / meshopt-rs / nanovdb-rs 经 gh api 只抓了 README + 两个源文件
+2. ~~screen-space-fluids 抓取不可达~~ **已补锚（w15b）**：Goswami 2010 经 OpenAlex 取得摘要——
+   "只从表面粒子光栅化部分距离场" + "Z 索引并行排序消除网格/层次结构内存开销" + "很高帧率"
+   （`W15B-010/011/012`）。粒子→SDF→体渲染全链（不出 mesh 的替代路线）与"莫顿序可绕开稀疏树"
+   的旁证都已入账。
+3. **MC/DC 锚升级**：dual-contouring 已升级全文锚（Rice 托管 PDF：Hermite 网格 contouring +
+   **real-time** 破坏性修改演示，`W15B-002/003`）；**marching-cubes 1987 主文仍不可达**
+   （ACM 付费墙，各大学镜像 404/证书坏），补 Bourke 权威参考页 doc 锚（`W15B-014/015`），题名锚保留。
+4. **边锚补齐情况（w15b 后）**：体素↔粒子已锚（Zhu & Bridson 2005 FLIP：粒子云+辅助网格分工 +
+   逐帧表面重建，`W15B-004..006`）；粒子↔网格的拓扑价值与"条件数与粒子数无关"已锚（MPM Snow，
+   `W15B-007..009`）；mesh→高斯已锚（SuGaR binding，`W15B-013`）。**仍缺一手锚**：
+   mesh→粒子（几何→粒子初始采样）与体素→高斯（无解码器工程近似）。
+5. **w3h 环境性红已修复（w15b，`W15B-001`）**：18 条 unified-rx-mcp 锚自归档快照重锚
+   （字节数与归档清单逐一吻合）+ 5 条 BSHSQ 行号重锚 + 1 条**否证记档**（gate_all.sh 计时门已从
+   "只报读数不判红"演进为软门 >2× 红/>1.5× 黄——原观察被演进否证，按时间戳入档）+
+   1 条迁移重锚（worktree gitdir 随仓 D:/开发→D:/KF）。全量门回到 **4562 / 0**。
+6. **spring-gaus 摘要已抓**（`scratch/w15a/abs/spring-gaus.txt`）但 arXiv id 未解析成锚，未入账。
+7. 3DGS 锚为 v1 摘要口径；后续演进（3DGRT/3DGUT 等）未覆盖。
+8. bevy_gaussian_splatting / wgpu-3dgs-core / meshopt-rs / nanovdb-rs 经 gh api 只抓了 README + 两个源文件
    （@sha 见 `targets-lock.json`），未克隆全树；源码行仅覆盖 README/模块清单。
 
 ## 7. 复算命令
 
 ```bash
-# 账本门（48 条 / rejected=0）
+# 账本门（w15a 48 + w15b 15 = 63 条 / rejected=0；全量 4562 / 0）
 python tools/ledger.py verify --file docs/analysis/ledger/w15a.jsonl
+python tools/ledger.py verify --file docs/analysis/ledger/w15b.jsonl
 python tools/ledger.py stats  --file docs/analysis/ledger/w15a.jsonl
-# 装配 + paper/doc 引文机械复核（应输出 31/31 命中）
+# 装配 + paper/doc 引文机械复核（应输出 w15a 31/31、w15b 14/14 命中）
 python scratch/w15a/assemble.py
+python scratch/w15b/assemble_w15b.py
 # 工具链口径
 rustc --version   # rustc 1.99.0 (b940084d7 2026-09-28)
 ```
