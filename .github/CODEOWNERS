@@ -1,0 +1,10 @@
+# 配合分支保护的 required review 才生效（v3 §7.4）。
+# 当前仓库唯一可确认的有效账号为 @bfxh；团队扩充后按角色拆分（gate-reviewer 等）。
+/.github/                          @bfxh
+/tools/                            @bfxh
+/ci/                               @bfxh
+/scripts/                          @bfxh
+/rust-toolchain.toml               @bfxh
+/docs/analysis/targets-lock.json   @bfxh
+/crates/conv-core/tests/           @bfxh
+/crates/conv-core/Cargo.lock       @bfxh
