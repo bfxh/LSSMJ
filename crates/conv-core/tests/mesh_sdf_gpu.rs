@@ -25,7 +25,13 @@ fn gpu_mesh_sdf_matches_cpu_band() {
     let _gpu = GPU_LOCK.lock().unwrap();
     let (verts, faces) = icosphere(2, R);
     let (cpu, _cpu_max) = mesh_to_sdf_band(GRID, R, 3.0 * H, &verts, &faces);
-    let gpu = mesh_to_sdf_gpu(&conv_core::jfa::headless_device(), &verts, &faces, GRID);
+    let gpu = mesh_to_sdf_gpu(
+        &conv_core::jfa::headless_device(),
+        &verts,
+        &faces,
+        GRID,
+        None,
+    );
     let mut max_err = 0f32;
     let mut sum = 0f64;
     let mut cnt = 0usize;
@@ -68,8 +74,8 @@ fn gpu_mesh_sdf_deterministic_bitwise() {
     let _gpu = GPU_LOCK.lock().unwrap();
     let (verts, faces) = icosphere(2, R);
     let hd = conv_core::jfa::headless_device();
-    let a = mesh_to_sdf_gpu(&hd, &verts, &faces, GRID);
-    let b = mesh_to_sdf_gpu(&hd, &verts, &faces, GRID);
+    let a = mesh_to_sdf_gpu(&hd, &verts, &faces, GRID, None);
+    let b = mesh_to_sdf_gpu(&hd, &verts, &faces, GRID, None);
     assert_eq!(fnv(&a), fnv(&b), "bitwise determinism across runs");
 }
 
@@ -80,7 +86,7 @@ fn gpu_mesh_sdf_sphere_sign_sane() {
     let _gpu = GPU_LOCK.lock().unwrap();
     let (verts, faces) = icosphere(2, R);
     let hd = conv_core::jfa::headless_device();
-    let g = mesh_to_sdf_gpu(&hd, &verts, &faces, GRID);
+    let g = mesh_to_sdf_gpu(&hd, &verts, &faces, GRID, None);
     let at = |p: [f32; 3]| -> f32 {
         let n = GRID as f32;
         let x = ((p[0] + 1.0) / 2.0 * (n - 1.0)).round() as usize;
