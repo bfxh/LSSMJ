@@ -92,3 +92,32 @@ fn corner_window_halo_cross_block() {
     let ones = w.iter().filter(|&&v| v == 1.0).count();
     assert_eq!(ones, 1, "其余角值应为 EMPTY");
 }
+
+#[test]
+fn pack_blocks_and_neighbor_table() {
+    let mut g = SparseGrid::new(4);
+    // 触三块：(0,0,0) / (1,0,0) / (0,1,0)（+y 的块由全局点 (0,4,0) 触发）
+    g.set([0, 0, 0], 1.0);
+    g.set([4, 0, 0], 2.0);
+    g.set([0, 4, 0], 3.0);
+    let pk = g.pack();
+    assert_eq!(pk.c, 4);
+    // 块表：z→y→x 字典序
+    assert_eq!(pk.blocks, vec![[0, 0, 0], [1, 0, 0], [0, 1, 0]]);
+    let n3 = 4usize * 4 * 4;
+    assert_eq!(pk.packed.len(), 3 * n3);
+    assert_eq!(pk.nbr.len(), 3 * 27);
+
+    let idx = |b: [i32; 3]| pk.blocks.iter().position(|&x| x == b).unwrap();
+    let (ka, kb, kc) = (idx([0, 0, 0]), idx([1, 0, 0]), idx([0, 1, 0]));
+    let slot = |d: [i32; 3]| ((d[2] + 1) * 9 + (d[1] + 1) * 3 + (d[0] + 1)) as usize;
+    // 邻块表：本块自指 / +x / +y / 缺失
+    assert_eq!(pk.nbr[ka * 27 + slot([0, 0, 0])], ka as i32);
+    assert_eq!(pk.nbr[ka * 27 + slot([1, 0, 0])], kb as i32);
+    assert_eq!(pk.nbr[ka * 27 + slot([0, 1, 0])], kc as i32);
+    assert_eq!(pk.nbr[ka * 27 + slot([0, 0, 1])], -1, "缺失邻块应为 −1");
+    // packed 内容 = 块内所有权层（局部 (0,0,0) 抽查）
+    assert_eq!(pk.packed[ka * n3], 1.0);
+    assert_eq!(pk.packed[kb * n3], 2.0);
+    assert_eq!(pk.packed[kc * n3], 3.0);
+}

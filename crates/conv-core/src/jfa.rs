@@ -284,6 +284,30 @@ pub(crate) fn readback_u32_slice(
     bytemuck::allocation::pod_collect_to_vec(&data)
 }
 
+/// 缓冲区间回读（f32）：自 `offset` 起读 `len` 字节（须为 4 的倍数）。
+pub(crate) fn readback_f32_slice(
+    headless: &Headless,
+    buf: &wgpu::Buffer,
+    offset: u64,
+    len: u64,
+) -> Vec<f32> {
+    let device = &headless.device;
+    let download = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("readback-f32-slice"),
+        size: len,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    enc.copy_buffer_to_buffer(buf, offset, &download, 0, len);
+    headless.queue.submit([enc.finish()]);
+    let slice = download.slice(..);
+    slice.map_async(wgpu::MapMode::Read, |_| {});
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    let data = slice.get_mapped_range().unwrap();
+    bytemuck::allocation::pod_collect_to_vec(&data)
+}
+
 pub(crate) fn storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,

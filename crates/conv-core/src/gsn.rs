@@ -23,7 +23,8 @@
 //! （证据在 w15c 判据档），故弃用该机械；本片全程不 write_buffer，需要 GPU 顺序时走 GPU scan。
 
 use crate::jfa::{
-    Headless, readback_f32, readback_u32, readback_u32_slice, storage_entry, uniform_entry,
+    Headless, readback_f32, readback_f32_slice, readback_u32, readback_u32_slice, storage_entry,
+    uniform_entry,
 };
 use wgpu::util::DeviceExt;
 
@@ -910,5 +911,287 @@ pub fn mesh_block(
         flags,
         indices,
         quad_count,
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct MP {
+    c: u32,
+    wg_axis: u32,
+    n_blocks: u32,
+    count_only: u32,
+}
+
+/// 多块装配产物（装配器第一片）：每块局部 (C+1)³ 槽位（**全局槽空间** = block·(C+1)³ + lc）
+/// 与**全局索引段**（段起点 = 前缀和；索引引用全局槽 ⇒ 段拼起来即整张网格）。
+/// 接缝顶点按块重复（每块含 −1 halo 层副本，位置逐位一致）——即 W15A-035 的"1-voxel
+/// 填充"分块模型（chunked soup）。
+pub struct MultiMesh {
+    pub c: u32,
+    pub blocks: Vec<[i32; 3]>,
+    /// 每块四边形数（= 段元素数 / 6）
+    pub quad_counts: Vec<u32>,
+    pub quad_total: u32,
+    /// 每块索引段起点（**元素**偏移；len = n_blocks + 1，末位 = 6 · quad_total）
+    pub idx_offsets: Vec<u32>,
+    slot_pos_buf: wgpu::Buffer,
+    slot_flag_buf: wgpu::Buffer,
+    idx_buf: wgpu::Buffer,
+}
+
+impl MultiMesh {
+    /// 回读块 k 的局部槽（(C+1)³ 顶点位置 + 表面标记）。
+    pub fn read_block_slots(&self, hd: &Headless, k: usize) -> (Vec<[f32; 3]>, Vec<u32>) {
+        let s = (self.c + 1) as u64;
+        let nb = s * s * s;
+        let raw = readback_f32_slice(hd, &self.slot_pos_buf, k as u64 * nb * 16, nb * 16);
+        let positions = raw
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|p| [p[0], p[1], p[2]])
+            .collect();
+        let flags = readback_u32_slice(hd, &self.slot_flag_buf, k as u64 * nb * 4, nb * 4);
+        (positions, flags)
+    }
+
+    /// 回读块 k 的索引段（引用**全局槽** block·(C+1)³ + lc；执行序——判据侧按规范键排序后对拍）。
+    pub fn read_block_indices(&self, hd: &Headless, k: usize) -> Vec<u32> {
+        let a = self.idx_offsets[k] as u64;
+        let b = self.idx_offsets[k + 1] as u64;
+        if b == a {
+            return Vec::new();
+        }
+        readback_u32_slice(hd, &self.idx_buf, a * 4, (b - a) * 4)
+    }
+}
+
+/// 多块稀疏网格化（装配器第一片；锚 `W15A-034/035`）：块表驱动，**一次提交网格化全部已分配块**
+/// ——打包存储（`SparseGrid::pack`）+ 27 邻块表 gather（无 CPU 窗打包、无 GPU 哈希），
+/// 每块局部 (C+1)³ 槽 + 全局索引段（两趟发射：count 趟 → 读回 n_blocks 计数 + CPU 前缀 →
+/// emit 趟按段写入）。语义 = `mesh_block` 逐块（判据对拍）。
+/// 派发上限：n_blocks × wg_axis ≤ 65535（块号 = z 维 / wg_axis）。
+pub fn mesh_blocks(
+    hd: &Headless,
+    grid: &crate::sparse::SparseGrid,
+    mut timer: Option<&mut crate::timer::GpuTimer>,
+) -> MultiMesh {
+    let device = &hd.device;
+    let queue = &hd.queue;
+    let pk = grid.pack();
+    let c = pk.c;
+    assert!(c >= 2, "块边长须 ≥ 2");
+    let n = pk.blocks.len() as u32;
+    assert!(n > 0, "稀疏格无已分配块");
+    let cu = c as u32;
+    let s = cu + 1;
+    let slots = (n as u64) * (s as u64) * (s as u64) * (s as u64);
+    let wg_axis = s.div_ceil(4);
+    assert!(
+        (n as u64) * (wg_axis as u64) <= 65535,
+        "块数超派发上限（n={n}, wg_axis={wg_axis}）"
+    );
+
+    let packed_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("gsnm-packed"),
+        contents: bytemuck::cast_slice(&pk.packed),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let nbr_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("gsnm-nbr"),
+        contents: bytemuck::cast_slice(&pk.nbr),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    // 每块存"块起 − 1"（窗口下界全局坐标）
+    let origins: Vec<[i32; 4]> = pk
+        .blocks
+        .iter()
+        .map(|b| [b[0] * c - 1, b[1] * c - 1, b[2] * c - 1, 0])
+        .collect();
+    let blocks_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("gsnm-blocks"),
+        contents: bytemuck::cast_slice(&origins),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let slot_pos_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("gsnm-slot-pos"),
+        contents: &vec![0u8; (slots * 16) as usize],
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+    });
+    let slot_flag_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("gsnm-slot-flag"),
+        contents: &vec![0u8; (slots * 4) as usize],
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+    });
+    // counters 三段：count[0..n) / emit[n..2n) / offsets[2n..3n)（offsets 由 CPU 注入）
+    let counters_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("gsnm-counters"),
+        contents: &vec![0u8; (3 * n as u64 * 4) as usize],
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_SRC
+            | wgpu::BufferUsages::COPY_DST,
+    });
+    let dummy_idx_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("gsnm-idx-dummy"),
+        contents: &[0u8; 4],
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+
+    let module = device.create_shader_module(wgpu::include_wgsl!("gsn_multi.wgsl"));
+    let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("gsnm-bgl"),
+        entries: &[
+            storage_entry(0, true),
+            storage_entry(1, true),
+            storage_entry(2, true),
+            storage_entry(3, false),
+            storage_entry(4, false),
+            storage_entry(5, false),
+            storage_entry(6, false),
+            uniform_entry(7),
+        ],
+    });
+    let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("gsnm-pl"),
+        bind_group_layouts: &[Some(&bgl)],
+        immediate_size: 0,
+    });
+    let mk = |label: &str, entry: &str| {
+        device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some(label),
+            layout: Some(&pl),
+            module: &module,
+            entry_point: Some(entry),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
+        })
+    };
+    let gen_pipe = mk("gsnm-gen", "gen_vertices");
+    let emit_pipe = mk("gsnm-emit", "emit_quads");
+
+    let mk_mp = |count_only: u32| MP {
+        c: cu,
+        wg_axis,
+        n_blocks: n,
+        count_only,
+    };
+    let mp_count_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("gsnm-mp-count"),
+        contents: bytemuck::bytes_of(&mk_mp(1)),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    let mp_emit_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("gsnm-mp-emit"),
+        contents: bytemuck::bytes_of(&mk_mp(0)),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+
+    let mk_bg = |label: &str, idx: &wgpu::Buffer, mp: &wgpu::Buffer| {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(label),
+            layout: &bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: packed_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: nbr_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: blocks_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: slot_pos_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: slot_flag_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: counters_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: idx.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: mp.as_entire_binding(),
+                },
+            ],
+        })
+    };
+    let bg_count = mk_bg("gsnm-bg-count", &dummy_idx_buf, &mp_count_buf);
+
+    // ① gen + count 趟（一次提交；块号 = z / wg_axis）
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    for pipe in [&gen_pipe, &emit_pipe] {
+        let tw = timer.as_deref_mut().and_then(|t| t.writes());
+        let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: None,
+            timestamp_writes: tw,
+        });
+        pass.set_pipeline(pipe);
+        pass.set_bind_group(0, &bg_count, &[]);
+        pass.dispatch_workgroups(wg_axis, wg_axis, wg_axis * n);
+    }
+    queue.submit([enc.finish()]);
+
+    // ② 计数读回 + CPU 前缀 → offsets 注入（元素偏移）
+    let counts = readback_u32_slice(hd, &counters_buf, 0, n as u64 * 4);
+    let mut idx_offsets: Vec<u32> = Vec::with_capacity(n as usize + 1);
+    let mut acc = 0u32;
+    idx_offsets.push(0);
+    for &k in &counts {
+        acc += k;
+        idx_offsets.push(acc * 6);
+    }
+    let quad_total = acc;
+    queue.write_buffer(
+        &counters_buf,
+        2 * n as u64 * 4,
+        bytemuck::cast_slice(&idx_offsets[..n as usize]),
+    );
+
+    // ③ emit 趟（精确 idx 段；谓词与 count 趟一致 ⇒ 段长即写入条数）
+    let idx_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("gsnm-idx"),
+        size: ((quad_total as u64) * 6 * 4).max(4),
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    if quad_total > 0 {
+        let bg_emit = mk_bg("gsnm-bg-emit", &idx_buf, &mp_emit_buf);
+        let mut enc =
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        {
+            let tw = timer.and_then(|t| t.writes());
+            let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: None,
+                timestamp_writes: tw,
+            });
+            pass.set_pipeline(&emit_pipe);
+            pass.set_bind_group(0, &bg_emit, &[]);
+            pass.dispatch_workgroups(wg_axis, wg_axis, wg_axis * n);
+        }
+        queue.submit([enc.finish()]);
+    }
+
+    let quad_counts = idx_offsets.windows(2).map(|w| (w[1] - w[0]) / 6).collect();
+    MultiMesh {
+        c: cu,
+        blocks: pk.blocks,
+        quad_counts,
+        quad_total,
+        idx_offsets,
+        slot_pos_buf,
+        slot_flag_buf,
+        idx_buf,
     }
 }
