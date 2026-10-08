@@ -3,8 +3,9 @@
 
 use conv_core::{
     Lcg,
-    gaussian::{GaussianCloud, cloud_hash, identity_roundtrip},
+    gaussian::{GaussianCloud, cloud_hash, gaussians_to_field, identity_roundtrip},
     jfa::headless_device,
+    kernels::FIXED_POINT_SCALE,
 };
 use std::sync::Mutex;
 
@@ -118,4 +119,104 @@ fn golden_hash_pinned() {
         h, 0x9b5164015597b571,
         "金样哈希漂移 —— 格式契约变更？（平面集/次序/域）"
     );
+}
+
+// ---- 高斯→体素（矩阵边 11 第一片，锚 W15A-016/017：概率占据）----
+
+#[test]
+fn gauss_to_voxel_single_analytic() {
+    let _gpu = GPU_LOCK.lock().unwrap();
+    let hd = headless_device();
+    let n = 32u32;
+    let h = 2.0 / (n as f32 - 1.0);
+    let cw = 16.0 * h - 1.0; // 体素 (16,16,16) 世界坐标
+    let sig = 0.1f32;
+    let cloud = GaussianCloud::new(
+        vec![[cw, cw, cw]],
+        vec![[sig.ln(), sig.ln(), sig.ln()]],
+        vec![[0.0, 0.0, 0.0, 1.0]],
+        vec![0.0], // logit 0 ⇒ 概率 0.5
+        vec![[0.5, 0.5, 0.5]],
+    );
+    let f = gaussians_to_field(&hd, &cloud, n, None);
+    let center = f[(16 + 16 * n + 16 * n * n) as usize];
+    assert_eq!(center, 0.5, "中心读数应恰为 p=0.5（Q16 恰 32768）");
+    // 相邻体素（沿 x 一格）：解析 0.5·exp(−½(h/σ)²)
+    let v17 = f[(17 + 16 * n + 16 * n * n) as usize];
+    let expect17 = 0.5 * (-0.5 * (h / sig).powi(2)).exp();
+    println!("单高斯：中心 {center} / 邻格 {v17}（解析 {expect17:.6}）");
+    assert!(
+        (v17 - expect17).abs() <= 1.0 / FIXED_POINT_SCALE + 1e-6,
+        "邻格读数偏离解析：{v17} vs {expect17}"
+    );
+    // 支撑外恰零
+    assert_eq!(f[0], 0.0, "角点应在 3σ 支撑外（恰零）");
+}
+
+#[test]
+fn gauss_to_voxel_opacity_semantics() {
+    let _gpu = GPU_LOCK.lock().unwrap();
+    let hd = headless_device();
+    let n = 32u32;
+    let h = 2.0 / (n as f32 - 1.0);
+    let cw = 16.0 * h - 1.0;
+    let sig = 0.1f32;
+    let mk = |opacity: f32| {
+        GaussianCloud::new(
+            vec![[cw, cw, cw]],
+            vec![[sig.ln(), sig.ln(), sig.ln()]],
+            vec![[0.0, 0.0, 0.0, 1.0]],
+            vec![opacity],
+            vec![[0.5, 0.5, 0.5]],
+        )
+    };
+    let a = gaussians_to_field(&hd, &mk(0.0), n, None); // p = 0.5
+    let b = gaussians_to_field(&hd, &mk(3.0f32.ln()), n, None); // p = 0.75
+    let (ca, cb) = (
+        a[(16 + 16 * n + 16 * n * n) as usize],
+        b[(16 + 16 * n + 16 * n * n) as usize],
+    );
+    assert_eq!(ca, 0.5);
+    assert_eq!(cb, 0.75, "logit ln3 ⇒ 概率 0.75（Q16 舍入后恰 49152）");
+    assert_eq!(cb / ca, 1.5, "同几何场值比应恰为概率比");
+}
+
+#[test]
+fn gauss_to_voxel_deterministic_and_bounded() {
+    let _gpu = GPU_LOCK.lock().unwrap();
+    let hd = headless_device();
+    let n = 32u32;
+    let mut rng = Lcg::new(0x76c1);
+    let mut positions = Vec::new();
+    let mut rotations = Vec::new();
+    let mut log_scales = Vec::new();
+    let mut opacities = Vec::new();
+    for _ in 0..8 {
+        positions.push([
+            rng.next01() * 0.5 - 0.25,
+            rng.next01() * 0.5 - 0.25,
+            rng.next01() * 0.5 - 0.25,
+        ]);
+        rotations.push([0.0, 0.0, 0.0, 1.0]);
+        let s = 0.08 + rng.next01() * 0.04;
+        log_scales.push([s.ln(), s.ln(), s.ln()]);
+        opacities.push(rng.next01() * 4.0 - 2.0);
+    }
+    let cloud = GaussianCloud::new(
+        positions,
+        log_scales,
+        rotations,
+        opacities,
+        vec![[0.5, 0.5, 0.5]; 8],
+    );
+    let a = gaussians_to_field(&hd, &cloud, n, None);
+    let b = gaussians_to_field(&hd, &cloud, n, None);
+    let diff = a
+        .iter()
+        .zip(&b)
+        .filter(|(x, y)| x.to_bits() != y.to_bits())
+        .count();
+    assert_eq!(diff, 0, "场非逐位确定（{diff} 项）");
+    assert!(a.iter().all(|v| v.is_finite() && *v >= 0.0), "场出现非法值");
+    assert_eq!(a[0], 0.0, "角点应在全支撑窗外（恰零）");
 }

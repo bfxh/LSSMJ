@@ -1,6 +1,7 @@
 // 粒子腿各向异性核 splat（T-GC-03 第一片）：每线程 = (粒子, 支撑窗 cell)。
 // 累积 = Q16 定点 + atomicAdd<u32>（整数加法可交换 ⇒ 与执行序无关、逐位确定）。
 // 绑定：0=centers(f32×3/核) 1=rots(f32×4/核) 2=scales(f32×3/核) 3=field(atomic u32) 4=kp(uniform)
+//   5=weights(f32/核；无权重场景传全 1——概率占据等按核加权的语义由权重承载)
 
 struct KP {
     n: u32,
@@ -15,6 +16,7 @@ struct KP {
 @group(0) @binding(2) var<storage, read> scales : array<f32>;
 @group(0) @binding(3) var<storage, read_write> field : array<atomic<u32>>;
 @group(0) @binding(4) var<uniform> kp : KP;
+@group(0) @binding(5) var<storage, read> weights : array<f32>;
 
 const CUT2 : f32 = 9.0;    // (3σ)²
 const Q : f32 = 65536.0;   // Q16
@@ -54,7 +56,7 @@ fn splat(@builtin(global_invocation_id) gid: vec3<u32>) {
             let m = u / s;
             let nd2 = dot(m, m);
             if (nd2 <= CUT2) {
-                let wq = u32(round(exp(-0.5 * nd2) * Q));
+                let wq = u32(round(exp(-0.5 * nd2) * weights[p] * Q));
                 if (wq != 0u) {
                     let lin = u32(v.x) + u32(v.y) * kp.n + u32(v.z) * kp.n * kp.n;
                     atomicAdd(&field[lin], wq);
