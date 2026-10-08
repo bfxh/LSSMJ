@@ -1,10 +1,15 @@
-//! GPU mesh→SDF 实时档（T-GC-01）：三角网→表面采样→JFA 种子→窄带距离场→径向符号。
+//! GPU mesh→SDF（T-GC-01）：三角网→表面采样→JFA 种子→窄带距离场→符号（两档）。
 //!
 //! 单位：全程 index 单位（顶点 CPU 侧缩放到 [0,n)³），返回前缩放回世界单位 [-1,1]³。
 //! 确定性：样本槽位来自 CPU 前缀和（无原子序竞争），散布用 atomicMin（最小样本索引胜出），
-//! 全链逐位确定。符号 = 逐体素径向出射射线（凸体判据口径，与 CPU radial_sign 同源；
-//! 一般网格的 winding/树加速属后续片）。
+//! 全链逐位确定。符号两档（`SignMode`）：
+//! - `Radial` 实时档 = 逐体素径向出射射线（凸体判据口径，与 CPU radial_sign 同源）；
+//! - `Winding` 精度档 = 逐体素广义绕数（与 CPU winding_number 同源），对非凸/多分量/自交稳健，
+//!   代价是每带内体素 O(n_tris) 暴力求和（树加速属后续片）。
+//!
 //! 样本缓冲按每三角上限 64 预分配（n_tris×64×16B）——压缩属后续片（GPU scan）。
+//! 该上限的实测代价（精度档粗盒判据的读数）：少数大三角的网格（12 面粗盒 @64³）样本间距可达
+//! ~4.9 体素 > 符号带宽 4.5 ⇒ 棱/角内侧窄带出现未投符号空洞（符号本身零假内）。拆分大三角属后续片。
 
 use crate::jfa::{Headless, INVALID, jfa_run, readback_f32, storage_entry, uniform_entry};
 use crate::timer::GpuTimer;
@@ -22,6 +27,22 @@ struct MeshParams {
 const MAX_PER_TRI: u32 = 64;
 const WG1: u32 = 64;
 
+/// 符号档位：实时档（径向出射射线，凸体口径）/ 精度档（广义绕数，一般网格）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SignMode {
+    Radial,
+    Winding,
+}
+
+impl SignMode {
+    fn entry(self) -> &'static str {
+        match self {
+            SignMode::Radial => "sign_radial",
+            SignMode::Winding => "sign_winding",
+        }
+    }
+}
+
 /// GPU mesh→SDF：返回世界单位窄带有符号距离场（带外为无符号距离）。
 /// `timer`：C22 逐边 GPU 计时（None = 不计时）。
 pub fn mesh_to_sdf_gpu(
@@ -29,6 +50,7 @@ pub fn mesh_to_sdf_gpu(
     verts: &[[f32; 3]],
     faces: &[[u32; 3]],
     n: u32,
+    mode: SignMode,
     mut timer: Option<&mut GpuTimer>,
 ) -> Vec<f32> {
     let h_world = 2.0 / (n as f32 - 1.0);
@@ -136,7 +158,7 @@ pub fn mesh_to_sdf_gpu(
     let count_pipe = mk_pipe("ms-count", "count_samples");
     let emit_pipe = mk_pipe("ms-emit", "emit_samples");
     let scatter_pipe = mk_pipe("ms-scatter", "scatter_seeds");
-    let sign_pipe = mk_pipe("ms-sign", "sign_radial");
+    let sign_pipe = mk_pipe("ms-sign", mode.entry());
 
     let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("ms-bg"),
@@ -240,7 +262,7 @@ pub fn mesh_to_sdf_gpu(
         timer.as_deref_mut(),
     );
 
-    // ⑤ 符号（窄带内逐体素径向射线，带外保持无符号）
+    // ⑤ 符号（窄带内逐体素，带外保持无符号）：Radial=径向射线 / Winding=广义绕数
     dispatch_3d(&sign_pipe, &mut timer);
 
     let mut out = readback_f32(hd, &dist_buf);

@@ -1,4 +1,5 @@
-// GPU mesh→SDF 实时档（T-GC-01）：三角网→表面采样→JFA 种子→窄带距离场→径向符号。
+// GPU mesh→SDF（T-GC-01）：三角网→表面采样→JFA 种子→窄带距离场→符号（两档）。
+// 符号两档：`sign_radial` = 径向出射射线（实时档，凸体口径）；`sign_winding` = 广义绕数（精度档）。
 // 单位口径：全程 index 单位（顶点已在 CPU 侧缩放到 [0,n)³），回读后由调用方缩放回世界单位。
 // 统一绑定布局（8 项，四个 kernel 共用一张 BGL）：
 //   0=verts(read,vec4) 1=faces(read,vec4u) 2=mp(uniform) 3=counts(rw)
@@ -21,6 +22,8 @@ struct MeshParams {
 @group(0) @binding(7) var<storage, read_write> dist : array<f32>;
 
 const INVALID : u32 = 0xFFFFFFFFu;
+// 1/(4π)：与 CPU 侧 lib.rs `INV_4PI` 同字面量（绕数口径对拍）
+const INV_4PI : f32 = 0.07957747;
 
 @compute @workgroup_size(64)
 fn count_samples(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -128,6 +131,43 @@ fn sign_radial(@builtin(global_invocation_id) gid: vec3<u32>) {
         inside = pl < t_exit;
     }
     if (inside) {
+        dist[idx] = -d;
+    }
+}
+
+// 精度档符号（T-GC-01）：逐体素广义绕数（Van Oosterom–Strackee 立体角和 / 4π）。
+// 每线程顺序遍历全部三角 ⇒ 与执行序无关、逐位确定；无凸体/星形前提（相对 sign_radial 的增益）。
+// 复杂度 O(带内体素 × n_tris) 暴力，树加速属后续片。
+@compute @workgroup_size(4, 4, 4)
+fn sign_winding(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let n = mp.n;
+    if (gid.x >= n || gid.y >= n || gid.z >= n) {
+        return;
+    }
+    let idx = gid.x + gid.y * n + gid.z * n * n;
+    let d = dist[idx];
+    if (d > mp.band) {
+        return; // 带外不投符号（窄带口径，与 sign_radial 一致）
+    }
+    let pos = vec3<f32>(gid);
+    var sum = 0.0;
+    for (var t = 0u; t < mp.n_tris; t++) {
+        let a = verts[faces[t].x].xyz - pos;
+        let b = verts[faces[t].y].xyz - pos;
+        let c = verts[faces[t].z].xyz - pos;
+        let la = length(a);
+        let lb = length(b);
+        let lc = length(c);
+        // 顶点重合时该三角立体角无定义（atan2(0,0)）⇒ 贡献 0，与 CPU 同口径
+        if (la == 0.0 || lb == 0.0 || lc == 0.0) {
+            continue;
+        }
+        let num = dot(a, cross(b, c));
+        let den = la * lb * lc + dot(a, b) * lc + dot(b, c) * la + dot(c, a) * lb;
+        sum = sum + 2.0 * atan2(num, den);
+    }
+    // |w| ≥ 0.5 ⇔ 内部：整体翻转法向只改 w 的符号，判定不变
+    if (abs(sum * INV_4PI) >= 0.5) {
         dist[idx] = -d;
     }
 }
