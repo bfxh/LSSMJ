@@ -17,6 +17,18 @@ use std::collections::HashMap;
 /// 缺失角值的"带外"约定（大正数：对 SDF 口径 = 远离表面；限 finite 避免 inf 运算）。
 pub const EMPTY_VALUE: f32 = 1e30;
 
+/// 打包后的块表（`SparseGrid::pack` 产物；多块 GPU 网格化的输入）。
+pub struct PackedBlocks {
+    /// 块坐标（z→y→x 字典序）
+    pub blocks: Vec<[i32; 3]>,
+    /// 所有权层连续数据（每块 C³，块内 x+y·C+z·C²）
+    pub packed: Vec<f32>,
+    /// 27 邻块表（槽 = (dz+1)·9+(dy+1)·3+(dx+1)；−1 = 邻块缺失）
+    pub nbr: Vec<i32>,
+    /// 块边长 C
+    pub c: i32,
+}
+
 /// 稀疏体素格（值所有权唯一；halo 读侧虚拟重叠）。
 pub struct SparseGrid {
     side: i32,
@@ -119,6 +131,48 @@ impl SparseGrid {
             }
         }
         out
+    }
+
+    /// 已分配块坐标列表（**确定排序**：z→y→x 字典序）——多块装配器的块表来源。
+    pub fn block_list(&self) -> Vec<[i32; 3]> {
+        let mut v: Vec<[i32; 3]> = self.blocks.keys().copied().collect();
+        v.sort_by_key(|b| (b[2], b[1], b[0]));
+        v
+    }
+
+    /// 打包已分配块（多块 GPU 网格化输入）：`blocks` 块表 + `packed` 所有权层连续数据
+    /// （每块 C³，块内 x+y·C+z·C²）+ `nbr` 27 邻块表（槽 = (dz+1)·9+(dy+1)·3+(dx+1)，
+    /// 邻块缺失 = −1 ⇒ 读侧 `EMPTY_VALUE`）。窗口读取 = 邻块表 + 轴分裂算术（无哈希）。
+    pub fn pack(&self) -> PackedBlocks {
+        let blocks = self.block_list();
+        let side = self.side as usize;
+        let block_len = side * side * side;
+        let mut packed = Vec::with_capacity(blocks.len() * block_len);
+        for b in &blocks {
+            packed.extend_from_slice(&self.blocks[b]);
+        }
+        let mut index: HashMap<[i32; 3], i32> = HashMap::with_capacity(blocks.len());
+        for (k, b) in blocks.iter().enumerate() {
+            index.insert(*b, k as i32);
+        }
+        let mut nbr = vec![-1i32; blocks.len() * 27];
+        for (k, b) in blocks.iter().enumerate() {
+            for dz in -1..=1i32 {
+                for dy in -1..=1i32 {
+                    for dx in -1..=1i32 {
+                        let n = [b[0] + dx, b[1] + dy, b[2] + dz];
+                        let slot = ((dz + 1) * 9 + (dy + 1) * 3 + (dx + 1)) as usize;
+                        nbr[k * 27 + slot] = index.get(&n).copied().unwrap_or(-1);
+                    }
+                }
+            }
+        }
+        PackedBlocks {
+            blocks,
+            packed,
+            nbr,
+            c: self.side,
+        }
     }
 
     /// 稠密化到 `[0, n)³` 值格（界外角 = `EMPTY_VALUE`）。
