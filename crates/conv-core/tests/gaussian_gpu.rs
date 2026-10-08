@@ -40,7 +40,12 @@ fn sample_cloud() -> GaussianCloud {
     opacities[0] = -0.0;
     opacities[1] = f32::NAN;
     colors[0] = [f32::MIN_POSITIVE / 2.0, -0.0, f32::NAN];
-    GaussianCloud::new(positions, log_scales, rotations, opacities, colors)
+    // SH 高阶平面（stride 3）：并入恒等判据（含位边界语料）
+    let mut sh_rest: Vec<f32> = (0..N * 3).map(|_| rng.next01() * 2.0 - 1.0).collect();
+    sh_rest[0] = -0.0;
+    sh_rest[1] = f32::INFINITY;
+    sh_rest[2] = f32::MIN_POSITIVE / 2.0;
+    GaussianCloud::new(positions, log_scales, rotations, opacities, colors).with_sh_rest(sh_rest, 3)
 }
 
 fn flat3(p: &[[f32; 3]]) -> Vec<f32> {
@@ -85,6 +90,8 @@ fn identity_roundtrip_bitwise() {
     );
     assert_f32_slice_bits_eq(&rt.opacities, &cloud.opacities, "opacity 平面");
     assert_f32_slice_bits_eq(&flat3(&rt.colors), &flat3(&cloud.colors), "color 平面");
+    assert_eq!(rt.sh_rest_stride, 3);
+    assert_f32_slice_bits_eq(&rt.sh_rest, &cloud.sh_rest, "SH 平面（stride 3）");
     assert_eq!(cloud_hash(&rt), cloud_hash(&cloud), "金样哈希不一致");
 }
 
@@ -115,9 +122,10 @@ fn golden_hash_pinned() {
     let cloud = sample_cloud();
     let h = cloud_hash(&cloud);
     println!("golden hash: {h:#018x}");
+    // SH 承载后换约（旧值 0x9b5164015597b571 为 5 平面版）
     assert_eq!(
-        h, 0x9b5164015597b571,
-        "金样哈希漂移 —— 格式契约变更？（平面集/次序/域）"
+        h, 0x48f5cf547ce2a737,
+        "金样哈希漂移 —— 格式契约变更？（平面集/次序/域/SH）"
     );
 }
 

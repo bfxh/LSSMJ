@@ -6,8 +6,9 @@
 //!   rotation  = (rot_1, rot_2, rot_3, rot_0)——PLY 惯例 rot_0 为实部 w，本仓平面为 (x,y,z,w)
 //!   opacity   = opacity 原样（logit 域）
 //!   color     = 0.5 + SH_C0 × (f_dc_0..2)（SH DC → 线性 RGB 的 3DGS 约定）
-//! `f_rest_*`（高阶 SH）**显式忽略**并记入 `PlyInfo.ignored_f_rest`；其余未知属性、非 float
-//! 类型、非 vertex 元素（count>0）一律 `Err`——不静默吞。量化变体属后续片。
+//! `f_rest_*`（高阶 SH）**逐位承载**进 `GaussianCloud.sh_rest` 平面（按 PLY 属性声明序，
+//! 不做语义解释；stride = 属性个数，记入 `PlyInfo.sh_rest_stride`）；其余未知属性、
+//! 非 float 类型、非 vertex 元素（count>0）一律 `Err`——不静默吞。
 
 use std::collections::HashMap;
 
@@ -27,12 +28,13 @@ pub enum PlyFormat {
     BinaryLittleEndian,
 }
 
-/// 读入报告（显式披露忽略/格式，不静默）。
+/// 读入报告（显式披露格式与 SH 承载情况）。
 #[derive(Debug, Clone, Copy)]
 pub struct PlyInfo {
     pub format: PlyFormat,
     pub vertex_count: u32,
-    pub ignored_f_rest: u32,
+    /// SH 高阶每顶点系数个数（f_rest_* 属性数；0 = 文件无高阶）
+    pub sh_rest_stride: u32,
 }
 
 #[derive(Debug)]
@@ -128,7 +130,7 @@ pub fn load_ply(bytes: &[u8]) -> Result<(GaussianCloud, PlyInfo), PlyError> {
 
     // ---- 属性分类：必需 / f_rest_*（忽略）/ 其余未知一律拒 ----
     let mut idx_of: HashMap<String, usize> = HashMap::new();
-    let mut ignored_f_rest = 0u32;
+    let mut f_rest_idx: Vec<usize> = Vec::new();
     for (i, (ty, name)) in props.iter().enumerate() {
         if name.starts_with("f_rest_") {
             if ty != "float" {
@@ -137,7 +139,7 @@ pub fn load_ply(bytes: &[u8]) -> Result<(GaussianCloud, PlyInfo), PlyError> {
                     name: name.clone(),
                 });
             }
-            ignored_f_rest += 1;
+            f_rest_idx.push(i);
             continue;
         }
         if !REQUIRED_PROPS.contains(&name.as_str()) || ty != "float" {
@@ -161,6 +163,7 @@ pub fn load_ply(bytes: &[u8]) -> Result<(GaussianCloud, PlyInfo), PlyError> {
     let mut rotations: Vec<[f32; 4]> = Vec::with_capacity(count);
     let mut opacities: Vec<f32> = Vec::with_capacity(count);
     let mut colors: Vec<[f32; 3]> = Vec::with_capacity(count);
+    let mut sh_rest: Vec<f32> = Vec::with_capacity(count * f_rest_idx.len());
 
     let mut take = |vals: &[f32]| {
         let g = |n: &str| vals[idx_of[n]];
@@ -170,6 +173,9 @@ pub fn load_ply(bytes: &[u8]) -> Result<(GaussianCloud, PlyInfo), PlyError> {
         opacities.push(g("opacity"));
         let d = |n: &str| 0.5 + SH_C0 * g(n);
         colors.push([d("f_dc_0"), d("f_dc_1"), d("f_dc_2")]);
+        for &i in &f_rest_idx {
+            sh_rest.push(vals[i]);
+        }
     };
 
     match format {
@@ -206,13 +212,14 @@ pub fn load_ply(bytes: &[u8]) -> Result<(GaussianCloud, PlyInfo), PlyError> {
         }
     }
 
-    let cloud = GaussianCloud::new(positions, log_scales, rotations, opacities, colors);
+    let cloud = GaussianCloud::new(positions, log_scales, rotations, opacities, colors)
+        .with_sh_rest(sh_rest, f_rest_idx.len() as u32);
     Ok((
         cloud,
         PlyInfo {
             format,
             vertex_count: count as u32,
-            ignored_f_rest,
+            sh_rest_stride: f_rest_idx.len() as u32,
         },
     ))
 }

@@ -1,9 +1,11 @@
 //! 高斯腿（T-GC-04 第一片）：planar 布局 + 恒等映射（粒子↔高斯同表示，无转换=无漂移）。
 //!
 //! 布局契约（锚 `W15A-041/042`：格式家族以 planar 为主、成员布局二选一须编译期钉死）：
-//! **planar（SoA）**——五个独立平面（position / log-scale / rotation 四元数 (x,y,z,w) /
-//! logit-opacity / SH-DC 颜色），每平面一条连续 f32 流、独立缓冲。packed（AoS）不提供；
-//! 改平面集或次序 = 改格式契约，由金样哈希（`tests/gaussian_gpu.rs`）强制披露。
+//! **planar（SoA）**——六个平面（position / log-scale / rotation 四元数 (x,y,z,w) /
+//! logit-opacity / SH-DC 颜色 / **SH 高阶（f_rest，逐顶点 stride 个 f32，按 PLY 属性序
+//! 原样承载——语义解释/求值属后续片）**），每平面一条连续 f32 流、独立缓冲。
+//! packed（AoS）不提供；改平面集或次序 = 改格式契约，由金样哈希强制披露
+//! （金样只在 `sh_rest_stride > 0` 时纳入 SH 字节 ⇒ stride=0 的既有金样保持有效）。
 //! 恒等边（锚 `W15A-014/015`：物理-渲染同表示）：粒子（JFA 种子口径）与高斯共享
 //! position 平面——零拷贝视图；GPU 侧 `identity_roundtrip` 把各平面经 compute pass 直通
 //! （未来量化/变换阶段的挂载点），回读**逐位**一致（含 ±0 / 次正规 / ±inf / NaN）。
@@ -26,6 +28,11 @@ pub struct GaussianCloud {
     pub opacities: Vec<f32>,
     /// 平面：SH-DC 颜色（线性 RGB）
     pub colors: Vec<[f32; 3]>,
+    /// 平面：SH 高阶系数（f_rest）——长度 = count × `sh_rest_stride`；
+    /// 按 PLY 属性序原样承载（本片不做语义解释）
+    pub sh_rest: Vec<f32>,
+    /// SH 高阶每顶点系数个数（0 = 无高阶；3DGS 满档 = 45）
+    pub sh_rest_stride: u32,
 }
 
 impl GaussianCloud {
@@ -48,7 +55,21 @@ impl GaussianCloud {
             rotations,
             opacities,
             colors,
+            sh_rest: Vec::new(),
+            sh_rest_stride: 0,
         }
+    }
+
+    /// 挂载 SH 高阶平面（长度须 = count × stride；stride = 0 ⇒ 无高阶）。
+    pub fn with_sh_rest(mut self, sh_rest: Vec<f32>, stride: u32) -> Self {
+        assert_eq!(
+            sh_rest.len(),
+            self.count as usize * stride as usize,
+            "sh_rest 长度 ≠ count × stride"
+        );
+        self.sh_rest = sh_rest;
+        self.sh_rest_stride = stride;
+        self
     }
 
     /// 粒子（JFA 种子口径）↔ 高斯共享 position 平面：零拷贝视图（恒等边，锚 W15A-014/015）。
@@ -83,6 +104,14 @@ pub fn cloud_hash(c: &GaussianCloud) -> u64 {
     c.opacities.iter().for_each(|&v| eat(&mut h, v));
     for p in &c.colors {
         p.iter().for_each(|&v| eat(&mut h, v));
+    }
+    // SH 平面：仅当 stride > 0 时纳入（stride=0 的既有金样保持有效）
+    if c.sh_rest_stride > 0 {
+        for b in c.sh_rest_stride.to_le_bytes() {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        c.sh_rest.iter().for_each(|&v| eat(&mut h, v));
     }
     h
 }
@@ -215,7 +244,12 @@ pub fn identity_roundtrip(
         timer.as_deref_mut(),
     );
     let opa = plane_passthrough(hd, &cloud.opacities, &bgl, &pipe, timer.as_deref_mut());
-    let col = plane_passthrough(hd, &flat3(&cloud.colors), &bgl, &pipe, timer);
+    let col = plane_passthrough(hd, &flat3(&cloud.colors), &bgl, &pipe, timer.as_deref_mut());
+    let sh = if cloud.sh_rest_stride > 0 {
+        Some(plane_passthrough(hd, &cloud.sh_rest, &bgl, &pipe, timer))
+    } else {
+        None
+    };
 
     let unflat3 = |v: &[f32]| -> Vec<[f32; 3]> {
         v.as_chunks::<3>()
@@ -231,13 +265,17 @@ pub fn identity_roundtrip(
             .map(|c| [c[0], c[1], c[2], c[3]])
             .collect()
     };
-    GaussianCloud::new(
+    let out = GaussianCloud::new(
         unflat3(&pos),
         unflat3(&scl),
         unflat4(&rot),
         opa,
         unflat3(&col),
-    )
+    );
+    match sh {
+        Some(bytes) => out.with_sh_rest(bytes, cloud.sh_rest_stride),
+        None => out,
+    }
 }
 
 /// 高斯→体素（矩阵边 11 第一片，锚 `W15A-016/017`：Gaussian-to-voxel splatting，**概率占据**）。
