@@ -61,7 +61,7 @@ fn jfa_matches_cpu_brute() {
     let n = 32;
     let seeds = seed_points(n, 128);
     let headless = headless_device();
-    let gpu = jfa_distance_field(&headless, &seeds, n);
+    let gpu = jfa_distance_field(&headless, &seeds, n, None);
     let cpu = cpu_brute(n, &seeds);
     let mut sum = 0f64;
     let mut max_err = 0f32;
@@ -93,7 +93,51 @@ fn jfa_deterministic_bitwise() {
     let n = 32;
     let seeds = seed_points(n, 128);
     let headless = headless_device();
-    let a = jfa_distance_field(&headless, &seeds, n);
-    let b = jfa_distance_field(&headless, &seeds, n);
+    let a = jfa_distance_field(&headless, &seeds, n, None);
+    let b = jfa_distance_field(&headless, &seeds, n, None);
     assert_eq!(fnv(&a), fnv(&b), "bitwise determinism across runs");
+}
+
+/// 大规模 JFA：256³（1670 万格点）——3D 派发按维计限（(64,64,64) 合法），
+/// 判据 = 跑通 + 两次运行逐位一致 + 抽 4096 体素对 CPU 暴力参照（各腿规模探针第一片）。
+#[test]
+fn jfa_256_scale_probe() {
+    let _gpu = GPU_LOCK.lock().unwrap();
+    let n = 256u32;
+    let seeds = seed_points(n, 64);
+    let hd = headless_device();
+    let t0 = std::time::Instant::now();
+    let a = jfa_distance_field(&hd, &seeds, n, None);
+    let wall = t0.elapsed();
+    let b = jfa_distance_field(&hd, &seeds, n, None);
+    assert_eq!(fnv(&a), fnv(&b), "256³ 两次运行应逐位一致");
+
+    let count = (n as usize).pow(3);
+    let k = 4096usize;
+    let mut max_err = 0f32;
+    let mut sum = 0f64;
+    for j in 0..k {
+        let i = (j * count / k) as u32; // 均匀抽样
+        let x = i % n;
+        let y = (i / n) % n;
+        let z = i / (n * n);
+        let p = [x as f32, y as f32, z as f32];
+        let mut best = f32::INFINITY;
+        for s in &seeds {
+            let dx = p[0] - s[0];
+            let dy = p[1] - s[1];
+            let dz = p[2] - s[2];
+            let dd = (dx * dx + dy * dy + dz * dz).sqrt();
+            if dd < best {
+                best = dd;
+            }
+        }
+        let e = (a[i as usize] - best).abs();
+        sum += e as f64;
+        max_err = max_err.max(e);
+    }
+    let mean = sum / k as f64;
+    println!("JFA 256³：端到端 {wall:?}，抽 {k} 体素 mean={mean:.6} max={max_err:.4}");
+    assert!(mean <= 0.01, "抽样 mean_err={mean}");
+    assert!(max_err <= 1.0, "抽样 max_err={max_err}");
 }
