@@ -228,3 +228,58 @@ fn gauss_to_voxel_deterministic_and_bounded() {
     assert!(a.iter().all(|v| v.is_finite() && *v >= 0.0), "场出现非法值");
     assert_eq!(a[0], 0.0, "角点应在全支撑窗外（恰零）");
 }
+
+/// 大规模恒等直通：1.5M 点（单平面 4.5M 元素）——派发 n/64 = 70,313 > 65,535，
+/// 此前 1D 派发上限拒发；grid-stride 后逐位保真判据不变（各腿规模探针第一片）。
+#[test]
+fn identity_roundtrip_large_cloud_bitwise() {
+    let _gpu = GPU_LOCK.lock().unwrap();
+    let hd = headless_device();
+    let n = 1_500_000usize;
+    let mut rng = Lcg::new(0x1a2b3c);
+    let mut positions: Vec<[f32; 3]> = Vec::with_capacity(n);
+    let mut log_scales: Vec<[f32; 3]> = Vec::with_capacity(n);
+    let mut rotations: Vec<[f32; 4]> = Vec::with_capacity(n);
+    let mut opacities: Vec<f32> = Vec::with_capacity(n);
+    let mut colors: Vec<[f32; 3]> = Vec::with_capacity(n);
+    for _ in 0..n {
+        positions.push([
+            rng.next01() * 2.0 - 1.0,
+            rng.next01() * 2.0 - 1.0,
+            rng.next01() * 2.0 - 1.0,
+        ]);
+        let s = |r: &mut Lcg| r.next01() * 4.0 - 4.0;
+        log_scales.push([s(&mut rng), s(&mut rng), s(&mut rng)]);
+        rotations.push([s(&mut rng), s(&mut rng), s(&mut rng), s(&mut rng)]);
+        opacities.push(rng.next01() * 8.0 - 4.0);
+        colors.push([rng.next01(), rng.next01(), rng.next01()]);
+    }
+    // 位边界语料（尾点抽查 +0/−0/次正规）
+    positions[n - 1] = [0.0, -0.0, f32::MIN_POSITIVE / 2.0];
+    opacities[n - 1] = -0.0;
+    let cloud = GaussianCloud::new(positions, log_scales, rotations, opacities, colors);
+    assert!(n * 3 / 64 > 65_535, "本规模须超过 1D 派发上限");
+
+    let t0 = std::time::Instant::now();
+    let rt = identity_roundtrip(&hd, &cloud, None);
+    let wall = t0.elapsed();
+    assert_eq!(rt.count, cloud.count);
+    assert_f32_slice_bits_eq(
+        &flat3(&rt.positions),
+        &flat3(&cloud.positions),
+        "position 平面（1.5M 点）",
+    );
+    assert_f32_slice_bits_eq(
+        &flat3(&rt.log_scales),
+        &flat3(&cloud.log_scales),
+        "log_scale 平面",
+    );
+    assert_f32_slice_bits_eq(
+        &flat4(&rt.rotations),
+        &flat4(&cloud.rotations),
+        "rotation 平面",
+    );
+    assert_f32_slice_bits_eq(&rt.opacities, &cloud.opacities, "opacity 平面");
+    assert_f32_slice_bits_eq(&flat3(&rt.colors), &flat3(&cloud.colors), "color 平面");
+    println!("恒等 1.5M 点：5 平面逐位一致，端到端 {wall:?}（单平面 4.5M 元素）");
+}

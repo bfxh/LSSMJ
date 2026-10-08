@@ -16,12 +16,15 @@ static GPU_LOCK: Mutex<()> = Mutex::new(());
 
 const R: f32 = 0.75;
 const WARMUP: u32 = 3;
-const RUNS: u32 = 15;
+/// 样本数 31（各腿规模探针片修正）：**15 样本下 p95 ≡ max**（ceil(15×0.95)−1 = 14）——
+/// 单次调度毛刺即假红（2026-10-08 实测两例：jfa p95 0.71/0.78 vs p50 0.30；单跑复现不了）。
+/// 31 样本 ⇒ p95 = 次大值，容一次毛刺；上限一律不动（仍是 2× 记档）——口径修正，非阈值放宽。
+const RUNS: u32 = 31;
 
 /// P95 棘轮上限（ms）= w15d 记档 p95 × 2，与场景绑定（64³）——棘轮只准减，
 /// 上调必须在此注记"为什么可以涨"。
 const P95_BOUND_MS: &[(&str, f64)] = &[
-    ("jfa_64_4096seeds", 0.60), // 记档 p95=0.2994（d239d7b，RTX 4060 Ti Vulkan，n=15）
+    ("jfa_64_4096seeds", 0.60), // 记档 p95=0.2994（d239d7b，RTX 4060 Ti Vulkan，当时 n=15）
     ("mesh_to_sdf_64", 1.71),   // 记档 p95=0.8565
     // 上调留档（为什么可以涨）：T-GC-05 第五片把分块遍历搬上 GPU（occupancy + 块 scan +
     // build_active + indirect 参数 + indirect 派发，共 +7 个 dispatch ≈ +40µs 固定开销 @64³）
