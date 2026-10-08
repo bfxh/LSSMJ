@@ -20,6 +20,9 @@ pub struct Headless {
 }
 
 /// 无头设备（判据/离线管线用；显示面走引擎侧 T-PH-01）。
+/// **limits 取适配器实际上限**（规模第一片）：默认 `Limits::default()` 把
+/// `max_storage_buffer_binding_size` 钉在 128 MiB（大网格索引缓冲 n≥124 即建不出绑定组）、
+/// `max_buffer_size` 钉在 256 MiB；按适配器取上限可自适应各后端（软件光栅器低上限也能起）。
 pub fn headless_device() -> Headless {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter =
@@ -34,7 +37,7 @@ pub fn headless_device() -> Headless {
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("conv-core-headless"),
         required_features: req,
-        required_limits: wgpu::Limits::default(),
+        required_limits: adapter.limits(),
         experimental_features: wgpu::ExperimentalFeatures::disabled(),
         memory_hints: wgpu::MemoryHints::MemoryUsage,
         trace: wgpu::Trace::Off,

@@ -13,6 +13,10 @@
 //! 稠密化（T-GC-05 第三/四片）：`compact_mesh`（吃回读产物）与 `surface_nets_gpu_compact`
 //!   （runner 直出，gen/emit 后全程 GPU 驻留，免稀疏 n³ 回写往返）共用同一条后链
 //!   `compact_chain`（scan → 散射 + 重映射）。
+//! 规模第一片：① `headless_device` 取适配器上限（默认 128 MiB 绑定上限在 n≥124 拒发）；
+//!   ② 两趟发射——idx 先数后配（此前最坏情形 72B/格点，256³ 要 1.2 GiB）；③ compaction
+//!   散射/重映射 grid-stride（派发封顶 65535，n≥161 不再拒发）。256³ 直出冒烟与 192³ 对拍
+//!   见 `tests/scale_gpu.rs`。
 //! 顺序口径：四边形槽位 = atomicAdd（执行序，非确定）；判据在读回侧按"四顶点规范键"
 //! 排序后对拍——四边形集合与绕序确定 ⇒ 排序流逐位确定。
 //! 教训留档：base/前缀 + write_buffer 路线曾出现"输入逐位一致、输出随机"的未解非确定性
@@ -31,6 +35,8 @@ struct RP {
     chunk_cells: u32,
     wg_axis: u32,
     occ_wg: u32,
+    /// 发射趟相位：1 = 只数不写（两趟发射；规模第一片）
+    count_only: u32,
 }
 
 pub struct GsnMesh {
@@ -65,12 +71,15 @@ struct BlocksRun {
     vtx_pos_buf: wgpu::Buffer,
     vtx_flag_buf: wgpu::Buffer,
     idx_buf: wgpu::Buffer,
-    counter_buf: wgpu::Buffer,
+    /// count 趟读回的四边形数（与 emit 趟写入条数同谓词，必相等）
+    quad_count: u32,
     stats: ChunkStats,
 }
 
 /// 全 GPU 遍历的运行前半（T-GC-05 第五片）：occupancy → scan → build_active →
-/// indirect_args → gen/emit（dispatch_workgroups_indirect）。返回值全部 GPU 驻留。
+/// indirect_args → gen + **count 趟** →（读回计数）→ 精确分配 idx → **emit 趟**。
+/// 两趟发射（规模第一片）：idx 不再按最坏情形 72B/格点 预分配——默认 device limits 的
+/// 128 MiB 绑定上限在 n≥124 即拒（且 256³ 最坏情形要 1.2 GiB）；先数后配后 idx = 24B/四边形。
 fn run_blocks(
     hd: &Headless,
     sdf: &[f32],
@@ -117,12 +126,17 @@ fn run_blocks(
         contents: &[0u8; 4],
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
     });
-    // 上限 = cell 数 × 3 四边形 × 6 索引
-    let idx_buf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("gsn-idx"),
-        size: ((count as u64) * 3 * 6 * 4).max(4),
+    // count 趟独立计数器（两趟各从 0 起加；emit 趟槽位须从 0 开始）
+    let cnt_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("gsn-count"),
+        contents: &[0u8; 4],
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
+    });
+    // count 趟的 idx 占位（4B）：gen/count 组的绑定须齐全，实际写入在 emit 趟
+    let dummy_idx_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("gsn-idx-dummy"),
+        contents: &[0u8; 4],
+        usage: wgpu::BufferUsages::STORAGE,
     });
     let block_flag_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("gsn-block-flag"),
@@ -203,15 +217,22 @@ fn run_blocks(
     let gen_pipe = mk(&pl_b, "gsn-gen", "gen_vertices");
     let emit_pipe = mk(&pl_b, "gsn-emit", "emit_quads");
 
+    let mk_rp = |count_only: u32| RP {
+        n,
+        per_axis,
+        chunk_cells,
+        wg_axis,
+        occ_wg,
+        count_only,
+    };
     let rp_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("gsn-rp"),
-        contents: bytemuck::bytes_of(&RP {
-            n,
-            per_axis,
-            chunk_cells,
-            wg_axis,
-            occ_wg,
-        }),
+        contents: bytemuck::bytes_of(&mk_rp(0)),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    let rp_cnt_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("gsn-rp-count"),
+        contents: bytemuck::bytes_of(&mk_rp(1)),
         usage: wgpu::BufferUsages::UNIFORM,
     });
 
@@ -244,6 +265,104 @@ fn run_blocks(
                 resource: rp_buf.as_entire_binding(),
             },
         ],
+    });
+    // gen/count 组：idx 绑占位、counter 绑 count 计数器、uniform 绑 count_only=1
+    let bg_cnt = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("gsn-bg-count"),
+        layout: &bgl_b,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: sdf_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: vtx_pos_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: vtx_flag_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: active_list_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 7,
+                resource: cnt_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 8,
+                resource: dummy_idx_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 9,
+                resource: rp_cnt_buf.as_entire_binding(),
+            },
+        ],
+    });
+
+    // ① 占据检测（逐 cell 并行，原子置块标志）
+    let blocks_wg = (total_blocks as u32).div_ceil(64);
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    {
+        let tw = timer.as_deref_mut().and_then(|t| t.writes());
+        let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: None,
+            timestamp_writes: tw,
+        });
+        pass.set_pipeline(&occupancy_pipe);
+        pass.set_bind_group(0, &bg_a, &[]);
+        pass.dispatch_workgroups(occ_wg, 1, 1);
+    }
+    queue.submit([enc.finish()]);
+
+    // ② 块扫描（scan 积木：block_flag → blockmap 排他前缀和，写入既有缓冲）
+    crate::scan::exclusive_prefix_sum_into(
+        hd,
+        &block_flag_buf,
+        &blockmap_buf,
+        total_blocks as u32,
+        timer.as_deref_mut(),
+    );
+    let last = ((total_blocks - 1) as u64) * 4;
+    let stats = ChunkStats {
+        chunks: total_blocks as u32,
+        active: readback_u32_slice(hd, &blockmap_buf, last, 4)[0]
+            + readback_u32_slice(hd, &block_flag_buf, last, 4)[0],
+    };
+
+    // ③ 活跃表 + indirect 参数 + gen + count 趟（indirect dispatch，同一 count 组）
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    for (pipe, wgs) in [(&build_active_pipe, blocks_wg), (&args_pipe, 1)] {
+        let tw = timer.as_deref_mut().and_then(|t| t.writes());
+        let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: None,
+            timestamp_writes: tw,
+        });
+        pass.set_pipeline(pipe);
+        pass.set_bind_group(0, &bg_a, &[]);
+        pass.dispatch_workgroups(wgs, 1, 1);
+    }
+    for pipe in [&gen_pipe, &emit_pipe] {
+        let tw = timer.as_deref_mut().and_then(|t| t.writes());
+        let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: None,
+            timestamp_writes: tw,
+        });
+        pass.set_pipeline(pipe);
+        pass.set_bind_group(0, &bg_cnt, &[]);
+        pass.dispatch_workgroups_indirect(&args_buf, 0);
+    }
+    queue.submit([enc.finish()]);
+
+    // ④ 计数读回 → 精确分配 idx → emit 趟（真实 idx 组；与 count 趟同谓词 ⇒ 条数一致）
+    let quad_count = readback_u32(hd, &cnt_buf).first().copied().unwrap_or(0);
+    let idx_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("gsn-idx"),
+        size: ((quad_count as u64) * 6 * 4).max(4),
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
     });
     let bg_b = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("gsn-bg-gen"),
@@ -279,66 +398,27 @@ fn run_blocks(
             },
         ],
     });
-
-    // ① 占据检测（逐 cell 并行，原子置块标志）
-    let blocks_wg = (total_blocks as u32).div_ceil(64);
-    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-    {
-        let tw = timer.as_deref_mut().and_then(|t| t.writes());
-        let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: None,
-            timestamp_writes: tw,
-        });
-        pass.set_pipeline(&occupancy_pipe);
-        pass.set_bind_group(0, &bg_a, &[]);
-        pass.dispatch_workgroups(occ_wg, 1, 1);
+    if quad_count > 0 {
+        let mut enc =
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        {
+            let tw = timer.and_then(|t| t.writes());
+            let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: None,
+                timestamp_writes: tw,
+            });
+            pass.set_pipeline(&emit_pipe);
+            pass.set_bind_group(0, &bg_b, &[]);
+            pass.dispatch_workgroups_indirect(&args_buf, 0);
+        }
+        queue.submit([enc.finish()]);
     }
-    queue.submit([enc.finish()]);
-
-    // ② 块扫描（scan 积木：block_flag → blockmap 排他前缀和，写入既有缓冲）
-    crate::scan::exclusive_prefix_sum_into(
-        hd,
-        &block_flag_buf,
-        &blockmap_buf,
-        total_blocks as u32,
-        timer.as_deref_mut(),
-    );
-    let last = ((total_blocks - 1) as u64) * 4;
-    let stats = ChunkStats {
-        chunks: total_blocks as u32,
-        active: readback_u32_slice(hd, &blockmap_buf, last, 4)[0]
-            + readback_u32_slice(hd, &block_flag_buf, last, 4)[0],
-    };
-
-    // ③ 活跃表 + indirect 参数 + gen/emit（indirect dispatch）
-    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-    for (pipe, wgs) in [(&build_active_pipe, blocks_wg), (&args_pipe, 1)] {
-        let tw = timer.as_deref_mut().and_then(|t| t.writes());
-        let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: None,
-            timestamp_writes: tw,
-        });
-        pass.set_pipeline(pipe);
-        pass.set_bind_group(0, &bg_a, &[]);
-        pass.dispatch_workgroups(wgs, 1, 1);
-    }
-    for pipe in [&gen_pipe, &emit_pipe] {
-        let tw = timer.as_deref_mut().and_then(|t| t.writes());
-        let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: None,
-            timestamp_writes: tw,
-        });
-        pass.set_pipeline(pipe);
-        pass.set_bind_group(0, &bg_b, &[]);
-        pass.dispatch_workgroups_indirect(&args_buf, 0);
-    }
-    queue.submit([enc.finish()]);
 
     BlocksRun {
         vtx_pos_buf,
         vtx_flag_buf,
         idx_buf,
-        counter_buf,
+        quad_count,
         stats,
     }
 }
@@ -366,11 +446,7 @@ pub fn surface_nets_gpu_chunked(
     let count = (n * n * n) as usize;
 
     // 回读（与整块同布局；无活跃块时零初始化缓冲即空输出）
-    let quad_count = readback_f32(hd, &run.counter_buf)
-        .into_iter()
-        .map(f32::to_bits)
-        .next()
-        .unwrap_or(0);
+    let quad_count = run.quad_count;
     let mut indices = readback_f32(hd, &run.idx_buf)
         .into_iter()
         .map(f32::to_bits)
@@ -409,10 +485,7 @@ pub fn surface_nets_gpu_compact(
     mut timer: Option<&mut crate::timer::GpuTimer>,
 ) -> (CompactMesh, ChunkStats) {
     let run = run_blocks(hd, sdf, n, chunk_cells, timer.as_deref_mut());
-    let quad_count = readback_u32(hd, &run.counter_buf)
-        .first()
-        .copied()
-        .unwrap_or(0);
+    let quad_count = run.quad_count;
     let count = quad_count * 6;
     let n3 = n * n * n;
     let (pos_out_buf, idx_out_buf, total) = compact_chain(
@@ -590,6 +663,8 @@ fn compact_chain(
 
         let mut enc =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        // 派发封顶 65535（单维上限）+ 核内 grid-stride（规模第一片）
+        let cap = |x: u32| x.div_ceil(64).min(65535);
         if total > 0 {
             let tw = timer.as_mut().and_then(|t| t.writes());
             let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -598,7 +673,7 @@ fn compact_chain(
             });
             pass.set_pipeline(&scatter);
             pass.set_bind_group(0, &bg, &[]);
-            pass.dispatch_workgroups(n3.div_ceil(64), 1, 1);
+            pass.dispatch_workgroups(cap(n3), 1, 1);
         }
         if count > 0 {
             let tw = timer.as_mut().and_then(|t| t.writes());
@@ -608,7 +683,7 @@ fn compact_chain(
             });
             pass.set_pipeline(&remap);
             pass.set_bind_group(0, &bg, &[]);
-            pass.dispatch_workgroups(count.div_ceil(64), 1, 1);
+            pass.dispatch_workgroups(cap(count), 1, 1);
         }
         queue.submit([enc.finish()]);
     }

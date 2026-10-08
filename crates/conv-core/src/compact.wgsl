@@ -1,6 +1,8 @@
 // 稠密顶点 compaction（T-GC-05 第三片）：稀疏 n³ 槽位 → 稠密流。
 //   scatter：flag=1 的 cell 的顶点按 cellmap（= flags 排他前缀和）散射到稠密缓冲；
 //   remap：索引经 cellmap 重映射到稠密顶点号（四边形的顶点必为表面 cell ⇒ 映射有效）。
+// grid-stride（规模第一片）：派发数封顶 65535（单维上限），核内按 64×num_workgroups 步进
+//   ——n³/64 超过上限（n≥161）时不再拒发。
 // 绑定：0=flags 1=cellmap 2=pos_in(vec4) 3=pos_out(vec4) 4=idx_in 5=idx_out 6=params
 
 struct CP {
@@ -19,19 +21,35 @@ struct CP {
 @group(0) @binding(6) var<uniform> cp : CP;
 
 @compute @workgroup_size(64)
-fn scatter_vertices(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let i = gid.x;
-    if (i >= cp.n || flags[i] == 0u) {
-        return;
+fn scatter_vertices(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(num_workgroups) nwg: vec3<u32>,
+) {
+    let stride = 64u * nwg.x;
+    var i = gid.x;
+    loop {
+        if (i >= cp.n) {
+            break;
+        }
+        if (flags[i] != 0u) {
+            pos_out[cellmap[i]] = pos_in[i];
+        }
+        i = i + stride;
     }
-    pos_out[cellmap[i]] = pos_in[i];
 }
 
 @compute @workgroup_size(64)
-fn remap_indices(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let k = gid.x;
-    if (k >= cp.count) {
-        return;
+fn remap_indices(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(num_workgroups) nwg: vec3<u32>,
+) {
+    let stride = 64u * nwg.x;
+    var k = gid.x;
+    loop {
+        if (k >= cp.count) {
+            break;
+        }
+        idx_out[k] = cellmap[idx_in[k]];
+        k = k + stride;
     }
-    idx_out[k] = cellmap[idx_in[k]];
 }

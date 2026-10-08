@@ -75,7 +75,9 @@ pub(crate) fn exclusive_prefix_sum_into(
     mut timer: Option<&mut crate::timer::GpuTimer>,
 ) {
     let nb = n.div_ceil(WG);
-    assert!(nb > 0 && (nb as u64) <= 1 << 16, "块数超上限（nb={nb}）");
+    assert!(nb > 0, "扫描长度须 ≥ 1");
+    // 派发封顶 65535（单维上限）+ 核内 grid-stride（规模第一片：nb>65535 不再拒发）
+    let scan_wg = nb.min(65535);
     let device = &hd.device;
     let queue = &hd.queue;
 
@@ -161,7 +163,11 @@ pub(crate) fn exclusive_prefix_sum_into(
 
     // 三段同 encoder（pass 间隐式 barrier）：block → carry → final
     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-    for (pipe, wgs) in [(&block_scan, nb), (&block_carry, 1), (&scan_final, nb)] {
+    for (pipe, wgs) in [
+        (&block_scan, scan_wg),
+        (&block_carry, 1),
+        (&scan_final, scan_wg),
+    ] {
         let tw = timer.as_deref_mut().and_then(|t| t.writes());
         let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: None,

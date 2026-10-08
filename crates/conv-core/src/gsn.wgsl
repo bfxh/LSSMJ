@@ -14,6 +14,9 @@
 //   dispatch 的 rw 绑定同作用域；写者组与 gen 组各自 storage 数 ≤ 8 = wgpu 默认上限）
 // 顺序口径：四边形槽位 = atomicAdd（执行序，非确定）；判据在读回侧按"四顶点规范键"
 // 排序后对拍——四边形集合与绕序确定 ⇒ 排序流逐位确定。
+// 两趟发射（规模第一片）：索引缓冲不再按最坏情形 72B/格点 预分配（n≥124 即撞默认
+// binding 上限、内存 O(72·n³)）——同上 indirect 派发跑两趟：count_only=1 只数、读回后
+// 精确分配 idx，再 count_only=0 写。谓词两趟一致 ⇒ 计数即写入条数。
 
 struct RP {
     n: u32,
@@ -21,6 +24,7 @@ struct RP {
     chunk_cells: u32,
     wg_axis: u32,     // 每块每轴 workgroup 数 = ceil((chunk_cells+1)/4)
     occ_wg: u32,      // 占据检测派发的 workgroup 数（grid-stride 用）
+    count_only: u32,  // 发射趟相位：1 = 只数不写（两趟发射先数后配，规模第一片）
 };
 
 @group(0) @binding(0) var<storage, read> sdf : array<f32>;
@@ -236,15 +240,27 @@ fn emit_quads(
     let l = lin_global(cell);
     let n = rp.n;
     if (cell.y > 0u && cell.z > 0u && cell.x < n - 2u && sign_diff(sdf[l], sdf[l + 1u])) {
-        let slot = atomicAdd(&quad_counter[0], 1u) * 6u;
-        write_quad(slot, l, n, n * n, sdf[l], sdf[l + 1u]);
+        if (rp.count_only == 0u) {
+            let slot = atomicAdd(&quad_counter[0], 1u) * 6u;
+            write_quad(slot, l, n, n * n, sdf[l], sdf[l + 1u]);
+        } else {
+            atomicAdd(&quad_counter[0], 1u);
+        }
     }
     if (cell.x > 0u && cell.z > 0u && cell.y < n - 2u && sign_diff(sdf[l], sdf[l + n])) {
-        let slot = atomicAdd(&quad_counter[0], 1u) * 6u;
-        write_quad(slot, l, n * n, 1u, sdf[l], sdf[l + n]);
+        if (rp.count_only == 0u) {
+            let slot = atomicAdd(&quad_counter[0], 1u) * 6u;
+            write_quad(slot, l, n * n, 1u, sdf[l], sdf[l + n]);
+        } else {
+            atomicAdd(&quad_counter[0], 1u);
+        }
     }
     if (cell.x > 0u && cell.y > 0u && cell.z < n - 2u && sign_diff(sdf[l], sdf[l + n * n])) {
-        let slot = atomicAdd(&quad_counter[0], 1u) * 6u;
-        write_quad(slot, l, 1u, n, sdf[l], sdf[l + n * n]);
+        if (rp.count_only == 0u) {
+            let slot = atomicAdd(&quad_counter[0], 1u) * 6u;
+            write_quad(slot, l, 1u, n, sdf[l], sdf[l + n * n]);
+        } else {
+            atomicAdd(&quad_counter[0], 1u);
+        }
     }
 }
