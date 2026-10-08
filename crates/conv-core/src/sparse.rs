@@ -77,6 +77,31 @@ impl SparseGrid {
         self.blocks.len()
     }
 
+    /// 块边长（每轴格点数 C）。
+    pub fn block_side(&self) -> i32 {
+        self.side
+    }
+
+    /// **网格化窗口**（C+2)³：每轴 `[b·C−1, b·C+C]` 闭区间——相比角值窗多借**两侧各 1**
+    /// 格点。必要性：cell 的四边形要引用 −1 邻 cell 的顶点（其角值含更低的 −1 层）。
+    /// 返回按 z→y→x 排布。
+    pub fn extract_mesh_window(&self, block: [i32; 3]) -> Vec<f32> {
+        let w = (self.side + 2) as usize;
+        let mut out = Vec::with_capacity(w * w * w);
+        for z in -1..=self.side {
+            for y in -1..=self.side {
+                for x in -1..=self.side {
+                    out.push(self.get([
+                        block[0] * self.side + x,
+                        block[1] * self.side + y,
+                        block[2] * self.side + z,
+                    ]));
+                }
+            }
+        }
+        out
+    }
+
     /// 角值窗 `[b·C, b·C+C]`（每轴 C+1 个）——含跨块 halo 读（邻块缺失 ⇒ `EMPTY_VALUE`）。
     /// 返回按 z→y→x 排布的 `(C+1)³` 值（与既有值切片提取同序）。
     pub fn extract_corner_window(&self, block: [i32; 3]) -> Vec<f32> {

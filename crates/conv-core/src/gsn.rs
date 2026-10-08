@@ -645,3 +645,195 @@ struct CP {
     _p0: u32,
     _p1: u32,
 }
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct BP {
+    c: u32,
+    w: u32,
+    wg_axis: u32,
+    _p0: u32,
+    ox: i32,
+    oy: i32,
+    oz: i32,
+    _p1: i32,
+}
+
+/// 单块网格化产物（T-GC-05 第六片）：局部槽位 (C+1)³（含 −1 halo 层），位置为全局坐标。
+pub struct BlockMesh {
+    pub block: [i32; 3],
+    pub c: u32,
+    /// 顶点位置（槽位 = 局部 cell 线性索引 lx + ly·(C+1) + lz·(C+1)²；
+    /// 局部 cell = 全局 cell − (b·C−1)，lc 0 平面 = −1 halo 层）
+    pub positions: Vec<[f32; 3]>,
+    /// 表面 cell 标记（同槽位布局）
+    pub flags: Vec<u32>,
+    /// 三角索引（引用局部槽位；执行序——判据侧按四顶点规范键排序后对拍）
+    pub indices: Vec<u32>,
+    pub quad_count: u32,
+}
+
+/// 稀疏格单块 GPU 网格化：块窗口 (C+2)³（`SparseGrid::extract_mesh_window`）→
+/// 本块局部顶点 + 四边形（**跨块 halo 读取**；锚 `W15A-034/035` 的 1-voxel halo 契约）。
+/// 归属：四边形按"**发射 cell ∈ 本块** [b·C, b·C+C)³"唯一划分（halo 层 cell 只产顶点，
+/// 其 quad 属 −1 邻块）——全块输出装配后与整块 GSN 逐位可对拍（接缝零缝）。
+/// 无全局域边界条件：稀疏无边界概念，缺块读侧即 `EMPTY`（大正数 ⇒ 无符号变化 ⇒ 无产出）。
+pub fn mesh_block(
+    hd: &Headless,
+    grid: &crate::sparse::SparseGrid,
+    block: [i32; 3],
+    mut timer: Option<&mut crate::timer::GpuTimer>,
+) -> BlockMesh {
+    let device = &hd.device;
+    let queue = &hd.queue;
+    let c = grid.block_side();
+    assert!(c >= 2, "块边长须 ≥ 2");
+    let cu = c as u32;
+    let w = (c + 2) as u32;
+    let s = (c + 1) as u32;
+    let scount = (s * s * s) as usize;
+    let window = grid.extract_mesh_window(block);
+
+    let window_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("gsnb-window"),
+        contents: bytemuck::cast_slice(&window),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let vtx_pos_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("gsnb-vtx-pos"),
+        contents: &vec![0u8; scount * 16],
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+    });
+    let vtx_flag_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("gsnb-vtx-flag"),
+        contents: &vec![0u8; scount * 4],
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+    });
+    let counter_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("gsnb-counter"),
+        contents: &[0u8; 4],
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+    });
+    // 上限 = 本块 cell 数 × 3 四边形 × 6 索引
+    let idx_cap = (cu as u64) * (cu as u64) * (cu as u64) * 3 * 6;
+    let idx_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("gsnb-idx"),
+        size: (idx_cap * 4).max(4),
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+
+    let module = device.create_shader_module(wgpu::include_wgsl!("gsn_block.wgsl"));
+    let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("gsnb-bgl"),
+        entries: &[
+            storage_entry(0, true),
+            storage_entry(1, false),
+            storage_entry(2, false),
+            storage_entry(3, false),
+            storage_entry(4, false),
+            uniform_entry(5),
+        ],
+    });
+    let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("gsnb-pl"),
+        bind_group_layouts: &[Some(&bgl)],
+        immediate_size: 0,
+    });
+    let mk = |label: &str, entry: &str| {
+        device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some(label),
+            layout: Some(&pl),
+            module: &module,
+            entry_point: Some(entry),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
+        })
+    };
+    let gen_pipe = mk("gsnb-gen", "gen_vertices");
+    let emit_pipe = mk("gsnb-emit", "emit_quads");
+
+    let wg_axis = s.div_ceil(4);
+    let bp_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("gsnb-bp"),
+        contents: bytemuck::bytes_of(&BP {
+            c: cu,
+            w,
+            wg_axis,
+            _p0: 0,
+            ox: block[0] * c - 1,
+            oy: block[1] * c - 1,
+            oz: block[2] * c - 1,
+            _p1: 0,
+        }),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+
+    let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("gsnb-bg"),
+        layout: &bgl,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: window_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: vtx_pos_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: vtx_flag_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: counter_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: idx_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: bp_buf.as_entire_binding(),
+            },
+        ],
+    });
+
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    for pipe in [&gen_pipe, &emit_pipe] {
+        let tw = timer.as_mut().and_then(|t| t.writes());
+        let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: None,
+            timestamp_writes: tw,
+        });
+        pass.set_pipeline(pipe);
+        pass.set_bind_group(0, &bg, &[]);
+        pass.dispatch_workgroups(wg_axis, wg_axis, wg_axis);
+    }
+    queue.submit([enc.finish()]);
+
+    let quad_count = readback_u32(hd, &counter_buf).first().copied().unwrap_or(0);
+    let indices = if quad_count > 0 {
+        readback_u32_slice(hd, &idx_buf, 0, (quad_count as u64) * 6 * 4)
+    } else {
+        Vec::new()
+    };
+    let raw_pos = readback_f32(hd, &vtx_pos_buf);
+    let positions: Vec<[f32; 3]> = raw_pos
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|p| [p[0], p[1], p[2]])
+        .collect();
+    let flags = readback_u32(hd, &vtx_flag_buf);
+
+    BlockMesh {
+        block,
+        c: cu,
+        positions,
+        flags,
+        indices,
+        quad_count,
+    }
+}
