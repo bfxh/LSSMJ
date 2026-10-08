@@ -971,7 +971,8 @@ impl MultiMesh {
 /// ——打包存储（`SparseGrid::pack`）+ 27 邻块表 gather（无 CPU 窗打包、无 GPU 哈希），
 /// 每块局部 (C+1)³ 槽 + 全局索引段（两趟发射：count 趟 → 读回 n_blocks 计数 + CPU 前缀 →
 /// emit 趟按段写入）。语义 = `mesh_block` 逐块（判据对拍）。
-/// 派发上限：n_blocks × wg_axis ≤ 65535（块号 = z 维 / wg_axis）。
+/// 派发 (wg_axis, wg_axis, wg_axis × P)：**块号 grid-stride**（P = min(n, 65535 / wg_axis)，
+/// 核内按 P 步进）——块数不再受单维派发上限（装配器第二片）。
 pub fn mesh_blocks(
     hd: &Headless,
     grid: &crate::sparse::SparseGrid,
@@ -988,10 +989,9 @@ pub fn mesh_blocks(
     let s = cu + 1;
     let slots = (n as u64) * (s as u64) * (s as u64) * (s as u64);
     let wg_axis = s.div_ceil(4);
-    assert!(
-        (n as u64) * (wg_axis as u64) <= 65535,
-        "块数超派发上限（n={n}, wg_axis={wg_axis}）"
-    );
+    // z 维派发封顶 65535（单维上限）；块号在核内 grid-stride：每趟 P = min(n, 65535/wg_axis) 块
+    let z_blocks = ((65535 / wg_axis) as u64).min(n as u64) as u32;
+    let z_wg = wg_axis * z_blocks;
 
     let packed_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("gsnm-packed"),
@@ -1139,7 +1139,7 @@ pub fn mesh_blocks(
         });
         pass.set_pipeline(pipe);
         pass.set_bind_group(0, &bg_count, &[]);
-        pass.dispatch_workgroups(wg_axis, wg_axis, wg_axis * n);
+        pass.dispatch_workgroups(wg_axis, wg_axis, z_wg);
     }
     queue.submit([enc.finish()]);
 
@@ -1178,7 +1178,7 @@ pub fn mesh_blocks(
             });
             pass.set_pipeline(&emit_pipe);
             pass.set_bind_group(0, &bg_emit, &[]);
-            pass.dispatch_workgroups(wg_axis, wg_axis, wg_axis * n);
+            pass.dispatch_workgroups(wg_axis, wg_axis, z_wg);
         }
         queue.submit([enc.finish()]);
     }

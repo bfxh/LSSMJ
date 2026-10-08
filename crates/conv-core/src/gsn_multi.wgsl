@@ -5,7 +5,8 @@
 // （大正数）⇒ 无符号变化 ⇒ 无产出。
 // 输出段：每块局部槽（vtx_pos/vtx_flag，全局槽空间）+ **全局索引段**（每块段起点 = offsets
 // 前缀和，两趟发射：count 趟只数 → 读回 + CPU 前缀 → emit 趟写入精确段）。
-// 派发：3D (wg_axis, wg_axis, wg_axis × n_blocks)——z 维解块号；上限 n_blocks×wg_axis ≤ 65535。
+// 派发：3D (wg_axis, wg_axis, wg_axis × P)——z 维解块号，**块号 grid-stride**
+// （P = 本次派发块数 = num_workgroups.z / wg_axis；超 65535 派发上限时自动多趟遍历）。
 // 绑定：0=packed 1=nbr 2=blocks(vec4<i32>, 存块起−1 全局坐标) 3=slot_pos 4=slot_flag
 //   5=counters(3 段：count[0..n) / emit[n..2n) / offsets[2n..3n)) 6=idx_out 7=mp(uniform)
 
@@ -81,43 +82,52 @@ const EDGES : array<vec2<u32>, 12> = array<vec2<u32>, 12>(
 fn gen_vertices(
     @builtin(workgroup_id) wid: vec3<u32>,
     @builtin(local_invocation_id) lid: vec3<u32>,
+    @builtin(num_workgroups) nwg: vec3<u32>,
 ) {
-    let block = wid.z / mp.wg_axis;
     let lc = vec3<u32>(wid.x, wid.y, wid.z % mp.wg_axis) * 4u + lid;
     if (any(lc >= vec3<u32>(mp.c + 1u))) {
         return;
     }
-    var d : array<f32, 8>;
-    var neg = 0u;
-    for (var i = 0u; i < 8u; i++) {
-        let v = wval(block, lc + vec3<u32>(i & 1u, (i >> 1u) & 1u, (i >> 2u) & 1u));
-        d[i] = v;
-        if (v < 0.0) {
-            neg = neg + 1u;
+    let per_pass = nwg.z / mp.wg_axis;
+    var block = wid.z / mp.wg_axis;
+    loop {
+        if (block >= mp.n_blocks) {
+            break;
         }
-    }
-    let slot = slot_of(block, lc);
-    if (neg == 0u || neg == 8u) {
-        slot_flag[slot] = 0u;
-        return;
-    }
-    var sum = vec3<f32>(0.0, 0.0, 0.0);
-    var cnt = 0.0;
-    for (var e = 0u; e < 12u; e++) {
-        let c1 = EDGES[e].x;
-        let c2 = EDGES[e].y;
-        let d1 = d[c1];
-        let d2 = d[c2];
-        if ((d1 < 0.0) != (d2 < 0.0)) {
-            let w = d1 / (d1 - d2);
-            sum = sum + (1.0 - w) * corner_vec(c1) + w * corner_vec(c2);
-            cnt = cnt + 1.0;
+        var d : array<f32, 8>;
+        var neg = 0u;
+        for (var i = 0u; i < 8u; i++) {
+            let v = wval(block, lc + vec3<u32>(i & 1u, (i >> 1u) & 1u, (i >> 2u) & 1u));
+            d[i] = v;
+            if (v < 0.0) {
+                neg = neg + 1u;
+            }
         }
+        let slot = slot_of(block, lc);
+        if (neg == 0u || neg == 8u) {
+            slot_flag[slot] = 0u;
+            block = block + per_pass;
+            continue;
+        }
+        var sum = vec3<f32>(0.0, 0.0, 0.0);
+        var cnt = 0.0;
+        for (var e = 0u; e < 12u; e++) {
+            let c1 = EDGES[e].x;
+            let c2 = EDGES[e].y;
+            let d1 = d[c1];
+            let d2 = d[c2];
+            if ((d1 < 0.0) != (d2 < 0.0)) {
+                let w = d1 / (d1 - d2);
+                sum = sum + (1.0 - w) * corner_vec(c1) + w * corner_vec(c2);
+                cnt = cnt + 1.0;
+            }
+        }
+        // 全局 cell = 块起−1（blocks 里就存这个）+ 局部 cell → 全局坐标位置（与整块同算式）
+        let cell = vec3<i32>(lc) + blocks[block].xyz;
+        slot_pos[slot] = vec4<f32>(vec3<f32>(cell) + sum / cnt, 1.0);
+        slot_flag[slot] = 1u;
+        block = block + per_pass;
     }
-    // 全局 cell = 块起−1（blocks 里就存这个）+ 局部 cell → 全局坐标位置（与整块同算式）
-    let cell = vec3<i32>(lc) + blocks[block].xyz;
-    slot_pos[slot] = vec4<f32>(vec3<f32>(cell) + sum / cnt, 1.0);
-    slot_flag[slot] = 1u;
 }
 
 fn sign_diff(a: f32, b: f32) -> bool {
@@ -156,8 +166,8 @@ fn write_quad(block: u32, slot_idx: u32, p1: u32, sb: u32, sc: u32, d1: f32, d2:
 fn emit_quads(
     @builtin(workgroup_id) wid: vec3<u32>,
     @builtin(local_invocation_id) lid: vec3<u32>,
+    @builtin(num_workgroups) nwg: vec3<u32>,
 ) {
-    let block = wid.z / mp.wg_axis;
     let lc = vec3<u32>(wid.x, wid.y, wid.z % mp.wg_axis) * 4u + lid;
     let s = mp.c + 1u;
     if (any(lc >= vec3<u32>(s))) {
@@ -170,30 +180,38 @@ fn emit_quads(
     // 段号：count 趟（count_only=1）→ 段 0（计数，CPU 侧读回做前缀）；
     // emit 趟（count_only=0）→ 段 n（本趟槽位计数，从 0 起）
     let seg = select(mp.n_blocks, 0u, mp.count_only == 1u);
-    let l = slot_of(block, lc);
-    let p = wval(block, lc);
-    if (sign_diff(p, wval(block, lc + vec3<u32>(1u, 0u, 0u)))) {
-        if (mp.count_only == 0u) {
-            let slot = atomicAdd(&counters[seg + block], 1u) * 6u;
-            write_quad(block, slot, l, s, s * s, p, wval(block, lc + vec3<u32>(1u, 0u, 0u)));
-        } else {
-            atomicAdd(&counters[seg + block], 1u);
+    let per_pass = nwg.z / mp.wg_axis;
+    var block = wid.z / mp.wg_axis;
+    loop {
+        if (block >= mp.n_blocks) {
+            break;
         }
-    }
-    if (sign_diff(p, wval(block, lc + vec3<u32>(0u, 1u, 0u)))) {
-        if (mp.count_only == 0u) {
-            let slot = atomicAdd(&counters[seg + block], 1u) * 6u;
-            write_quad(block, slot, l, s * s, 1u, p, wval(block, lc + vec3<u32>(0u, 1u, 0u)));
-        } else {
-            atomicAdd(&counters[seg + block], 1u);
+        let l = slot_of(block, lc);
+        let p = wval(block, lc);
+        if (sign_diff(p, wval(block, lc + vec3<u32>(1u, 0u, 0u)))) {
+            if (mp.count_only == 0u) {
+                let slot = atomicAdd(&counters[seg + block], 1u) * 6u;
+                write_quad(block, slot, l, s, s * s, p, wval(block, lc + vec3<u32>(1u, 0u, 0u)));
+            } else {
+                atomicAdd(&counters[seg + block], 1u);
+            }
         }
-    }
-    if (sign_diff(p, wval(block, lc + vec3<u32>(0u, 0u, 1u)))) {
-        if (mp.count_only == 0u) {
-            let slot = atomicAdd(&counters[seg + block], 1u) * 6u;
-            write_quad(block, slot, l, 1u, s, p, wval(block, lc + vec3<u32>(0u, 0u, 1u)));
-        } else {
-            atomicAdd(&counters[seg + block], 1u);
+        if (sign_diff(p, wval(block, lc + vec3<u32>(0u, 1u, 0u)))) {
+            if (mp.count_only == 0u) {
+                let slot = atomicAdd(&counters[seg + block], 1u) * 6u;
+                write_quad(block, slot, l, s * s, 1u, p, wval(block, lc + vec3<u32>(0u, 1u, 0u)));
+            } else {
+                atomicAdd(&counters[seg + block], 1u);
+            }
         }
+        if (sign_diff(p, wval(block, lc + vec3<u32>(0u, 0u, 1u)))) {
+            if (mp.count_only == 0u) {
+                let slot = atomicAdd(&counters[seg + block], 1u) * 6u;
+                write_quad(block, slot, l, 1u, s, p, wval(block, lc + vec3<u32>(0u, 0u, 1u)));
+            } else {
+                atomicAdd(&counters[seg + block], 1u);
+            }
+        }
+        block = block + per_pass;
     }
 }
