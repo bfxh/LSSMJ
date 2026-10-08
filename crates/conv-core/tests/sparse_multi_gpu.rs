@@ -1,11 +1,12 @@
-//! 装配器第一片判据：多块稀疏网格化（块表驱动、一次提交全部已分配块）——
+//! 装配器判据：多块稀疏网格化（块表驱动、一次提交全部已分配块）——
 //! ① 与单块原语**逐块逐位一致**：33³ 球面场 125 块（含空块）全量对拍槽位/标记 + 规范四边形集合；
 //! ② 确定性：两跑计数一致、抽块槽位与四边形集合一致；
-//! ③ 规模：512³ 包围盒壳层（C=16，~2 千块）网格化 + 抽块对单块原语一致（判据不变、只换规模）。
+//! ③ 规模：512³ 包围盒壳层（C=16，~1 万块）网格化 + 抽块对单块原语一致（判据不变、只换规模）；
+//! ④ **超单维派发上限**（装配器第二片）：C=8 壳层 blocks×wg_axis > 65535，块号 grid-stride 生效。
 
 use conv_core::{
-    gsn::{mesh_block, mesh_blocks},
-    jfa::headless_device,
+    gsn::{MultiMesh, mesh_block, mesh_blocks},
+    jfa::{Headless, headless_device},
     sparse::SparseGrid,
     sphere_sdf,
 };
@@ -78,7 +79,7 @@ fn multi_matches_single_blocks_bitwise() {
 
     let mut total_single_quads = 0usize;
     let mut nonempty = 0usize;
-    let s = (mm.c + 1) as u32;
+    let s = mm.c + 1;
     for (k, &b) in mm.blocks.iter().enumerate() {
         let single = mesh_block(&hd, &grid, b, None);
         let (mpos, mflag) = mm.read_block_slots(&hd, k);
@@ -135,21 +136,12 @@ fn multi_matches_single_blocks_bitwise() {
     );
 }
 
-#[test]
-fn multi_scale_shell_512() {
-    let _gpu = GPU_LOCK.lock().unwrap();
-    let hd = headless_device();
-    let c = 16i32;
-    let n = 512u32;
-    let r = 0.75f32;
+/// 壳层场景：只分配"球面穿过的块 ± 2 cell 裕量"（稀疏分配的写侧用法）。
+fn build_shell_grid(c: i32, n: u32, r: f32) -> SparseGrid {
     let h = 2.0 / (n as f32 - 1.0);
-    let r_cells = r / h;
-
-    // 512³ 包围盒、只分配"壳层"块（球面穿过的块 ± 1 块裕量）——稀疏分配的写侧用法
     let mut grid = SparseGrid::new(c);
     let nb = (n as i32 + c - 1) / c + 1;
     let cf = c as f32;
-    let mut cand = 0usize;
     for bz in 0..nb {
         for by in 0..nb {
             for bx in 0..nb {
@@ -171,7 +163,6 @@ fn multi_scale_shell_512() {
                 }
                 let margin = 2.0 * cf * h; // ±2 cell 裕量
                 if dmin2.sqrt() <= r + margin && dmax2.sqrt() >= r - margin {
-                    cand += 1;
                     for z in bz * c..(bz + 1) * c {
                         for y in by * c..(by + 1) * c {
                             for x in bx * c..(bx + 1) * c {
@@ -185,8 +176,44 @@ fn multi_scale_shell_512() {
             }
         }
     }
-    assert!(cand > 500, "壳层候选块太少：{cand}");
-    assert_eq!(grid.allocated_blocks(), cand);
+    grid
+}
+
+/// 抽块 k 对单块原语 `mesh_block` 逐位/规范键一致（判据不换、只换规模）。
+fn check_block_matches_single(
+    hd: &Headless,
+    grid: &SparseGrid,
+    mm: &MultiMesh,
+    k: usize,
+    tag: &str,
+) {
+    let b = mm.blocks[k];
+    let single = mesh_block(hd, grid, b, None);
+    let (mpos, mflag) = mm.read_block_slots(hd, k);
+    assert_slots_bitwise(&mpos, &single.positions, &format!("{tag}抽块 {b:?}"));
+    assert_eq!(mflag, single.flags, "{tag}抽块 {b:?} 标记不一致");
+    let s = mm.c + 1;
+    let base = (k as u32) * s * s * s;
+    let single_global: Vec<u32> = single.indices.iter().map(|&i| i + base).collect();
+    assert_eq!(
+        canon_quads(&mm.read_block_indices(hd, k)),
+        canon_quads(&single_global),
+        "{tag}抽块 {b:?} 四边形集合不一致"
+    );
+}
+
+#[test]
+fn multi_scale_shell_512() {
+    let _gpu = GPU_LOCK.lock().unwrap();
+    let hd = headless_device();
+    let c = 16i32;
+    let n = 512u32;
+    let r = 0.75f32;
+    let h = 2.0 / (n as f32 - 1.0);
+    let r_cells = r / h;
+
+    let grid = build_shell_grid(c, n, r);
+    assert!(grid.allocated_blocks() > 500, "壳层块太少");
 
     let t0 = std::time::Instant::now();
     let mm = mesh_blocks(&hd, &grid, None);
@@ -202,19 +229,37 @@ fn multi_scale_shell_512() {
     );
 
     // 抽块对单块原语一致（判据不换、只换规模）
-    let s = (mm.c + 1) as u32;
     for k in [0usize, mm.blocks.len() / 2, mm.blocks.len() - 1] {
-        let b = mm.blocks[k];
-        let single = mesh_block(&hd, &grid, b, None);
-        let (mpos, mflag) = mm.read_block_slots(&hd, k);
-        assert_slots_bitwise(&mpos, &single.positions, &format!("规模抽块 {b:?}"));
-        assert_eq!(mflag, single.flags, "规模抽块 {b:?} 标记不一致");
-        let base = (k as u32) * s * s * s;
-        let single_global: Vec<u32> = single.indices.iter().map(|&i| i + base).collect();
-        assert_eq!(
-            canon_quads(&mm.read_block_indices(&hd, k)),
-            canon_quads(&single_global),
-            "规模抽块 {b:?} 四边形集合不一致"
-        );
+        check_block_matches_single(&hd, &grid, &mm, k, "规模");
+    }
+}
+
+#[test]
+fn multi_beyond_dispatch_cap() {
+    let _gpu = GPU_LOCK.lock().unwrap();
+    let hd = headless_device();
+    let c = 8i32;
+    let n = 512u32;
+    let grid = build_shell_grid(c, n, 0.75);
+    let blocks = grid.allocated_blocks();
+    let wg_axis = ((c as u32 + 1).div_ceil(4)) as usize;
+    assert!(
+        blocks * wg_axis > 65535,
+        "本片场景须超过单维派发上限（blocks={blocks} × wg_axis={wg_axis}）"
+    );
+
+    let t0 = std::time::Instant::now();
+    let mm = mesh_blocks(&hd, &grid, None);
+    let wall = t0.elapsed();
+    assert!(mm.quad_total > 100_000, "四边形数异常少：{}", mm.quad_total);
+    assert_eq!(mm.quad_counts.iter().sum::<u32>(), mm.quad_total);
+    println!(
+        "超限装配：{blocks} 块（×wg_axis={} > 65535，块号 grid-stride） | {} 四边形 | 端到端 {wall:?}",
+        blocks * wg_axis,
+        mm.quad_total,
+    );
+
+    for k in [0usize, blocks / 2, blocks - 1] {
+        check_block_matches_single(&hd, &grid, &mm, k, "超限");
     }
 }
