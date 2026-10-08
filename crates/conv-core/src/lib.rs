@@ -20,6 +20,7 @@ pub mod ply;
 pub mod quant;
 pub mod scan;
 pub mod sparse;
+pub mod spz;
 pub mod surfel;
 pub mod timer;
 
