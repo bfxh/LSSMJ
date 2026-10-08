@@ -1,4 +1,5 @@
-//! C22 逐边 GPU 计时探针（T-GC-06）：三条转换腿各 N 次实测，记档 min/median/p95/max（ms）。
+//! C22 逐边 GPU 计时探针（T-GC-06）：各转换腿 N 次实测，记档 min/median/p95/max（ms）。
+//! 腿序：JFA（粒子→SDF）、mesh→SDF 实时档（径向符号）、mesh→SDF 精度档（绕数符号）、GSN（SDF→mesh）。
 //! 第一片只记档（先量后改）；本片（第二片）钉阈值——P95 棘轮上限 = w15d 记档 p95 × 2（红档），
 //! 超 1.5× 记档为黄档（只告警）；档位口径沿 gate_all 计时软门先例（W3H-051/052）。
 //! `budget_gate_canary` 独立构造越界样本先验红（门必须会红）；
@@ -8,7 +9,8 @@
 
 use conv_core::{
     GRID, field_to_voxels, gsn::surface_nets_gpu, icosphere, jfa::headless_device,
-    jfa::jfa_distance_field, mesh_sdf_gpu::mesh_to_sdf_gpu, timer::GpuTimer,
+    jfa::jfa_distance_field, mesh_sdf_gpu::SignMode, mesh_sdf_gpu::mesh_to_sdf_gpu,
+    timer::GpuTimer,
 };
 use std::sync::Mutex;
 
@@ -32,6 +34,13 @@ const P95_BOUND_MS: &[(&str, f64)] = &[
     // 规模第一片两趟发射（count 趟 + 4B 回读同步，换 idx O(72·n³)→O(24B/quad)）⇒ 实测
     // p95 0.076ms——上限不变（仍在 0.13 内，未触黄档）。
     ("gsn_64", 0.13),
+    // 精度档符号腿（T-GC-01 绕数档）：先量后钉——首轮独占（安静机）实测 p95=1.1035ms
+    // （RTX 4060 Ti Vulkan，n=31，64³ / 320 面 icosphere）⇒ 上限 = 2× 记档 = 2.21。
+    // 同机复测另四轮 p95 = 1.25 / 1.45 / 1.56 / 1.58（尾部噪声，max 偶见 2.07）⇒ 均在档内；
+    // 若逼近黄档（1.66）先按 04-ci-and-gates §B.3 独占复跑再判红。
+    // 与实时档的稳定量对比用 p50（0.655 → 0.880，+34%）：每带内体素由"一次射线扫描"
+    // 换成"逐三角立体角求和（3 sqrt + atan2）"，暴力无加速结构（树加速属后续片）。
+    ("mesh_to_sdf_winding_64", 2.21),
 ];
 
 /// 预算判定：超上限 ⇒ Some(红因)；超 1.5× 记档（上限×0.75）⇒ 打印黄档告警。
@@ -105,7 +114,7 @@ fn timing_probe_all_legs() {
             })
             .collect()
     };
-    // 腿 B：mesh→SDF（icosphere 320 面，64³）
+    // 腿 B：mesh→SDF（icosphere 320 面，64³）——同一网格跑两档符号（实时/精度）
     let (verts, faces) = icosphere(2, R);
     // 腿 C：GSN（SDF→mesh，同一场）
     let sdf = field_to_voxels(GRID, R);
@@ -156,7 +165,24 @@ fn timing_probe_all_legs() {
             fnv_f32(&jfa_distance_field(&hd, &seeds, 64, t))
         });
         sample("mesh_to_sdf_64", &mut |t| {
-            fnv_f32(&mesh_to_sdf_gpu(&hd, &verts, &faces, GRID, t))
+            fnv_f32(&mesh_to_sdf_gpu(
+                &hd,
+                &verts,
+                &faces,
+                GRID,
+                SignMode::Radial,
+                t,
+            ))
+        });
+        sample("mesh_to_sdf_winding_64", &mut |t| {
+            fnv_f32(&mesh_to_sdf_gpu(
+                &hd,
+                &verts,
+                &faces,
+                GRID,
+                SignMode::Winding,
+                t,
+            ))
         });
         sample("gsn_64", &mut |t| {
             // 顶点流逐位（T-GC-02 判据口径）；索引槽位执行序非确定——四边形集合确定性由 gsn_gpu 判据覆盖
@@ -245,7 +271,7 @@ fn budget_degrade_canary() {
         for _ in 0..3 {
             let mut t =
                 GpuTimer::try_new(&hd.device, hd.timestamp_period, 64).expect("timer unavailable");
-            mesh_to_sdf_gpu(&hd, &verts, &faces, n, Some(&mut t));
+            mesh_to_sdf_gpu(&hd, &verts, &faces, n, SignMode::Radial, Some(&mut t));
             best = best.min(t.resolve_ms(&hd).iter().sum::<f64>());
         }
         best
