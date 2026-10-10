@@ -89,9 +89,15 @@ fn run_blocks(
     mut timer: Option<&mut crate::timer::GpuTimer>,
 ) -> BlocksRun {
     assert!(chunk_cells >= 1, "chunk_cells 必须 ≥ 1");
+    crate::require_grid(n, "surface_nets_gpu*");
     let device = &hd.device;
     let queue = &hd.queue;
     let count = (n * n * n) as usize;
+    crate::require_device_buffer(
+        device,
+        (count as u64) * 16,
+        "surface_nets_gpu*（vtx_pos 缓冲，最大单缓冲）",
+    );
 
     let cell_axis = n - 1;
     let per_axis = cell_axis.div_ceil(chunk_cells);
@@ -431,6 +437,7 @@ pub fn surface_nets_gpu(
     n: u32,
     timer: Option<&mut crate::timer::GpuTimer>,
 ) -> GsnMesh {
+    crate::require_grid(n, "surface_nets_gpu"); // 先于 n−1（n<2 会下溢）
     surface_nets_gpu_chunked(hd, sdf, n, n - 1, timer).0
 }
 
@@ -511,6 +518,7 @@ pub fn compact_mesh(
     mesh: &GsnMesh,
     timer: Option<&mut crate::timer::GpuTimer>,
 ) -> CompactMesh {
+    crate::require_grid(mesh.n, "compact_mesh");
     let device = &hd.device;
     let n3 = mesh.flags.len();
     assert_eq!(n3, (mesh.n * mesh.n * mesh.n) as usize, "flags 长度非 n³");

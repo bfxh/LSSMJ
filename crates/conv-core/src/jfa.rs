@@ -71,8 +71,14 @@ pub fn jfa_distance_field(
     n: u32,
     timer: Option<&mut crate::timer::GpuTimer>,
 ) -> Vec<f32> {
+    crate::require_grid(n, "jfa_distance_field");
     let device = &headless.device;
     let count = (n * n * n) as usize;
+    crate::require_device_buffer(
+        device,
+        (count as u64) * 4,
+        "jfa_distance_field（label 缓冲，最大单缓冲）",
+    );
 
     // label 初始化：种子所在体素写自身索引，其余 INVALID
     let mut labels = vec![INVALID; count];

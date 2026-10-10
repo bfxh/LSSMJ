@@ -53,10 +53,16 @@ pub fn mesh_to_sdf_gpu(
     mode: SignMode,
     mut timer: Option<&mut GpuTimer>,
 ) -> Vec<f32> {
+    crate::require_grid(n, "mesh_to_sdf_gpu");
     let h_world = 2.0 / (n as f32 - 1.0);
     let device = &hd.device;
     let queue = &hd.queue;
     let count = (n * n * n) as usize;
+    crate::require_device_buffer(
+        device,
+        (count as u64) * 4,
+        "mesh_to_sdf_gpu（场缓冲，最大单缓冲）",
+    );
     let n_tris = faces.len() as u32;
 
     // 顶点缩放到 index 单位并按 vec4 填充（WGSL array<vec4> 步长 16）
