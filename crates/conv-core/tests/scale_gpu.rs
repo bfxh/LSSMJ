@@ -5,7 +5,7 @@
 //! ③ `#[ignore]` 384³ 手动路（显存 ~1.4G，安静机按需跑）。
 //!
 //! 口径：稠密顶点流按 cell 序 ⇒ **位置可逐位对拍**；索引槽位 = emit 趟 atomicAdd
-//! 执行序（非确定）⇒ 一律按"四顶点规范键"排序后对拍。
+//! 执行序（非确定）⇒ 一律按"四顶点**有向**规范键"排序后对拍（F04：循环旋转保绕序）。
 
 use conv_core::{
     field_to_voxels,
@@ -14,30 +14,17 @@ use conv_core::{
 };
 use std::sync::Mutex;
 
+mod common;
+
 static GPU_LOCK: Mutex<()> = Mutex::new(());
 
 const R: f32 = 0.75;
 
-/// 规范四边形键：两枚三角（各自 3 个稠密顶点号排序后）。
+/// 有向规范四边形键：两枚三角（各自循环旋转最小化后，三角对字典序）。
 type QuadKey = ([u32; 3], [u32; 3]);
 
-fn quad_key(q: &[u32]) -> QuadKey {
-    let mut t1 = [q[0], q[1], q[2]];
-    t1.sort();
-    let mut t2 = [q[3], q[4], q[5]];
-    t2.sort();
-    if t1 > t2 { (t2, t1) } else { (t1, t2) }
-}
-
 fn canon_quads(indices: &[u32]) -> Vec<QuadKey> {
-    let mut v: Vec<_> = indices
-        .as_chunks::<6>()
-        .0
-        .iter()
-        .map(|q| quad_key(q))
-        .collect();
-    v.sort();
-    v
+    common::directed_quads(indices, |v| v)
 }
 
 fn assert_positions_bitwise_equal(a: &[[f32; 3]], b: &[[f32; 3]]) {

@@ -16,6 +16,8 @@ use conv_core::{
 };
 use std::sync::Mutex;
 
+mod common;
+
 static GPU_LOCK: Mutex<()> = Mutex::new(());
 
 const C: i32 = 8; // 块 = 8 cell
@@ -30,66 +32,37 @@ fn cell_i32(lin: u32, n: u32) -> [i32; 3] {
     ]
 }
 
-/// 规范四边形键：两枚三角（各自 3 个 cell 顶点排序后）。
+/// 有向规范四边形键：两枚三角（各自循环旋转最小化，F04：保绕序不再排序并键）。
 type QuadKey = ([[i32; 3]; 3], [[i32; 3]; 3]);
-
-fn canon_tri(t: [[i32; 3]; 3]) -> [[i32; 3]; 3] {
-    let mut a = t;
-    a.sort();
-    a
-}
-
-fn canon_pair(t1: [[i32; 3]; 3], t2: [[i32; 3]; 3]) -> QuadKey {
-    let (a, b) = (canon_tri(t1), canon_tri(t2));
-    if a > b { (b, a) } else { (a, b) }
-}
-
-fn quad_key_i32(q: &[u32], n: u32) -> QuadKey {
-    canon_pair(
-        [cell_i32(q[0], n), cell_i32(q[1], n), cell_i32(q[2], n)],
-        [cell_i32(q[3], n), cell_i32(q[4], n), cell_i32(q[5], n)],
-    )
-}
 
 /// 全部四边形规范集合（顶点槽 → cell 坐标）。
 fn canon_quads_i32(indices: &[u32], n: u32) -> Vec<QuadKey> {
-    let mut v: Vec<_> = indices
-        .as_chunks::<6>()
-        .0
-        .iter()
-        .map(|q| quad_key_i32(q, n))
-        .collect();
-    v.sort();
-    v
+    common::directed_quads(indices, |v| cell_i32(v, n))
 }
 
 /// 块 [a, b) 归属的四边形规范集合（归属判定 = 四顶点 cell 全在 [块起−1, 块止)³
 /// 且至少一个在 [块起, 块止)³——等价于"发射 cell ∈ 块"）。与 gsn_chunk_gpu 同判据。
 fn quads_of_block_i32(indices: &[u32], n: u32, a: [i32; 3], b: [i32; 3]) -> Vec<QuadKey> {
-    let mut v: Vec<_> = indices
-        .as_chunks::<6>()
-        .0
-        .iter()
-        .filter(|q| {
-            let mut cells: Vec<[i32; 3]> = Vec::with_capacity(4);
-            for &s in q.iter() {
-                let c = cell_i32(s, n);
-                if !cells.contains(&c) {
-                    cells.push(c);
-                }
+    let mut kept: Vec<u32> = Vec::new();
+    for q in indices.as_chunks::<6>().0 {
+        let mut cells: Vec<[i32; 3]> = Vec::with_capacity(4);
+        for &s in q {
+            let c = cell_i32(s, n);
+            if !cells.contains(&c) {
+                cells.push(c);
             }
-            let relaxed = cells
-                .iter()
-                .all(|c| (0..3).all(|k| c[k] + 1 >= a[k] && c[k] < b[k]));
-            let pinned = cells
-                .iter()
-                .any(|c| (0..3).all(|k| c[k] >= a[k] && c[k] < b[k]));
-            relaxed && pinned
-        })
-        .map(|q| quad_key_i32(q, n))
-        .collect();
-    v.sort();
-    v
+        }
+        let relaxed = cells
+            .iter()
+            .all(|c| (0..3).all(|k| c[k] + 1 >= a[k] && c[k] < b[k]));
+        let pinned = cells
+            .iter()
+            .any(|c| (0..3).all(|k| c[k] >= a[k] && c[k] < b[k]));
+        if relaxed && pinned {
+            kept.extend_from_slice(q);
+        }
+    }
+    canon_quads_i32(&kept, n)
 }
 
 fn assert_positions_bitwise_equal(a: &[[f32; 3]], b: &[[f32; 3]]) {
@@ -326,7 +299,7 @@ fn negative_block_coords_shift_pair() {
     assert_eq!(ma.quad_count, mb.quad_count, "平移对四边形数应一致");
     assert_eq!(ma.flags, mb.flags, "平移对标记应逐槽位一致");
 
-    // 四边形集合：A 的 cell +4 == B 的 cell（整数平移，精确）
+    // 四边形集合：A 的 cell +4 == B 的 cell（整数平移，精确；F04 有向规范化保绕序）
     let s = ma.c + 1;
     let c = ma.c as i32;
     let keys_of = |bm: &BlockMesh, shift: i32| -> Vec<QuadKey> {
@@ -344,10 +317,14 @@ fn negative_block_coords_shift_pair() {
             .0
             .iter()
             .map(|q| {
-                canon_pair(
-                    [cell_of_v(q[0]), cell_of_v(q[1]), cell_of_v(q[2])],
-                    [cell_of_v(q[3]), cell_of_v(q[4]), cell_of_v(q[5])],
-                )
+                common::quad_key6(&[
+                    cell_of_v(q[0]),
+                    cell_of_v(q[1]),
+                    cell_of_v(q[2]),
+                    cell_of_v(q[3]),
+                    cell_of_v(q[4]),
+                    cell_of_v(q[5]),
+                ])
             })
             .collect();
         out.sort();

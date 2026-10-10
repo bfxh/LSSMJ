@@ -122,9 +122,11 @@ fn golden_hash_pinned() {
     let cloud = sample_cloud();
     let h = cloud_hash(&cloud);
     println!("golden hash: {h:#018x}");
-    // SH 承载后换约（旧值 0x9b5164015597b571 为 5 平面版）
+    // 金样换约（2026-10-10，F11）：旧值 0x48f5cf547ce2a737 钉在 Lcg 修复前的采样序列上
+    // ——next01 值域曾是 [0, 0.5]（31 位截断），修复后序列变更 ⇒ 云变更 ⇒ 换约。
+    // 格式契约（平面集/次序/域/SH）本身未动。
     assert_eq!(
-        h, 0x48f5cf547ce2a737,
+        h, 0x2dddec981ec291dd,
         "金样哈希漂移 —— 格式契约变更？（平面集/次序/域/SH）"
     );
 }

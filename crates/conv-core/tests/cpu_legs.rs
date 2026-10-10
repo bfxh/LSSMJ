@@ -149,6 +149,10 @@ fn winding_sign_is_exact_on_closed_sphere() {
         "绕数内外判定：{probes} 点（弦差壳 {shell:.5} 外），错判 {mismatch}；\
          |w| 内最小 {w_in_min:.6} / 外最大 {w_out_max:.6}"
     );
+    assert!(
+        probes >= 1000,
+        "反空跑：判据点 {probes} 异常少（壳掩码吞掉了全域？）"
+    );
     assert_eq!(mismatch, 0, "闭合球网格绕数判内外出现错判");
     assert!(w_in_min > 0.99, "内侧 |w| 应恒 ≈1，实测最小 {w_in_min}");
     assert!(w_out_max < 0.01, "外侧 |w| 应恒 ≈0，实测最大 {w_out_max}");
@@ -188,6 +192,7 @@ fn winding_sign_matches_analytic_box() {
     println!(
         "绕数内外判定（盒）：{probes} 点，错判 {mismatch}；|w| 内最小 {w_in_min:.6} / 外最大 {w_out_max:.6}"
     );
+    assert!(probes >= 1000, "反空跑：判据点 {probes} 异常少");
     assert_eq!(mismatch, 0, "闭合盒网格绕数判内外出现错判");
     assert!(w_in_min > 0.99, "内侧 |w| 应恒 ≈1，实测最小 {w_in_min}");
     assert!(w_out_max < 0.01, "外侧 |w| 应恒 ≈0，实测最大 {w_out_max}");
@@ -252,6 +257,7 @@ fn winding_sign_ignores_global_orientation_flip() {
         probes += 1;
     }
     println!("翻绕序不变性：{probes} 点，判定差异 {diff}；内侧翻转后 |w| 最小 {w_in_min:.5}");
+    assert!(probes >= 100, "反空跑：判据点 {probes} 异常少");
     assert_eq!(diff, 0, "整体翻绕序改变了内外判定（应只改 w 符号）");
     assert!(
         w_in_min > 0.99,

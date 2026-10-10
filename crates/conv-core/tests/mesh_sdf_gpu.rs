@@ -8,6 +8,9 @@ use conv_core::{
 };
 use std::sync::Mutex;
 
+mod common;
+use common::band_err_strict;
+
 static GPU_LOCK: Mutex<()> = Mutex::new(());
 
 const R: f32 = 0.75;
@@ -24,41 +27,23 @@ fn fnv(data: &[f32]) -> u64 {
     h
 }
 
-/// 带内逐点对拍读数（mean/max，跳过 INF 带外槽）+ 最坏 5 点明细。
+/// 带内逐点对拍读数（F03 严格化：长度一致 / 域内 GPU 非有限=红 / 域空=红）
+/// + 最坏 5 点明细。严格性本体在 `common::band_err_strict`（负例注入见 gate_selftest）。
 fn band_err(cpu: &[f32], gpu: &[f32]) -> (f64, f32) {
-    let mut max_err = 0f32;
-    let mut sum = 0f64;
-    let mut cnt = 0usize;
-    let mut worst: Vec<(f32, usize, f32, f32)> = Vec::new();
-    for (i, c) in cpu.iter().enumerate() {
-        if !c.is_finite() {
-            continue;
-        }
-        let g = gpu[i];
-        if !g.is_finite() {
-            continue;
-        }
-        let e = (g - c).abs();
-        if e > 0.05 {
-            let iu = i as u32;
-            let x = iu % GRID;
-            let y = (iu / GRID) % GRID;
-            let z = iu / (GRID * GRID);
-            let p = [x as f32 * H - 1.0, y as f32 * H - 1.0, z as f32 * H - 1.0];
-            worst.push((e, i, sphere_sdf(p, R), *c));
-        }
-        max_err = max_err.max(e);
-        sum += e as f64;
-        cnt += 1;
-    }
-    worst.sort_by(|u, v| v.0.total_cmp(&u.0));
-    for (e, i, a, c) in worst.iter().take(5) {
+    let (mean, max, cnt, worst) = band_err_strict(cpu, gpu, "mesh→SDF 带内对拍", 0.05);
+    for &(e, i, c, g) in worst.iter().take(5) {
+        let iu = i as u32;
+        let x = iu % GRID;
+        let y = (iu / GRID) % GRID;
+        let z = iu / (GRID * GRID);
+        let p = [x as f32 * H - 1.0, y as f32 * H - 1.0, z as f32 * H - 1.0];
         println!(
-            "WORST err={e:.5} i={i} analytic={a:.5} cpu={c:.5} gpu={:.5}",
-            gpu[*i]
+            "WORST err={e:.5} i={i} analytic={:.5} cpu={c:.5} gpu={g:.5}",
+            sphere_sdf(p, R)
         );
     }
-    (sum / cnt as f64, max_err)
+    println!("比较域 {cnt} 格");
+    (mean, max)
 }
 
 #[test]
@@ -224,6 +209,8 @@ fn box_readings(
         }
         mag_max = mag_max.max((d.abs() - exact).abs());
     }
+    // 反空跑：比较体素数异常少 ⇒ "假内 0 / 空洞 0" 是空洞成立，不是证据
+    assert!(probes >= 1000, "盒读数反空跑：比较体素数 {probes} 异常少");
     (probes, false_inside, unsigned_hole, mag_max)
 }
 
