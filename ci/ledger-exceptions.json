@@ -1,0 +1,166 @@
+{
+ "schema_version": 1,
+ "comment": "ledger 例外登记（F07 迁移期，2026-10-10）。每条含 id/reason(含 owner)/expires；过期不豁免；被豁免条目不计入「通过校验」总数（EXCEPT 行可见）。evidence_roots 是账本当前引用的外部分析工作区（阶段 2 路径迁移后应收窄）。",
+ "evidence_roots": [
+  "D:/KF/GN_SDK1e",
+  "D:/KF/qingjian-gates",
+  "D:/KF/BSHSQ"
+ ],
+ "exceptions": [
+  {
+   "id": "W1F-093",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W2G-009",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W2G-066",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W2G-074",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W3H-094",
+   "reason": "F07 迁移期：source 锚不在允许证据根内，待重锚或扩登记（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6A-013",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6B-012",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6B-013",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6C-002",
+   "reason": "F07 迁移期：锚文件非 UTF-8/GBK 可无损解码，待重锚或转码（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6C-012",
+   "reason": "F07 迁移期：锚文件非 UTF-8/GBK 可无损解码，待重锚或转码（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6E-006",
+   "reason": "F07 迁移期：锚文件非 UTF-8/GBK 可无损解码，待重锚或转码（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6E-011",
+   "reason": "F07 迁移期：锚文件非 UTF-8/GBK 可无损解码，待重锚或转码（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6E-012",
+   "reason": "F07 迁移期：锚文件非 UTF-8/GBK 可无损解码，待重锚或转码（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6G-010",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6G-011",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6G-012",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6H-012",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6H-013",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6J-005",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6J-006",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6J-007",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6J-008",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6K-005",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6K-006",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W8A-028",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W8A-069",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W8B-075",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W9A-093",
+   "reason": "F07 迁移期：锚文件非 UTF-8/GBK 可无损解码，待重锚或转码（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W9A-094",
+   "reason": "F07 迁移期：锚文件非 UTF-8/GBK 可无损解码，待重锚或转码（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W9A-095",
+   "reason": "F07 迁移期：锚文件非 UTF-8/GBK 可无损解码，待重锚或转码（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W9A-096",
+   "reason": "F07 迁移期：锚文件非 UTF-8/GBK 可无损解码，待重锚或转码（owner: lbx13）",
+   "expires": "2027-04-30"
+  }
+ ]
+}
