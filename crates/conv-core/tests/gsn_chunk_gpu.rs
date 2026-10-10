@@ -10,6 +10,9 @@ use conv_core::{
 };
 use std::sync::Mutex;
 
+mod common;
+use common::directed_quads;
+
 static GPU_LOCK: Mutex<()> = Mutex::new(());
 
 const R: f32 = 0.75;
@@ -19,54 +22,35 @@ fn cell_of(slot: u32, n: u32) -> [u32; 3] {
     [slot % n, (slot / n) % n, slot / (n * n)]
 }
 
-fn canonical(t1: [u32; 3], t2: [u32; 3]) -> ([u32; 3], [u32; 3]) {
-    let mut a = t1;
-    let mut b = t2;
-    a.sort();
-    b.sort();
-    if a > b { (b, a) } else { (a, b) }
-}
-
-/// 全部四边形规范集合。
+/// 全部四边形**有向**规范集合（F04：循环旋转保绕序，不再排序并键）。
 fn canonical_quads(indices: &[u32]) -> Vec<([u32; 3], [u32; 3])> {
-    let mut quads: Vec<([u32; 3], [u32; 3])> = indices
-        .as_chunks::<6>()
-        .0
-        .iter()
-        .map(|q| canonical([q[0], q[1], q[2]], [q[3], q[4], q[5]]))
-        .collect();
-    quads.sort();
-    quads
+    directed_quads(indices, |v| v)
 }
 
 /// 块 [a, b) 归属的四边形规范集合。归属判定：四顶点 cell 全在 [块起−1, 块止)³ 内
 /// **且至少一个在 [块起, 块止)³ 内**——等价于"发射 cell（p1）∈ 块"（quad 四顶点逐轴 ≤ p1
 /// 且 ≥ p1−1），互不重不漏（缺"钉住"条件会把跨块 quad 重复计入相邻两块）。
 fn quads_of_block(indices: &[u32], n: u32, a: [u32; 3], b: [u32; 3]) -> Vec<([u32; 3], [u32; 3])> {
-    let mut quads: Vec<([u32; 3], [u32; 3])> = indices
-        .as_chunks::<6>()
-        .0
-        .iter()
-        .filter(|q| {
-            let mut cells: Vec<[u32; 3]> = Vec::with_capacity(4);
-            for &v in q.iter() {
-                let c = cell_of(v, n);
-                if !cells.contains(&c) {
-                    cells.push(c);
-                }
+    let mut kept: Vec<u32> = Vec::new();
+    for q in indices.as_chunks::<6>().0 {
+        let mut cells: Vec<[u32; 3]> = Vec::with_capacity(4);
+        for &v in q {
+            let c = cell_of(v, n);
+            if !cells.contains(&c) {
+                cells.push(c);
             }
-            let relaxed = cells
-                .iter()
-                .all(|c| (0..3).all(|k| c[k] + 1 >= a[k] && c[k] < b[k]));
-            let pinned = cells
-                .iter()
-                .any(|c| (0..3).all(|k| c[k] >= a[k] && c[k] < b[k]));
-            relaxed && pinned
-        })
-        .map(|q| canonical([q[0], q[1], q[2]], [q[3], q[4], q[5]]))
-        .collect();
-    quads.sort();
-    quads
+        }
+        let relaxed = cells
+            .iter()
+            .all(|c| (0..3).all(|k| c[k] + 1 >= a[k] && c[k] < b[k]));
+        let pinned = cells
+            .iter()
+            .any(|c| (0..3).all(|k| c[k] >= a[k] && c[k] < b[k]));
+        if relaxed && pinned {
+            kept.extend_from_slice(q);
+        }
+    }
+    canonical_quads(&kept)
 }
 
 fn assert_positions_bitwise_equal(a: &[[f32; 3]], b: &[[f32; 3]]) {

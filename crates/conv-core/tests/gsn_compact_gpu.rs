@@ -8,6 +8,8 @@ use conv_core::{
 };
 use std::sync::Mutex;
 
+mod common;
+
 static GPU_LOCK: Mutex<()> = Mutex::new(());
 
 const R: f32 = 0.75;
@@ -28,22 +30,10 @@ fn dense_of(flags: &[u32]) -> Vec<u32> {
         .collect()
 }
 
-/// 把三角形两端顶点经 `m` 映射成 cell 线性号后规范化（两个三角各自升序，quad 内字典序）。
+/// 把四边形顶点经 `m` 映射成 cell 线性号后取**有向**规范集合
+/// （F04：循环旋转保绕序，不再排序并键）。
 fn canonical_quads_map<F: Fn(u32) -> u32>(indices: &[u32], m: F) -> Vec<([u32; 3], [u32; 3])> {
-    let mut quads: Vec<([u32; 3], [u32; 3])> = indices
-        .as_chunks::<6>()
-        .0
-        .iter()
-        .map(|q| {
-            let mut t1 = [m(q[0]), m(q[1]), m(q[2])];
-            let mut t2 = [m(q[3]), m(q[4]), m(q[5])];
-            t1.sort();
-            t2.sort();
-            if t1 > t2 { (t2, t1) } else { (t1, t2) }
-        })
-        .collect();
-    quads.sort();
-    quads
+    common::directed_quads(indices, m)
 }
 
 #[test]

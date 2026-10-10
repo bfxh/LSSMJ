@@ -113,8 +113,12 @@ fn splat_matches_cpu_reference() {
     let k = AnisoKernels::new(centers, rotations, scales);
     let gpu = splat_field(&hd, &k, n, None);
     let cpu = cpu_reference(&k, n);
+    // F03 同族：长度显式断言 + 两侧非有限硬红（zip 会静默截断）
+    assert_eq!(gpu.len(), cpu.len(), "GPU/CPU 场长度不一致");
     let mut max_d = 0f32;
-    for (g, c) in gpu.iter().zip(&cpu) {
+    for (i, (g, c)) in gpu.iter().zip(&cpu).enumerate() {
+        assert!(g.is_finite(), "GPU 场在 {i} 非有限 {g}");
+        assert!(c.is_finite(), "CPU 参照在 {i} 非有限 {c}");
         max_d = max_d.max((g - c).abs());
     }
     println!(

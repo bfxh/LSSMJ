@@ -8,6 +8,9 @@ use fast_surface_nets::ndshape::ConstShape3u32;
 use fast_surface_nets::{SurfaceNetsBuffer, surface_nets};
 use std::sync::Mutex;
 
+mod common;
+use common::{assert_index_bounds, directed_quads, signed_volume};
+
 static GPU_LOCK: Mutex<()> = Mutex::new(());
 
 const R: f32 = 0.75;
@@ -32,35 +35,20 @@ fn fnv_mesh(positions: &[[f32; 3]], indices: &[u32]) -> u64 {
     h
 }
 
-/// 四边形 → cell 空间规范形（两个三角的 cell 三元组，各自升序，quad 内按字典序）。
+/// 四边形 → cell 空间**有向**规范形（两个三角各自循环旋转最小化，三角对字典序）。
+/// F04：规范化只消除循环移位与三角对序，保留绕序——翻面三角给出不同键（旧排序版会并键）。
 /// GPU 侧槽位=cell 线性索引（已是 cell 空间）；CPU 侧经 surface_points 映射。
 fn canonical_quads(
     indices: &[u32],
     compact_to_cell: Option<&[(u32, u32, u32)]>,
 ) -> Vec<([u32; 3], [u32; 3])> {
-    let mut quads: Vec<([u32; 3], [u32; 3])> = indices
-        .as_chunks::<6>()
-        .0
-        .iter()
-        .map(|q| {
-            let m = |v: u32| -> u32 {
-                match compact_to_cell {
-                    Some(map) => {
-                        let c = map[v as usize];
-                        c.0 + c.1 * GRID + c.2 * GRID * GRID
-                    }
-                    None => v,
-                }
-            };
-            let mut t1 = [m(q[0]), m(q[1]), m(q[2])];
-            let mut t2 = [m(q[3]), m(q[4]), m(q[5])];
-            t1.sort();
-            t2.sort();
-            if t1 > t2 { (t2, t1) } else { (t1, t2) }
-        })
-        .collect();
-    quads.sort();
-    quads
+    match compact_to_cell {
+        Some(map) => directed_quads(indices, |v| {
+            let c = map[v as usize];
+            c.0 + c.1 * GRID + c.2 * GRID * GRID
+        }),
+        None => directed_quads(indices, |v| v),
+    }
 }
 
 #[test]
@@ -81,25 +69,39 @@ fn gsn_matches_cpu_per_cell() {
     );
 
     // J2 逐 cell 位置对拍（cpu.surface_points 给出 cell 坐标 → gpu 槽位）
+    // F05：先断言有限，再聚合误差——f32::max 遇 NaN 会静默吞点，误差门不能依赖偶然覆盖
     let mut max_err = 0f32;
     for (i, sp) in cpu.surface_points.iter().enumerate() {
         let slot = (sp[0] + sp[1] * GRID + sp[2] * GRID * GRID) as usize;
+        assert!(slot < gpu.flags.len(), "cell {sp:?} 槽位越界 slot={slot}");
         assert_eq!(gpu.flags[slot], 1, "cell {sp:?} 缺顶点");
         let gp = gpu.positions[slot];
         let cp = cpu.positions[i];
+        assert!(
+            gp[0].is_finite() && gp[1].is_finite() && gp[2].is_finite(),
+            "cell {sp:?} GPU 位置非有限 {gp:?}"
+        );
+        assert!(
+            cp[0].is_finite() && cp[1].is_finite() && cp[2].is_finite(),
+            "cell {sp:?} CPU 参照位置非有限 {cp:?}"
+        );
         let e =
             ((gp[0] - cp[0]).powi(2) + (gp[1] - cp[1]).powi(2) + (gp[2] - cp[2]).powi(2)).sqrt();
+        assert!(e.is_finite(), "cell {sp:?} 位置误差非有限");
         max_err = max_err.max(e);
     }
+    assert!(!cpu.surface_points.is_empty(), "CPU 表面点为空——反空跑");
     println!("GSN per-cell max_err={max_err:.6}");
     assert!(max_err <= 1e-4, "per-cell position max_err={max_err}");
 
-    // J3 四边形集合一致（cell 空间规范形：成员 + 绕序）
+    // J3 四边形集合一致（cell 空间**有向**规范形：成员 + 绕序；残缺索引/越界在 common 内硬红）
     let cell_map: Vec<(u32, u32, u32)> = cpu
         .surface_points
         .iter()
         .map(|sp| (sp[0], sp[1], sp[2]))
         .collect();
+    assert_index_bounds(&gpu.indices, gpu.positions.len(), "GSN gpu 索引");
+    assert_index_bounds(&cpu.indices, cpu.positions.len(), "GSN cpu 索引");
     let q_cpu = canonical_quads(&cpu.indices, Some(&cell_map));
     let q_gpu = canonical_quads(&gpu.indices, None);
     assert_eq!(q_cpu.len(), q_gpu.len());
@@ -113,6 +115,15 @@ fn gsn_matches_cpu_per_cell() {
     let rel = ((vol_gpu - vol_cpu) / vol_cpu).abs();
     println!("GSN vol_gpu={vol_gpu:.5} vol_cpu={vol_cpu:.5} rel={rel:.5}");
     assert!(rel <= 0.03, "volume rel={rel}");
+
+    // J4b 绕序方向（F04）：有符号体积与 CPU 参照同号——排序规范化证明不了朝向，体积方向单独验
+    let sv_gpu = signed_volume(&gpu.positions, &gpu.indices);
+    let sv_cpu = signed_volume(&cpu.positions, &cpu.indices);
+    println!("GSN signed vol_gpu={sv_gpu:.5} vol_cpu={sv_cpu:.5}");
+    assert!(
+        sv_gpu * sv_cpu > 0.0 && sv_cpu.abs() > 1e-6,
+        "GSN 绕序方向与 CPU 参照不一致：signed vol_gpu={sv_gpu} vol_cpu={sv_cpu}"
+    );
 
     let v_count = gpu.flags.iter().filter(|&&f| f == 1).count();
     let mut edges: HashSet<(u32, u32)> = HashSet::new();
