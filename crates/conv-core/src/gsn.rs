@@ -120,23 +120,21 @@ fn run_blocks(
     mut timer: Option<&mut crate::timer::GpuTimer>,
 ) -> Result<BlocksRun, String> {
     assert!(chunk_cells >= 1, "chunk_cells 必须 ≥ 1");
+    crate::require_grid(n, "surface_nets_gpu*");
     let device = &hd.device;
     let queue = &hd.queue;
     let count = (n * n * n) as usize;
-    // 绑定上限硬门（沿用整块版的安全网）：最坏情形缓冲超限直接红，不让 wgpu 在 create_buffer 处炸。
-    {
-        let c = count as u64;
-        let max_bind = hd.device.limits().max_storage_buffer_binding_size;
-        for (label, bytes) in [("顶点", c * 16), ("标记", c * 4), ("索引", c * 3 * 6 * 4)] {
-            if bytes > max_bind {
-                return Err(format!(
-                    "GSN {label}缓冲最坏情形 {:.1} MB 超过设备绑定上限 {:.1} MB",
-                    bytes as f64 / (1 << 20) as f64,
-                    max_bind as f64 / (1 << 20) as f64
-                ));
-            }
-        }
-    }
+    // v5 阶段 0：上限预检走项目统一入口（超限给出明确拒绝，而不是裸抛 wgpu 验证错误）。
+    crate::require_device_buffer(
+        device,
+        (count as u64) * 16,
+        "surface_nets_gpu*（vtx_pos 缓冲，最大单缓冲）",
+    );
+    crate::require_device_buffer(
+        device,
+        (count as u64) * 3 * 6 * 4,
+        "surface_nets_gpu*（idx 缓冲，最坏情形 cell×3×6）",
+    );
 
     let cell_axis = n - 1;
     let per_axis = cell_axis.div_ceil(chunk_cells);
@@ -476,6 +474,7 @@ pub fn surface_nets_gpu(
     n: u32,
     timer: Option<&mut crate::timer::GpuTimer>,
 ) -> Result<GsnMesh, String> {
+    crate::require_grid(n, "surface_nets_gpu"); // 先于 n−1（n<2 会下溢）
     surface_nets_gpu_chunked(hd, sdf, n, n - 1, timer).map(|(mesh, _)| mesh)
 }
 
@@ -576,6 +575,7 @@ pub fn compact_mesh(
     mesh: &GsnMesh,
     timer: Option<&mut crate::timer::GpuTimer>,
 ) -> CompactMesh {
+    crate::require_grid(mesh.n, "compact_mesh");
     let device = &hd.device;
     let n3 = mesh.flags.len();
     assert_eq!(n3, (mesh.n * mesh.n * mesh.n) as usize, "flags 长度非 n³");
