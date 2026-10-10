@@ -369,6 +369,12 @@ pub fn winding_number(p: [f32; 3], verts: &[[f32; 3]], faces: &[[u32; 3]]) -> f3
             continue;
         }
         let num = dot(a, cross(b, c));
+        if num == 0.0 {
+            // 分子恰为 0（退化三角 b×c≡0，或 p 恰在三角平面上）⇒ 立体角真值 0。
+            // 不能交给 atan2：den 在 f32 下可为负（p 贴近退化弦时相消），atan2(0, 负) = π
+            // 会让 w 突跳 0.5 ⇒ 符号翻转（robustness 判据在 GPU 全场抓到 12 格，2026-10-11）。
+            continue;
+        }
         let den = la * lb * lc + dot(a, b) * lc + dot(b, c) * la + dot(c, a) * lb;
         sum += 2.0 * num.atan2(den);
     }

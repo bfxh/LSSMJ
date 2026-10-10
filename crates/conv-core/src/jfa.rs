@@ -72,6 +72,10 @@ pub fn jfa_distance_field(
     timer: Option<&mut crate::timer::GpuTimer>,
 ) -> Vec<f32> {
     crate::require_grid(n, "jfa_distance_field");
+    assert!(
+        !seeds.is_empty(),
+        "jfa_distance_field: 种子表为空（不支持——无最近种子语义，全域将是 INF 假绿）"
+    );
     let device = &headless.device;
     let count = (n * n * n) as usize;
     crate::require_device_buffer(
