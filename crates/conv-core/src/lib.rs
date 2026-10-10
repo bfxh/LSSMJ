@@ -10,9 +10,19 @@
 use std::collections::{HashMap, HashSet};
 use std::f32::consts::PI;
 
+pub mod budget;
+pub mod gaussian;
 pub mod gsn;
 pub mod jfa;
+pub mod kernels;
 pub mod mesh_sdf_gpu;
+pub mod ply;
+pub mod quant;
+pub mod scan;
+pub mod sparse;
+pub mod spz;
+pub mod surfel;
+pub mod timer;
 
 /// 域边长（index 坐标 [0, N)），网格间距 1；世界坐标由调用方缩放。
 pub const GRID: u32 = 64;
@@ -24,18 +34,60 @@ impl Lcg {
     pub fn new(seed: u64) -> Self {
         Self(seed)
     }
+    /// 均匀 [0, 1)：取状态高 24 位乘 2^-24（粒度 2^-24，最大值 1−2^-24 < 1）。
+    /// 旧实现（>>33 除 u32::MAX）分子只有 31 位、值域实为 [0, 0.5]（F11，2026-10-10 修复；
+    /// 采样序列变更已换约：gaussian 金样哈希随本修复披露更新）。
     pub fn next01(&mut self) -> f32 {
         self.0 = self
             .0
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1442695040888963407);
-        ((self.0 >> 33) as f32) / (u32::MAX as f32)
+        ((self.0 >> 40) as f32) * (1.0 / (1u64 << 24) as f32)
     }
 }
 
 /// 解析球 SDF（世界坐标，球心在原点）。
 pub fn sphere_sdf(p: [f32; 3], radius: f32) -> f32 {
     (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt() - radius
+}
+
+/// 解析盒 SDF（世界坐标，心在原点、半边长 half）——与 `sphere_sdf` 同族的对拍参照。
+pub fn box_sdf(p: [f32; 3], half: f32) -> f32 {
+    p[0].abs().max(p[1].abs()).max(p[2].abs()) - half
+}
+
+/// 轴对齐盒网格（半边长 half，心在原点）：8 顶点 / 12 三角，法向一致朝外。
+/// T-GC-01 精度档的"盒"金样——三角化即精确（无弦差），解析内外与解析距离都由 `box_sdf` 给出。
+pub fn box_mesh(half: f32) -> (Vec<[f32; 3]>, Vec<[u32; 3]>) {
+    let corners: [[f32; 3]; 8] = [
+        [-1.0, -1.0, -1.0],
+        [1.0, -1.0, -1.0],
+        [1.0, 1.0, -1.0],
+        [-1.0, 1.0, -1.0],
+        [-1.0, -1.0, 1.0],
+        [1.0, -1.0, 1.0],
+        [1.0, 1.0, 1.0],
+        [-1.0, 1.0, 1.0],
+    ];
+    let verts = corners
+        .iter()
+        .map(|c| [c[0] * half, c[1] * half, c[2] * half])
+        .collect();
+    let faces = vec![
+        [0u32, 2, 1],
+        [0, 3, 2], // −z
+        [4, 5, 6],
+        [4, 6, 7], // +z
+        [0, 1, 5],
+        [0, 5, 4], // −y
+        [3, 7, 6],
+        [3, 6, 2], // +y
+        [0, 7, 3],
+        [0, 4, 7], // −x
+        [1, 2, 6],
+        [1, 6, 5], // +x
+    ];
+    (verts, faces)
 }
 
 /// 解析场 → 体素网格（域 [-1,1]³，N³）。
@@ -261,6 +313,43 @@ fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     ]
 }
 
+/// 1/(4π)；与 WGSL 侧 `mesh_sdf.wgsl` 的 `INV_4PI` 同字面量（CPU↔GPU 绕数对拍口径）。
+const INV_4PI: f32 = 0.07957747;
+
+/// 广义绕数（Van Oosterom–Strackee 立体角和 / 4π）——精度档内外判定的核（T-GC-01）。
+///
+/// 闭合定向网格上取值恰为 ±1（内部）/ 0（外部），与三角化粗细无关；多分量重叠处按重数叠加（≈2）。
+/// 相对 `radial_sign` 的差别：不需要凸体/星形前提——原点落在实体外时径向出射口径会整片判错。
+/// 法向整体翻转只翻 w 的符号 ⇒ 判定用 |w|（见 `winding_sign`）。
+/// `p` 与某三角顶点重合时该三角立体角无定义，贡献记 0（与 WGSL 侧同口径）。
+pub fn winding_number(p: [f32; 3], verts: &[[f32; 3]], faces: &[[u32; 3]]) -> f32 {
+    let mut sum = 0f32;
+    for [ia, ib, ic] in faces {
+        let a = sub(verts[*ia as usize], p);
+        let b = sub(verts[*ib as usize], p);
+        let c = sub(verts[*ic as usize], p);
+        let (la, lb, lc) = (norm(a), norm(b), norm(c));
+        if la == 0.0 || lb == 0.0 || lc == 0.0 {
+            continue;
+        }
+        let num = dot(a, cross(b, c));
+        let den = la * lb * lc + dot(a, b) * lc + dot(b, c) * la + dot(c, a) * lb;
+        sum += 2.0 * num.atan2(den);
+    }
+    sum * INV_4PI
+}
+
+/// 精度档符号：|w| ≥ 0.5 ⇔ 内部（-1），否则外部（+1）。
+/// 阈值 0.5 的口径：整体翻转的法向只改 w 符号不改判定；带内体素离表面有限距，
+/// w 不会停在 0.5 附近（闭合网格上 w 在实体内恒 ±1、外恒 0）。
+pub fn winding_sign(p: [f32; 3], verts: &[[f32; 3]], faces: &[[u32; 3]]) -> f32 {
+    if winding_number(p, verts, faces).abs() >= 0.5 {
+        -1.0
+    } else {
+        1.0
+    }
+}
+
 /// 三角网 → SDF（窄带 ±band_h；暴力点-三角 + 径向符号）。
 pub fn mesh_to_sdf_band(
     n: u32,
@@ -268,6 +357,32 @@ pub fn mesh_to_sdf_band(
     band_h: f32,
     verts: &[[f32; 3]],
     faces: &[[u32; 3]],
+) -> (Vec<f32>, f32) {
+    band_sdf(n, radius, band_h, verts, faces, radial_sign)
+}
+
+/// 三角网 → SDF（窄带；暴力点-三角 + 绕数符号）——与 `mesh_to_sdf_band` 同带口径，仅符号换精度档。
+/// 本参照为球面金样而写（带门用解析球）；一般网格请直接用 `winding_sign` 逐点判定。
+pub fn mesh_to_sdf_band_winding(
+    n: u32,
+    radius: f32,
+    band_h: f32,
+    verts: &[[f32; 3]],
+    faces: &[[u32; 3]],
+) -> (Vec<f32>, f32) {
+    band_sdf(n, radius, band_h, verts, faces, winding_sign)
+}
+
+/// 符号档函数指针（`radial_sign` / `winding_sign`）。
+type SignFn = fn([f32; 3], &[[f32; 3]], &[[u32; 3]]) -> f32;
+
+fn band_sdf(
+    n: u32,
+    radius: f32,
+    band_h: f32,
+    verts: &[[f32; 3]],
+    faces: &[[u32; 3]],
+    sign: SignFn,
 ) -> (Vec<f32>, f32) {
     let h = 2.0 / (n as f32 - 1.0);
     let mut sdf = vec![f32::INFINITY; (n * n * n) as usize];
@@ -294,7 +409,7 @@ pub fn mesh_to_sdf_band(
                 d_min = dd;
             }
         }
-        *d = d_min * radial_sign(p, verts, faces);
+        *d = d_min * sign(p, verts, faces);
         max_err = max_err.max((*d - a).abs());
     }
     (sdf, max_err)
