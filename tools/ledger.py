@@ -4,7 +4,7 @@
 
 账本 = docs/analysis/ledger/*.jsonl，一行一个分析条目（UTF-8）：
   {"id":"W1A-001","depth":"source","target":"bevy_ui",
-   "anchor":"D:/KF/LSSMJ/scratch/src/bevy/crates/bevy_ui/src/lib.rs:12",
+   "anchor":"scratch/src/bevy/crates/bevy_ui/src/lib.rs:12",
    "quote":"<该行逐字子串，>=10 字符>",
    "finding":"<= 该观察本身，>=20 字符 >","lesson":"<= 对本项目的含义，可空 >",
    "date":"2026-10-01"}
@@ -55,10 +55,12 @@ MIN_QUOTE = 10
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 MAX_CACHE_FILES = 256  # 共享只读缓存上限（限内存；超限清表只影响速度不影响正确性）
 
-# 可被例外豁免的违规码（F07 迁移期三类；2026-10-10 存量实测 DECODE=9 / PATH_ESCAPE=1
-# / NONSOURCE_QUOTE=21，登记于 ci/ledger-exceptions.json；另有 3 个外部证据根登记在
-# 该文件 evidence_roots——覆盖 122 条仓外锚，阶段 2 路径迁移后收窄）
-WAIVABLE = ("DECODE", "PATH_ESCAPE", "NONSOURCE_QUOTE")
+# 可被例外豁免的违规码（F07/F02 迁移期；2026-10-11 存量实测 DECODE=9 / PATH_ESCAPE=1
+# / NONSOURCE_QUOTE=21 / ANCHOR_EXISTS=67（GN_SDK1e 已压缩为 zip）/ QUOTE_MISMATCH=3
+# （BSHSQ docs 漂移），登记于 ci/ledger-exceptions.json。
+# ⚠️ ANCHOR_EXISTS 与 QUOTE_MISMATCH 仅对**仓外锚**豁免（check_row 内强制）——
+# 仓内锚文件缺失/引文失配 = 仓已损坏，永不豁免。
+WAIVABLE = ("DECODE", "PATH_ESCAPE", "NONSOURCE_QUOTE", "ANCHOR_EXISTS", "QUOTE_MISMATCH")
 
 
 def repo_root():
@@ -199,7 +201,11 @@ def check_row(row, root, cache, strict=False, exceptions=None, evidence_roots=No
                 add("PATH_ESCAPE", msg)
             return errs
         if not os.path.isfile(path):
-            add("ANCHOR_EXISTS", f"锚文件不存在: {path}")
+            msg = f"锚文件不存在: {path}"
+            if anchor_inside_roots(path, [root]):
+                add("ANCHOR_EXISTS", msg)  # 仓内锚文件缺失 = 仓已损坏，永不豁免
+            elif not waive("ANCHOR_EXISTS", msg):  # 仓外 = 登记过的作者机依赖，可豁免
+                add("ANCHOR_EXISTS", msg)
             return errs
         if not anchor_inside_roots(path, roots):
             msg = f"source 锚不在允许证据根内（解析 symlink 后）: {path}"
@@ -225,7 +231,11 @@ def check_row(row, root, cache, strict=False, exceptions=None, evidence_roots=No
         lo = max(0, line - 1 - TOL)
         hi = min(len(lines), line + TOL)
         if not any(quote in ln for ln in lines[lo:hi]):
-            add("QUOTE_MISMATCH", f"引文对不上 {path}:{line}（±{TOL} 行内未找到逐字引文）")
+            msg = f"引文对不上 {path}:{line}（±{TOL} 行内未找到逐字引文）"
+            if anchor_inside_roots(path, [root]):
+                add("QUOTE_MISMATCH", msg)  # 仓内引文无损可复核，永不豁免
+            elif not waive("QUOTE_MISMATCH", msg):  # 仓外证据会随上游演进，可豁免
+                add("QUOTE_MISMATCH", msg)
     else:
         if not re.match(r"^https?://", row["anchor"]):
             add("URL_SCHEME", "非 source 条目的 anchor 必须 http(s):// 开头")
@@ -373,6 +383,15 @@ def cmd_selftest(args):
                        and any("不在允许证据根内" in m for _, m in check_row(
                            {**row_esc, "id": "SELFTEST-ESC2"}, root, cache,
                            exceptions=exc_loaded)))
+        # ANCHOR_EXISTS 仅仓外锚可豁免：仓外缺文件 + 例外 ⇒ EXEMPT；仓内缺文件 + 例外 ⇒ 照红
+        gone_ext = os.path.join(td, "gone.py")  # 不存在的仓外锚
+        ext_miss = any(c.startswith("EXEMPT_ANCHOR_EXISTS") for c, _ in check_row(
+            {**good, "id": "SELFTEST-GONE", "anchor": f"{gone_ext}:1"}, root, cache,
+            exceptions={"SELFTEST-GONE": ("证据已归档", "2099-01-01")}))
+        gone_in = os.path.join(root, "tools", "no-such-file-ledger-selftest.py")
+        int_miss = any(c == "ANCHOR_EXISTS" for c, _ in check_row(
+            {**good, "id": "SELFTEST-GONE2", "anchor": f"{gone_in}:1"}, root, cache,
+            exceptions={"SELFTEST-GONE2": ("x", "2099-01-01")}))
 
     checks = [
         ("good", ok_good),
@@ -388,6 +407,8 @@ def cmd_selftest(args):
         ("exception-waives-and-counts", exc_ok),
         ("expired-exception-still-red", exc_expired),
         ("bad-red-on-lossless-decode", bad_dec),
+        ("external-missing-waivable", ext_miss),
+        ("internal-missing-never-waived", int_miss),
     ]
     print("selftest: " + " ".join(f"{n}={'ok' if ok else 'FAIL'}" for n, ok in checks))
     return 0 if all(ok for _, ok in checks) else 1

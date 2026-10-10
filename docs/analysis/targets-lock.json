@@ -27,7 +27,7 @@
   "target": "gn-sdk",
   "url": null,
   "commit": null,
-  "local_path": "D:/KF/GN_SDK1e/GN_SDK1e",
+  "local_path": "D:/KF/GN_SDK1e",
   "fetched_at": "2026-10-01",
   "method": "用户提供 zip（闭源 SDK 分发包）"
  },
@@ -149,7 +149,7 @@
   "commit": "8e82a8e695af39c582fde30e37e888f375b31d1a",
   "local_path": "D:/KF/LSSMJ/scratch/src/makepad-mp-snap",
   "fetched_at": "2026-10-01",
-  "method": "git clone --depth 1 --filter=blob:none --sparse（sparse 检出两次遇 HTTP 502；draw/ 源以 git show <sha>:<path> 导出 17 文件快照为准）"
+  "method": "git clone --depth 1 --filter=blob:none --sparse（sparse 检出两次遇 HTTP 502；draw/ 源以 git show <sha>:<path> 导出 17 文件快照为准）（2026-10-11 实测：本地现为无 .git 快照拷贝——check 标 SNAPSHOT，restore 不可用；钉住提交保留供重克隆）"
  },
  {
   "target": "dioxus",
@@ -197,7 +197,7 @@
   "commit": "f64a247a8fef4ba93322b94b21423470c1534335",
   "local_path": "D:/KF/LSSMJ/scratch/src/fetched-wgpu-3dgs-core",
   "fetched_at": "2026-10-07",
-  "method": "gh api contents (README)"
+  "method": "gh api contents (README)（2026-10-11 实测：本地现为无 .git 快照拷贝——check 标 SNAPSHOT，restore 不可用；钉住提交保留供重克隆）"
  },
  {
   "target": "meshopt-rs",
@@ -205,7 +205,7 @@
   "commit": "3c8c9126cd98e70f34c6d9c54d02f41af6749406",
   "local_path": "D:/KF/LSSMJ/scratch/src/fetched-meshopt-rs",
   "fetched_at": "2026-10-07",
-  "method": "gh api contents (README)"
+  "method": "gh api contents (README)（2026-10-11 实测：本地现为无 .git 快照拷贝——check 标 SNAPSHOT，restore 不可用；钉住提交保留供重克隆）"
  },
  {
   "target": "nanovdb-rs",
@@ -214,5 +214,429 @@
   "local_path": "D:/KF/LSSMJ/scratch/src/fetched-nanovdb-rs",
   "fetched_at": "2026-10-07",
   "method": "gh api contents (README)"
+ },
+ {
+  "target": "accesskit",
+  "url": "https://github.com/AccessKit/accesskit",
+  "commit": "115887d84f0254cfcad1d9a79d93bba1fde79e75",
+  "local_path": "D:/KF/LSSMJ/scratch/src/accesskit",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "avalonia",
+  "url": "https://github.com/AvaloniaUI/Avalonia",
+  "commit": "17350180c33b063f0e98abbfd19aa3cae63f5d56",
+  "local_path": "D:/KF/LSSMJ/scratch/src/avalonia",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "bevy",
+  "url": "https://github.com/bevyengine/bevy",
+  "commit": "52c3ec0d5ecec0cdf6f4d2fdfd0895267d64740f",
+  "local_path": "D:/KF/LSSMJ/scratch/src/bevy",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "bevy-gaussian-splatting",
+  "url": "https://github.com/mosure/bevy_gaussian_splatting",
+  "commit": "22c6444af0828d25d06da1624ce5db4547d75003",
+  "local_path": "D:/KF/LSSMJ/scratch/src/bevy-gaussian-splatting",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "blend2d",
+  "url": "https://github.com/blend2d/blend2d",
+  "commit": "58ca9460b4138af6e793184682e9324e0a8053b2",
+  "local_path": "D:/KF/LSSMJ/scratch/src/blend2d",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "boa",
+  "url": "https://github.com/boa-dev/boa",
+  "commit": "39cd11214ecb366200157dab96b3919e61e9a391",
+  "local_path": "D:/KF/LSSMJ/scratch/src/boa",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "cairo",
+  "url": "https://gitlab.freedesktop.org/cairo/cairo.git",
+  "commit": "74755964edef651691d5cd36ff140108298e4e6e",
+  "local_path": "D:/KF/LSSMJ/scratch/src/cairo",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "cosmic-text-grovesNL",
+  "url": "https://github.com/grovesNL/cosmic-text",
+  "commit": "3c573df26152d16f1aacd9fdf478a46445e6c37a",
+  "local_path": "D:/KF/LSSMJ/scratch/src/cosmic-text-grovesNL",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "cosmic-text-up",
+  "url": "https://github.com/pop-os/cosmic-text",
+  "commit": "f1a3461f3e8df67d2bbcfafb8bc61dc7aee5b2a6",
+  "local_path": "D:/KF/LSSMJ/scratch/src/cosmic-text-up",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "electron",
+  "url": "https://github.com/electron/electron",
+  "commit": "df79406cecfd393f38d5a18b83379d4ba85cc29b",
+  "local_path": "D:/KF/LSSMJ/scratch/src/electron",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "femtovg",
+  "url": "https://github.com/femtovg/femtovg",
+  "commit": "f57a2c39e9836c146556c58c98d80c5bf7899029",
+  "local_path": "D:/KF/LSSMJ/scratch/src/femtovg",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "flutter",
+  "url": "https://github.com/flutter/flutter",
+  "commit": "4e5a09292c1c64a38d604c7ec096537f50d69f93",
+  "local_path": "D:/KF/LSSMJ/scratch/src/flutter",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "fontdb",
+  "url": "https://github.com/RazrFalcon/fontdb",
+  "commit": "ecb707e6096b59146b750f66a32c125a43515192",
+  "local_path": "D:/KF/LSSMJ/scratch/src/fontdb",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "glyphon",
+  "url": "https://github.com/grovesNL/glyphon",
+  "commit": "49dc8f7bafa8091f4d71521fd62ee6f647b556f5",
+  "local_path": "D:/KF/LSSMJ/scratch/src/glyphon",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "gtk",
+  "url": "https://gitlab.gnome.org/GNOME/gtk",
+  "commit": "3b6059be883fea771f2b4784e14519c7996e6f68",
+  "local_path": "D:/KF/LSSMJ/scratch/src/gtk",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "javy",
+  "url": "https://github.com/bytecodealliance/javy",
+  "commit": "04a467bc776b72450e660274929e0eafc8558c19",
+  "local_path": "D:/KF/LSSMJ/scratch/src/javy",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "leptos",
+  "url": "https://github.com/leptos-rs/leptos",
+  "commit": "ac0408a0e2fa6af6ff51492bce82e53c0cf4b6c7",
+  "local_path": "D:/KF/LSSMJ/scratch/src/leptos",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "leptos-book",
+  "url": "https://github.com/leptos-rs/book",
+  "commit": "f2271e3947fe6093ef41f685ef853ef8490f77b4",
+  "local_path": "D:/KF/LSSMJ/scratch/src/leptos-book",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "lightningcss",
+  "url": "https://github.com/parcel-bundler/lightningcss",
+  "commit": "987e1bf1800c6f3223b097037be326c64a81b694",
+  "local_path": "D:/KF/LSSMJ/scratch/src/lightningcss",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "lyon",
+  "url": "https://github.com/nical/lyon",
+  "commit": "d036e421cb39f4ef5fd18b4d211b9abfb191d0aa",
+  "local_path": "D:/KF/LSSMJ/scratch/src/lyon",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "makepad-mp",
+  "url": "https://github.com/makepad/makepad",
+  "commit": "8e82a8e695af39c582fde30e37e888f375b31d1a",
+  "local_path": "D:/KF/LSSMJ/scratch/src/makepad-mp",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "nanovg",
+  "url": "https://github.com/memononen/nanovg",
+  "commit": "ce3bf745eb2d2dbc14a50bf2446783f691ac4353",
+  "local_path": "D:/KF/LSSMJ/scratch/src/nanovg",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "o3de",
+  "url": "https://github.com/o3de/o3de",
+  "commit": "28872cbb42b4a140f92bf42d75850065135267ff",
+  "local_path": "D:/KF/LSSMJ/scratch/src/o3de",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "oxc",
+  "url": "https://github.com/oxc-project/oxc",
+  "commit": "7f65b757df7c3225320d8f7e051e64873f80f988",
+  "local_path": "D:/KF/LSSMJ/scratch/src/oxc",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "parley",
+  "url": "https://github.com/linebender/parley",
+  "commit": "5794c7461bdeea70366cd2489e42c0864c97f7a8",
+  "local_path": "D:/KF/LSSMJ/scratch/src/parley",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "pathfinder",
+  "url": "https://github.com/servo/pathfinder",
+  "commit": "6c3c0466f451c5bd2007087728cd168798cd64e8",
+  "local_path": "D:/KF/LSSMJ/scratch/src/pathfinder",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "qtdeclarative",
+  "url": "https://github.com/qt/qtdeclarative",
+  "commit": "0be90e31adc05fd34680e9629cbc8e2372c8a54a",
+  "local_path": "D:/KF/LSSMJ/scratch/src/qtdeclarative",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "raqote",
+  "url": "https://github.com/jrmuizel/raqote",
+  "commit": "9f1340c8ce3909286601a059a3c2077c3502a059",
+  "local_path": "D:/KF/LSSMJ/scratch/src/raqote",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "rquickjs",
+  "url": "https://github.com/DelSkayn/rquickjs",
+  "commit": "3d5ecfc94e3f9ea3a9769422ca718a7dd063e00f",
+  "local_path": "D:/KF/LSSMJ/scratch/src/rquickjs",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "rustybuzz",
+  "url": "https://github.com/RazrFalcon/rustybuzz",
+  "commit": "9faca967408677f17bc15366dbdc3d2b683d1489",
+  "local_path": "D:/KF/LSSMJ/scratch/src/rustybuzz",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "servo",
+  "url": "https://github.com/servo/servo",
+  "commit": "a6761746030cc7c425fa0c30ba1d03b2739543f6",
+  "local_path": "D:/KF/LSSMJ/scratch/src/servo",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "solid-js",
+  "url": "https://github.com/solidjs/solid",
+  "commit": "b25c557754f2ced0d86490e6dbfded9b1745b663",
+  "local_path": "D:/KF/LSSMJ/scratch/src/solid-js",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "stylo",
+  "url": "https://github.com/servo/stylo",
+  "commit": "34d25f741765a0bdb894f8271852e633299352d8",
+  "local_path": "D:/KF/LSSMJ/scratch/src/stylo",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "swash",
+  "url": "https://github.com/dfrg/swash",
+  "commit": "7773843df0d63cd468db61a29c152b5e7a99d4ab",
+  "local_path": "D:/KF/LSSMJ/scratch/src/swash",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "swc",
+  "url": "https://github.com/swc-project/swc",
+  "commit": "3c46139b86b27a7b3fefcf7b19ca07a63de9db0a",
+  "local_path": "D:/KF/LSSMJ/scratch/src/swc",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "sycamore",
+  "url": "https://github.com/sycamore-rs/sycamore",
+  "commit": "48e55bb7e699ab4975b3d49401ec93cd9dca58b1",
+  "local_path": "D:/KF/LSSMJ/scratch/src/sycamore",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "taffy",
+  "url": "https://github.com/DioxusLabs/taffy",
+  "commit": "fb461a7826e49f488f31220744bf12227ffb580e",
+  "local_path": "D:/KF/LSSMJ/scratch/src/taffy",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "tao",
+  "url": "https://github.com/tauri-apps/tao",
+  "commit": "d19f4c12a0d881260a436d9ccf3e8f349c58e2a4",
+  "local_path": "D:/KF/LSSMJ/scratch/src/tao",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "tauri",
+  "url": "https://github.com/tauri-apps/tauri",
+  "commit": "30da1fd6e17de6107ecc850c95dfb16b5729f2dd",
+  "local_path": "D:/KF/LSSMJ/scratch/src/tauri",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "thorvg",
+  "url": "https://github.com/thorvg/thorvg",
+  "commit": "e4594e3c44a9b0f9118e8106924a0d9c0cb42914",
+  "local_path": "D:/KF/LSSMJ/scratch/src/thorvg",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "tiny-skia",
+  "url": "https://github.com/RazrFalcon/tiny-skia",
+  "commit": "5d4754777746eef0828be166896eaf482c49f8f2",
+  "local_path": "D:/KF/LSSMJ/scratch/src/tiny-skia",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "ugui",
+  "url": "https://github.com/Unity-Technologies/uGUI",
+  "commit": "9b8c5df053bf9a235c673b9bf4a549e573f2a279",
+  "local_path": "D:/KF/LSSMJ/scratch/src/ugui",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "unity-ui",
+  "url": "https://github.com/needle-mirror/com.unity.ui",
+  "commit": "510d7618e549150d73c2e053f25400386fe81c8a",
+  "local_path": "D:/KF/LSSMJ/scratch/src/unity-ui",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "vello",
+  "url": "https://github.com/linebender/vello",
+  "commit": "c7269fba54aa68a84470dc64b1f297dbadf4da94",
+  "local_path": "D:/KF/LSSMJ/scratch/src/vello",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "wasmer",
+  "url": "https://github.com/wasmerio/wasmer",
+  "commit": "6c09d9e31c5a3a302bb3be2706f66b51e0e7b39e",
+  "local_path": "D:/KF/LSSMJ/scratch/src/wasmer",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "wasmtime",
+  "url": "https://github.com/bytecodealliance/wasmtime",
+  "commit": "6572e8e7cf396fa28793400b072687390fc31548",
+  "local_path": "D:/KF/LSSMJ/scratch/src/wasmtime",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "webrender.wiki",
+  "url": "https://github.com/servo/webrender.wiki.git",
+  "commit": "dbe996628357444fad85149c45058b5f622f9ba6",
+  "local_path": "D:/KF/LSSMJ/scratch/src/webrender.wiki",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "winit",
+  "url": "https://github.com/rust-windowing/winit",
+  "commit": "8b5f46d4be7d29f5b0ed91f4343b78d8c2668bd0",
+  "local_path": "D:/KF/LSSMJ/scratch/src/winit",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "wpf",
+  "url": "https://github.com/dotnet/wpf",
+  "commit": "e89a851c5792c8777a7115cc7a797fd0c045fdd4",
+  "local_path": "D:/KF/LSSMJ/scratch/src/wpf",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "wry",
+  "url": "https://github.com/tauri-apps/wry",
+  "commit": "cab3eace983007a16f132c14a34d0a220c707bea",
+  "local_path": "D:/KF/LSSMJ/scratch/src/wry",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "yew",
+  "url": "https://github.com/yewstack/yew",
+  "commit": "bfa6c19af971084f9547495388bde9aceeb81aaa",
+  "local_path": "D:/KF/LSSMJ/scratch/src/yew",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "zed",
+  "url": "https://github.com/zed-industries/zed",
+  "commit": "06afd454ec3f23b7c97ce7527e9be9e1478564a4",
+  "local_path": "D:/KF/LSSMJ/scratch/src/zed",
+  "fetched_at": "2026-10-11",
+  "method": "harvested-local（F02 补登记：HEAD 为本机实测现状，非分析时点）"
+ },
+ {
+  "target": "makepad-src-snapshot",
+  "url": "unknown（无 .git 的源码快照；与 lock 内 makepad→makepad-mp-snap 条目是两个目录）",
+  "commit": null,
+  "local_path": "D:/KF/LSSMJ/scratch/src/makepad",
+  "fetched_at": "2026-10-11",
+  "method": "snapshot（.git 为空目录，非 git 克隆；F02 补登记）"
  }
 ]

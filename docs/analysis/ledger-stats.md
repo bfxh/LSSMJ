@@ -4,7 +4,7 @@
 - 复算命令：`python tools/ledger.py report --out docs/analysis/ledger-stats.md`
 - 账本文件：58 个 jsonl
 
-**总条目（通过校验）：4493**；被拒条目：70；例外豁免条目：10；重复 id：0；覆盖目标数：601；带 lesson 字段：4479
+**总条目（通过校验）：4493**；被拒条目：0；例外豁免条目：80；重复 id：0；覆盖目标数：601；带 lesson 字段：4479
 
 ## 深度分布
 
@@ -111,26 +111,3 @@
 | egui | 26 |
 | mineradio | 26 |
 | vscode | 25 |
-
-## 被拒条目样本（前 20）
-
-- `w3h.jsonl:53` 引文对不上 D:/KF/BSHSQ/docs/SPEC.md:237（±5 行内未找到逐字引文）
-- `w3h.jsonl:60` 引文对不上 D:/KF/BSHSQ/docs/PERF-REVIEW-2026-09-27.md:103（±5 行内未找到逐字引文）
-- `w3h.jsonl:61` 引文对不上 D:/KF/BSHSQ/docs/PERF-REVIEW-2026-09-27.md:107（±5 行内未找到逐字引文）
-- `w4a.jsonl:1` 锚文件不存在: D:/KF/GN_SDK1e/GN_SDK1e/Include/GN.h
-- `w4a.jsonl:2` 锚文件不存在: D:/KF/GN_SDK1e/GN_SDK1e/Include/GN.h
-- `w4a.jsonl:3` 锚文件不存在: D:/KF/GN_SDK1e/GN_SDK1e/Include/GN.h
-- `w4a.jsonl:4` 锚文件不存在: D:/KF/GN_SDK1e/GN_SDK1e/Include/GN.h
-- `w4a.jsonl:5` 锚文件不存在: D:/KF/GN_SDK1e/GN_SDK1e/Include/GN.h
-- `w4a.jsonl:6` 锚文件不存在: D:/KF/GN_SDK1e/GN_SDK1e/Include/GN.h
-- `w4a.jsonl:7` 锚文件不存在: D:/KF/GN_SDK1e/GN_SDK1e/Include/GN.h
-- `w4a.jsonl:8` 锚文件不存在: D:/KF/GN_SDK1e/GN_SDK1e/Include/GN.h
-- `w4a.jsonl:9` 锚文件不存在: D:/KF/GN_SDK1e/GN_SDK1e/Include/GN.h
-- `w4a.jsonl:10` 锚文件不存在: D:/KF/GN_SDK1e/GN_SDK1e/Include/GN.h
-- `w4a.jsonl:11` 锚文件不存在: D:/KF/GN_SDK1e/GN_SDK1e/Include/GN.h
-- `w4a.jsonl:12` 锚文件不存在: D:/KF/GN_SDK1e/GN_SDK1e/Include/GN.h
-- `w4a.jsonl:13` 锚文件不存在: D:/KF/GN_SDK1e/GN_SDK1e/Include/GN.h
-- `w4a.jsonl:14` 锚文件不存在: D:/KF/GN_SDK1e/GN_SDK1e/Include/_Graphics/GN_G2D.h
-- `w4a.jsonl:15` 锚文件不存在: D:/KF/GN_SDK1e/GN_SDK1e/Include/_Graphics/GN_G2D.h
-- `w4a.jsonl:16` 锚文件不存在: D:/KF/GN_SDK1e/GN_SDK1e/Include/_Graphics/GN_G2D.h
-- `w4a.jsonl:17` 锚文件不存在: D:/KF/GN_SDK1e/GN_SDK1e/Include/_Graphics/GN_G2D.h
