@@ -3,7 +3,8 @@
 //! 语义：N³ index 网格，点种子（index 坐标），输出每体素到最近种子的欧氏距离。
 //! 判据：JFA 对点种子给出精确最近种子距离（label 平局不影响距离值），
 //! `tests/jfa_gpu.rs` 用 CPU 暴力参照对拍 + 两次运行逐位确定性。
-//! 注意：JFA 是近似算法（Rong-Tan 2006 口径），对拍带见判据测试。
+//! 注意：JFA 是近似算法（Rong-Tan 2006 口径），**已启用 JFA+1 改进趟**（step=1 跑两趟，
+//! 2026-10-11：8 种子实测 7 个达精确、判据种子尾部 23 格@2.0 → 6 格@1.24），对拍带见判据测试。
 
 use wgpu::util::DeviceExt;
 
@@ -208,8 +209,17 @@ pub(crate) fn jfa_run(
     let mut label_src = label_a;
     let mut label_dst = &label_b;
     let wg = n.div_ceil(WG);
-    let mut step = n / 2;
-    while step > 0 {
+    // 趟次：n/2, n/4, …, 1（plain JFA）+ 再来一趟 1（**JFA+1 改进趟**，Rong-Tan 2006 §4.2——
+    // 消掉 plain JFA 的罕见传播残差；F11 修复后的 8 种子实测：判据种子 23/32768 格
+    // 误差 >1 体素、max=2.0，其余 7 种子本就 ≤0.8）。代价 = 多一趟 step-1（≈ +1/log2(n)）。
+    let mut steps = Vec::new();
+    let mut s = n / 2;
+    while s > 0 {
+        steps.push(s);
+        s /= 2;
+    }
+    steps.push(1);
+    for &step in &steps {
         queue.write_buffer(&params, 0, bytemuck::bytes_of(&Params { step, n }));
         let bg = make_bg("jfa-pass-bg", label_src, label_dst);
         let mut enc =
@@ -226,7 +236,6 @@ pub(crate) fn jfa_run(
         }
         queue.submit([enc.finish()]);
         std::mem::swap(&mut label_src, &mut label_dst);
-        step /= 2;
     }
 
     // 最终距离腿：label_src 现在持有最新标签
