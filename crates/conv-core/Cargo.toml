@@ -10,6 +10,7 @@ fast-surface-nets = "0.2.1"
 wgpu = "30.0.0"
 pollster = "0.4"
 bytemuck = "1"
+flate2 = "1.1.10"
 
 [profile.release]
 incremental = false

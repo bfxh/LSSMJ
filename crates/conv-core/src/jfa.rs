@@ -3,7 +3,8 @@
 //! 语义：N³ index 网格，点种子（index 坐标），输出每体素到最近种子的欧氏距离。
 //! 判据：JFA 对点种子给出精确最近种子距离（label 平局不影响距离值），
 //! `tests/jfa_gpu.rs` 用 CPU 暴力参照对拍 + 两次运行逐位确定性。
-//! 注意：JFA 是近似算法（Rong-Tan 2006 口径），对拍带见判据测试。
+//! 注意：JFA 是近似算法（Rong-Tan 2006 口径），**已启用 JFA+1 改进趟**（step=1 跑两趟，
+//! 2026-10-11：8 种子实测 7 个达精确、判据种子尾部 23 格@2.0 → 6 格@1.24），对拍带见判据测试。
 
 use wgpu::util::DeviceExt;
 
@@ -13,24 +14,48 @@ const WG: u32 = 4; // workgroup_size(4,4,4)
 pub struct Headless {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
+    /// 适配器支持 TIMESTAMP_QUERY 时的每 tick 纳秒数（`Queue::get_timestamp_period` 口径；C22 逐边计时的能力探测）
+    pub timestamp_period: Option<f32>,
+    /// 实际选中的适配器名 + 后端（读数四件套的"机器"口径——本机多适配器，读数必须自带指认）
+    pub adapter_name: String,
 }
 
 /// 无头设备（判据/离线管线用；显示面走引擎侧 T-PH-01）。
+/// **limits 取适配器实际上限**（规模第一片）：默认 `Limits::default()` 把
+/// `max_storage_buffer_binding_size` 钉在 128 MiB（大网格索引缓冲 n≥124 即建不出绑定组）、
+/// `max_buffer_size` 钉在 256 MiB；按适配器取上限可自适应各后端（软件光栅器低上限也能起）。
 pub fn headless_device() -> Headless {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter =
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
             .expect("no wgpu adapter");
+    let ts = wgpu::Features::TIMESTAMP_QUERY;
+    let req = if adapter.features().contains(ts) {
+        ts
+    } else {
+        wgpu::Features::empty()
+    };
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("conv-core-headless"),
-        required_features: wgpu::Features::empty(),
-        required_limits: wgpu::Limits::default(),
+        required_features: req,
+        required_limits: adapter.limits(),
         experimental_features: wgpu::ExperimentalFeatures::disabled(),
         memory_hints: wgpu::MemoryHints::MemoryUsage,
         trace: wgpu::Trace::Off,
     }))
     .expect("request_device");
-    Headless { device, queue }
+    let timestamp_period = if req.contains(ts) {
+        Some(queue.get_timestamp_period())
+    } else {
+        None
+    };
+    let info = adapter.get_info();
+    Headless {
+        device,
+        queue,
+        timestamp_period,
+        adapter_name: format!("{} ({:?})", info.name, info.backend),
+    }
 }
 
 #[repr(C)]
@@ -41,9 +66,24 @@ struct Params {
 }
 
 /// JFA 距离场（CPU 种子便捷入口）：`seeds` 为 index 坐标，返回每体素最近种子距离（index 单位）。
-pub fn jfa_distance_field(headless: &Headless, seeds: &[[f32; 3]], n: u32) -> Vec<f32> {
+pub fn jfa_distance_field(
+    headless: &Headless,
+    seeds: &[[f32; 3]],
+    n: u32,
+    timer: Option<&mut crate::timer::GpuTimer>,
+) -> Vec<f32> {
+    crate::require_grid(n, "jfa_distance_field");
+    assert!(
+        !seeds.is_empty(),
+        "jfa_distance_field: 种子表为空（不支持——无最近种子语义，全域将是 INF 假绿）"
+    );
     let device = &headless.device;
     let count = (n * n * n) as usize;
+    crate::require_device_buffer(
+        device,
+        (count as u64) * 4,
+        "jfa_distance_field（label 缓冲，最大单缓冲）",
+    );
 
     // label 初始化：种子所在体素写自身索引，其余 INVALID
     let mut labels = vec![INVALID; count];
@@ -72,7 +112,7 @@ pub fn jfa_distance_field(headless: &Headless, seeds: &[[f32; 3]], n: u32) -> Ve
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
-    jfa_run(headless, &label_a, &seeds_buf, n, &dist_buf);
+    jfa_run(headless, &label_a, &seeds_buf, n, &dist_buf, timer);
     readback_f32(headless, &dist_buf)
 }
 
@@ -85,6 +125,7 @@ pub(crate) fn jfa_run(
     seeds_buf: &wgpu::Buffer,
     n: u32,
     dist_buf: &wgpu::Buffer,
+    mut timer: Option<&mut crate::timer::GpuTimer>,
 ) {
     let device = &headless.device;
     let queue = &headless.queue;
@@ -168,16 +209,26 @@ pub(crate) fn jfa_run(
     let mut label_src = label_a;
     let mut label_dst = &label_b;
     let wg = n.div_ceil(WG);
-    let mut step = n / 2;
-    while step > 0 {
+    // 趟次：n/2, n/4, …, 1（plain JFA）+ 再来一趟 1（**JFA+1 改进趟**，Rong-Tan 2006 §4.2——
+    // 消掉 plain JFA 的罕见传播残差；F11 修复后的 8 种子实测：判据种子 23/32768 格
+    // 误差 >1 体素、max=2.0，其余 7 种子本就 ≤0.8）。代价 = 多一趟 step-1（≈ +1/log2(n)）。
+    let mut steps = Vec::new();
+    let mut s = n / 2;
+    while s > 0 {
+        steps.push(s);
+        s /= 2;
+    }
+    steps.push(1);
+    for &step in &steps {
         queue.write_buffer(&params, 0, bytemuck::bytes_of(&Params { step, n }));
         let bg = make_bg("jfa-pass-bg", label_src, label_dst);
         let mut enc =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        let tw = timer.as_deref_mut().and_then(|t| t.writes());
         {
             let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: None,
-                timestamp_writes: None,
+                timestamp_writes: tw,
             });
             pass.set_pipeline(&pass_pipe);
             pass.set_bind_group(0, &bg, &[]);
@@ -185,17 +236,17 @@ pub(crate) fn jfa_run(
         }
         queue.submit([enc.finish()]);
         std::mem::swap(&mut label_src, &mut label_dst);
-        step /= 2;
     }
 
     // 最终距离腿：label_src 现在持有最新标签
     queue.write_buffer(&params, 0, bytemuck::bytes_of(&Params { step: 0, n }));
     let dist_bg = make_bg("jfa-dist-bg", label_src, label_dst);
     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    let tw = timer.and_then(|t| t.writes());
     {
         let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: None,
-            timestamp_writes: None,
+            timestamp_writes: tw,
         });
         pass.set_pipeline(&dist_pipe);
         pass.set_bind_group(0, &dist_bg, &[]);
@@ -215,6 +266,59 @@ pub(crate) fn readback_f32(headless: &Headless, buf: &wgpu::Buffer) -> Vec<f32> 
     });
     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
     enc.copy_buffer_to_buffer(buf, 0, &download, 0, buf.size());
+    headless.queue.submit([enc.finish()]);
+    let slice = download.slice(..);
+    slice.map_async(wgpu::MapMode::Read, |_| {});
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    let data = slice.get_mapped_range().unwrap();
+    bytemuck::allocation::pod_collect_to_vec(&data)
+}
+
+/// 缓冲回读（u32；长度 = buf.size()/4）。
+pub(crate) fn readback_u32(headless: &Headless, buf: &wgpu::Buffer) -> Vec<u32> {
+    readback_u32_slice(headless, buf, 0, buf.size())
+}
+
+/// 缓冲区间回读（u32）：自 `offset` 起读 `len` 字节（须为 4 的倍数）。
+pub(crate) fn readback_u32_slice(
+    headless: &Headless,
+    buf: &wgpu::Buffer,
+    offset: u64,
+    len: u64,
+) -> Vec<u32> {
+    let device = &headless.device;
+    let download = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("readback-slice"),
+        size: len,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    enc.copy_buffer_to_buffer(buf, offset, &download, 0, len);
+    headless.queue.submit([enc.finish()]);
+    let slice = download.slice(..);
+    slice.map_async(wgpu::MapMode::Read, |_| {});
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    let data = slice.get_mapped_range().unwrap();
+    bytemuck::allocation::pod_collect_to_vec(&data)
+}
+
+/// 缓冲区间回读（f32）：自 `offset` 起读 `len` 字节（须为 4 的倍数）。
+pub(crate) fn readback_f32_slice(
+    headless: &Headless,
+    buf: &wgpu::Buffer,
+    offset: u64,
+    len: u64,
+) -> Vec<f32> {
+    let device = &headless.device;
+    let download = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("readback-f32-slice"),
+        size: len,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    enc.copy_buffer_to_buffer(buf, offset, &download, 0, len);
     headless.queue.submit([enc.finish()]);
     let slice = download.slice(..);
     slice.map_async(wgpu::MapMode::Read, |_| {});
