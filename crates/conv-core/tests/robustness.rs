@@ -96,20 +96,8 @@ fn gsn_n2_minimal_grid_deterministic_and_empty() {
     assert_eq!(a.quad_count, 0, "n=2 全正场应得空网格");
     assert_eq!(a.indices, b.indices, "n=2 索引两次运行应一致");
     assert_eq!(
-        fnv_f32(
-            &a.positions
-                .iter()
-                .flatten()
-                .copied()
-                .collect::<Vec<f32>>()
-        ),
-        fnv_f32(
-            &b.positions
-                .iter()
-                .flatten()
-                .copied()
-                .collect::<Vec<f32>>()
-        ),
+        fnv_f32(&a.positions.iter().flatten().copied().collect::<Vec<f32>>()),
+        fnv_f32(&b.positions.iter().flatten().copied().collect::<Vec<f32>>()),
     );
 }
 
