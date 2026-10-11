@@ -44,13 +44,20 @@ tools/
 scratch/                   浅克隆与工作区（不进 git）
 ```
 
-## 复算（三条命令）
+## 复算（证据可移植，F02）
 
 ```bash
+python tools/restore.py check                    # 证据源盘点：git 克隆 HEAD vs 钉住提交（fail-closed）
+python tools/restore.py restore --target bevy    # 把某证据源恢复到钉住提交（scratch/src/<target>）
 python tools/ledger.py selftest                  # 金丝雀：证明校验器真的会判红
 python tools/ledger.py verify --min 1000         # 账本门：任一条目无锚/引文不实 ⇒ 非零退出
 python tools/ledger.py report --out docs/analysis/ledger-stats.md
 ```
+
+锚为仓相对路径（F02 解耦后）；scratch 证据源按 `docs/analysis/targets-lock.json` 的
+url+commit 可在干净 checkout 复算。迁移期例外（证据已归档/上游漂移等）逐条登记在
+`ci/ledger-exceptions.json`（id/reason/expires），verify 输出里以 EXCEPT 行公开可见、
+不计入「通过校验」总数，过期自动失效。
 
 ## 许可
 
