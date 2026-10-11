@@ -116,6 +116,120 @@ def safe_local_path_readonly(p):
     return Path(p if os.path.isabs(p) else p)
 
 
+def _hash_file(path, chunk=1 << 20):
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            b = f.read(chunk)
+            if not b:
+                break
+            h.update(b)
+    return h.hexdigest()
+
+
+MANIFEST_DIR = "docs/analysis/evidence-manifests"
+
+
+def manifest_path(root, target):
+    return Path(root) / MANIFEST_DIR / f"{target}.sha256"
+
+
+def snapshot_manifest(root, entry):
+    """逐文件 SHA256（sha256sum -c 兼容：`<hex>  <relpath>`，按路径排序）。
+    外部条目只允许单文件（如 zip 归档）。返回 (行列表, 总字节)。"""
+    lp = safe_local_path_readonly(entry["local_path"])
+    lines, total = [], 0
+    if lp.is_file():
+        total = lp.stat().st_size
+        lines.append(f"{_hash_file(lp)}  {Path(lp).name}")
+        return lines, total
+    for r, _, fs in os.walk(lp):
+        for f in sorted(fs):
+            full = Path(r) / f
+            rel = full.relative_to(lp).as_posix()
+            total += full.stat().st_size
+            lines.append(f"{_hash_file(full)}  {rel}")
+    lines.sort(key=lambda l: l.split("  ", 1)[1])
+    return lines, total
+
+
+def verify_snapshot_manifest(root, entry):
+    """对照已入册 manifest 验证快照完整性。返回 (state, detail)：
+    INTEGRITY-OK / INTEGRITY-DRIFT（缺文件/哈希不符/多出文件）/ NO-MANIFEST。"""
+    lp = safe_local_path_readonly(entry["local_path"])
+    mp = manifest_path(root, entry["target"])
+    if not mp.exists():
+        return "NO-MANIFEST", "无完整性册（restore.py manifest 补册）"
+    recorded = {}
+    for ln in mp.read_text(encoding="utf-8").splitlines():
+        if not ln.strip():
+            continue
+        h, _, rel = ln.partition("  ")
+        recorded[rel] = h
+    bad, missing, extra = [], [], []
+    seen = set()
+    if lp.is_file():
+        rels = {Path(lp).name}
+        for rel in rels:
+            full = lp
+            if rel not in recorded:
+                extra.append(rel)
+            elif _hash_file(full) != recorded[rel]:
+                bad.append(rel)
+            seen.add(rel)
+    else:
+        for r, _, fs in os.walk(lp):
+            for f in fs:
+                full = Path(r) / f
+                rel = full.relative_to(lp).as_posix()
+                seen.add(rel)
+                if rel not in recorded:
+                    extra.append(rel)
+                elif _hash_file(full) != recorded[rel]:
+                    bad.append(rel)
+    for rel in recorded:
+        if rel not in seen:
+            missing.append(rel)
+    if bad or missing or extra:
+        return "INTEGRITY-DRIFT", (f"哈希不符 {len(bad)} / 缺文件 {len(missing)} / "
+                                   f"多出 {len(extra)}（首例: {(bad or missing or extra)[0]}）")
+    return "INTEGRITY-OK", f"{len(recorded)} 文件逐字吻合"
+
+
+def cmd_manifest(args):
+    root = repo_root()
+    items = load_lock(root)
+    if args.target:
+        items = [e for e in items if e["target"] == args.target]
+        if not items:
+            print(f"FAIL: lock 中无 target {args.target!r}")
+            return 1
+    done = skipped = 0
+    for e in items:
+        state, _, _ = classify(e, root)
+        if state != "SNAPSHOT":
+            skipped += 1
+            continue
+        lp = safe_local_path_readonly(e["local_path"])
+        if not lp.exists():
+            print(f"SKIP {e['target']}: local_path 不存在（无可入册内容）")
+            skipped += 1
+            continue
+        mp = manifest_path(root, e["target"])
+        if mp.exists() and not args.force:
+            print(f"SKIP {e['target']}: manifest 已在册（--force 重算；漂移应经 check 暴露而非静默重录）")
+            skipped += 1
+            continue
+        lines, total = snapshot_manifest(root, e)
+        mp.parent.mkdir(parents=True, exist_ok=True)
+        mp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        print(f"manifest {e['target']:<28} {len(lines):>5} 文件 {total/1e6:>8.1f} MB → {mp}")
+        done += 1
+    print(f"done={done} skipped={skipped}")
+    return 0
+
+
 def cmd_check(args):
     root = repo_root()
     items = load_lock(root)
@@ -128,6 +242,10 @@ def cmd_check(args):
     rows = []
     for e in items:
         state, detail, external = classify(e, root)
+        if state == "SNAPSHOT":
+            istate, idetail = verify_snapshot_manifest(root, e)
+            if istate != "NO-MANIFEST":
+                state, detail = istate, f"{idetail}（完整性册）"
         key = f"{state}{'/external' if external else ''}"
         counts[key] = counts.get(key, 0) + 1
         rows.append((state, external, e, detail))
@@ -142,13 +260,14 @@ def cmd_check(args):
     else:
         for s, x, e, d in rows:
             mark = {"OK": "ok    ", "DRIFT": "DRIFT ", "MISSING": "MISS  ",
-                    "BROKEN": "BROKEN", "SNAPSHOT": "snap  "}[s]
+                    "BROKEN": "BROKEN", "SNAPSHOT": "snap  ",
+                    "INTEGRITY-OK": "int-ok", "INTEGRITY-DRIFT": "INT-DR"}[s]
             tag = " [external]" if x else ""
             print(f"{mark} {e['target']:<28} {d}{tag}")
         print("counts:", counts)
     # 门只对仓内条目 fail-closed（外部证据根是登记过的作者机依赖，阶段 2 处理）
     bad_internal = sum(1 for s, x, _, _ in rows
-                       if not x and s in ("MISSING", "DRIFT", "BROKEN"))
+                       if not x and s in ("MISSING", "DRIFT", "BROKEN", "INTEGRITY-DRIFT"))
     if bad_internal:
         print(f"FAIL: {bad_internal} 个仓内证据源不可复算（restore 可修；snapshot "
               f"{counts.get('SNAPSHOT', 0)}、external {sum(1 for _, x, _, _ in rows if x)} 另计）")
@@ -229,6 +348,10 @@ def main():
     pc.add_argument("--target", default=None)
     pc.add_argument("--json", action="store_true")
 
+    pm = sub.add_parser("manifest")
+    pm.add_argument("--target", default=None)
+    pm.add_argument("--force", action="store_true")
+
     pr = sub.add_parser("restore")
     pr.add_argument("--target", required=True)
     pr.add_argument("--force", action="store_true")
@@ -236,6 +359,8 @@ def main():
     args = ap.parse_args()
     if args.cmd == "check":
         return cmd_check(args)
+    if args.cmd == "manifest":
+        return cmd_manifest(args)
     if args.cmd == "restore":
         return cmd_restore(args)
     return 0
