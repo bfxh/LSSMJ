@@ -638,5 +638,77 @@
   "local_path": "D:/KF/LSSMJ/scratch/src/makepad",
   "fetched_at": "2026-10-11",
   "method": "snapshot（.git 为空目录，非 git 克隆；F02 补登记）"
+ },
+ {
+  "target": "androidx-compose",
+  "url": "unknown（无有效 .git 的源码快照）",
+  "commit": null,
+  "local_path": "D:/KF/LSSMJ/scratch/src/androidx-compose",
+  "fetched_at": "2026-10-11",
+  "method": "snapshot（F02 补登记：.git 缺失或为空目录，非 git 克隆）"
+ },
+ {
+  "target": "aosp-hwui",
+  "url": "unknown（无有效 .git 的源码快照）",
+  "commit": null,
+  "local_path": "D:/KF/LSSMJ/scratch/src/aosp-hwui",
+  "fetched_at": "2026-10-11",
+  "method": "snapshot（F02 补登记：.git 缺失或为空目录，非 git 克隆）"
+ },
+ {
+  "target": "bevy-snapshot",
+  "url": "unknown（无有效 .git 的源码快照）",
+  "commit": null,
+  "local_path": "D:/KF/LSSMJ/scratch/src/bevy-snapshot",
+  "fetched_at": "2026-10-11",
+  "method": "snapshot（F02 补登记：.git 缺失或为空目录，非 git 克隆）"
+ },
+ {
+  "target": "chromium-docs",
+  "url": "unknown（无有效 .git 的源码快照）",
+  "commit": null,
+  "local_path": "D:/KF/LSSMJ/scratch/src/chromium-docs",
+  "fetched_at": "2026-10-11",
+  "method": "snapshot（F02 补登记：.git 缺失或为空目录，非 git 克隆）"
+ },
+ {
+  "target": "cosmic-text-opsz-snapshot",
+  "url": "unknown（无有效 .git 的源码快照）",
+  "commit": null,
+  "local_path": "D:/KF/LSSMJ/scratch/src/cosmic-text-opsz-snapshot",
+  "fetched_at": "2026-10-11",
+  "method": "snapshot（F02 补登记：.git 缺失或为空目录，非 git 克隆）"
+ },
+ {
+  "target": "unified-rx-mcp-snapshot",
+  "url": "unknown（无有效 .git 的源码快照）",
+  "commit": null,
+  "local_path": "D:/KF/LSSMJ/scratch/src/unified-rx-mcp-snapshot",
+  "fetched_at": "2026-10-11",
+  "method": "snapshot（F02 补登记：.git 缺失或为空目录，非 git 克隆）"
+ },
+ {
+  "target": "meshopt-rs-src",
+  "url": "unknown（无有效 .git 的源码快照）",
+  "commit": null,
+  "local_path": "D:/KF/LSSMJ/scratch/src/meshopt-rs",
+  "fetched_at": "2026-10-11",
+  "method": "snapshot（F02 补登记：.git 缺失或为空目录，非 git 克隆）"
+ },
+ {
+  "target": "nanovdb-rs-src",
+  "url": "unknown（无有效 .git 的源码快照）",
+  "commit": null,
+  "local_path": "D:/KF/LSSMJ/scratch/src/nanovdb-rs",
+  "fetched_at": "2026-10-11",
+  "method": "snapshot（F02 补登记：.git 缺失或为空目录，非 git 克隆）"
+ },
+ {
+  "target": "wgpu-3dgs-core-src",
+  "url": "unknown（无有效 .git 的源码快照）",
+  "commit": null,
+  "local_path": "D:/KF/LSSMJ/scratch/src/wgpu-3dgs-core",
+  "fetched_at": "2026-10-11",
+  "method": "snapshot（F02 补登记：.git 缺失或为空目录，非 git 克隆）"
  }
 ]
