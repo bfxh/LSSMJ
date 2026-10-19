@@ -24,8 +24,9 @@
 6. **密度场的全局 iso 在稀疏处会破壳**：实测一份 3DGS PLY 在 iso=16.04 时 χ=-34、无封闭内部；
    `auto` 检测到后降阈值重试（×0.75 → iso=12.03），得到 χ=2 / 1 分量，体积 2.136（比球解析值高 20.9%）。
    这条降级必须**显式记账**，不许静默换参数（C22 的"失败显式降级记账"）。
-7. **本机实测（64³，CPU 单线程，release）**：球体积误差 **0.41%**、环面 **0.40% 且 χ=0（亏格 1）**；
-   20k 高斯总耗时 **0.18–0.39 s**，其中体素化约 90%；同输入逐位哈希稳定（球 `cd8f000dba7bfb4e`）。
+7. **本机实测（64³，release，24 线程 splat）**：球体积误差 **0.41%**、环面 **0.40% 且 χ=0（亏格 1）**；
+   20k 高斯总耗时 **0.04–0.06 s**（1T 参照 0.17–0.38 s）；体素化 **8.5× / 5.6× / 8.8×**
+   （球 / 环面 / blobs），且与 1T **逐位一致**；同输入哈希稳定（球 `cd8f000dba7bfb4e`）。
 8. **UX 的核心不是参数面板**，而是"先诊断、再转换、可解释降级、可预览"：
    `inspect` 先看资产；`auto` 说出选路理由；三旋钮（分辨率/剪枝/阈值）都有默认值与后果提示；
    失败/回退/重试进警告与 JSON；自包含 WebGL 预览默认只显示网格（20k 高斯点盖上去会摩尔纹）。
@@ -124,12 +125,22 @@ f(p)   = num/den  if den ≥ min_weight else 未知
 | 旋钮 | 默认 | 语义 / 后果 |
 | --- | --- | --- |
 | `--grid N` | 64 | 体素分辨率；N³。128³ 体素数 ×8，时间约 ×8；薄特征/小孔建议 128 |
+| `--threads N` | 0（自动） | splat 线程数；0=`available_parallelism()`，1=逐位参照。z-slab 分块，无原子/锁 |
 | `--prune-opacity` | 0.05 | 丢低不透明度 floaters；太高会削掉真实薄结构 |
 | `--iso` | auto（0.65×q99.9） | 密度阈值；**低=胖/易闭合，高=紧/易破壳**；surfel 忽略 |
 | `--padding` | 3 | 域边界留白格；覆盖 3h 采样带宽，防止表面被截断 |
 | `--hollow` | 关 | 不做未知区封闭；输出内外双面的壳（体积参考不适用） |
 | `--min-radius` / `--max-radius` | 0（关） | 按 3σ 半径剪枝；可去背景雾团/超大板 |
 | `--raw-scale` / `--raw-opacity` | 关 | PLY 的 scale/opacity 已激活时使用 |
+
+### 3.6 并行口径（多线程 splat）
+
+按 z 层切块（`chunks = min(n, workers×2)`），每块独占自己的输出切片；worker 只写本块，
+**无原子、无锁**。每个体素的 Gaussian 累加顺序与单线程完全相同（外层仍是 prepared 数组顺序），
+所以 `threads=N` 与 `threads=1` 的场值与网格哈希**逐位一致**
+（`tests/gauss_leg.rs::parallel_splat_matches_single_thread_bitwise`）。
+`--threads 1` 保留为逐位参照；`--threads 0`（CLI 默认）= `available_parallelism()`。
+代价：每块分配 `n²×块高` 的局部数组；256³ 时约 75–150 MB，量产仍需稀疏分块。
 
 ## 4. 关键工程判决（每条都有实测或明确理由）
 
@@ -170,14 +181,14 @@ cargo run --release --bin gauss2mesh -- convert scene.ply --grid 128 --mode auto
 ### 5.2 阶段进度（实跑输出）
 
 ```text
-[1/5] 读入     binary_little_endian · 20,000 高斯 · 1328.5 KB · 5.5 ms
-[2/5] 剪枝     20,000 保留 · 丢 0（低不透明度 0 / 半径 0 / 非法 0）· 0.5 ms
-[3/5] 体素化   surfel · 64³ · h=0.02772 · iso=0.00000 · 观测 68,057 · 封闭内部 53,291 · 324.7 ms · auto→surfel：资产带法线
-[4/5] 网格     Surface Nets · 13,860 顶点 · 27,716 三角形 · χ=2 · 1 分量 · 3.4 ms
-[5/5] 写出     out/ply_sphere.obj · out/ply_sphere.html · out/ply_sphere.json · 27.9 ms
+[1/5] 读入     synthetic · 20,000 高斯 · 2.6 ms
+[2/5] 剪枝     20,000 保留 · 丢 0（低不透明度 0 / 半径 0 / 非法 0）· 0.4 ms
+[3/5] 体素化   surfel · 64³ · h=0.02655 · iso=0.00000 · threads=24 · 观测 73,964 · 封闭内部 62,176 · 47.5 ms · auto→surfel：资产带法线
+[4/5] 网格     Surface Nets · 15,074 顶点 · 30,144 三角形 · χ=2 · 1 分量 · 3.7 ms
+[5/5] 写出     out/mt_sphere.obj · out/mt_sphere.html · out/mt_sphere.json · 27.6 ms
 
-体积 1.77411 · χ=2 · 分量 1 · 64³ · surfel · 362.0 ms 总计
-哈希 bf166ee3634a1f3d · 导出 ...
+体积 1.77436 · χ=2 · 分量 1 · 64³ · surfel · 83.3 ms 总计
+哈希 cd8f000dba7bfb4e · 导出 ...
 ```
 
 每行回答一个用户问题：**读到了什么 / 丢了什么 / 用了什么场和阈值 / 网格质量如何 / 产物在哪**。
@@ -196,7 +207,7 @@ cargo run --release --bin gauss2mesh -- convert scene.ply --grid 128 --mode auto
 ### 5.4 JSON 报告字段
 
 `mode_requested / mode_used / auto_reason / fallback / iso_retry / has_normals / flatness_p50 /
-gaussians{input,kept,dropped_*} / grid{n,h} / field{mode,iso,observed,sealed_interior} /
+gaussians{input,kept,dropped_*} / grid{n,h} / field{mode,iso,threads,observed,sealed_interior} /
 mesh{vertices,triangles,components,chi,volume,boundary_touch,hash,bounds} /
 timings_ms{load,prune,voxel,mesh,write} / warnings[]`。
 
@@ -206,9 +217,9 @@ timings_ms{load,prune,voxel,mesh,write} / warnings[]`。
 - 轨道相机：拖拽旋转、滚轮缩放、重置/正视；网格/高斯点/线框/自动旋转开关。
 - 默认只显示网格；点云/线框按需开。
 - 预览校验（本机）：WebGL2 画布 960×640，`gl.getError()=0`；同步 `render()` 后 `readPixels` 得到
-  78,905 个非背景像素（含点云版本），并把画布降采样成 ASCII 轮廓确认球/环面形状。
+  78,905 个非背景像素（含点云版本；后续多线程版读数为 77,586），并把画布降采样成 ASCII 轮廓确认球/环面形状。
 
-## 6. 本机实测（2026-10-20，release，CPU 单线程）
+## 6. 本机实测（2026-10-20，release；下表为 1T 参照）
 
 环境：Windows 10.0.28000 x64；`rustc 1.99.0 (b940084d7 2026-09-28)`；
 CPU Intel Core Ultra 7 270K Plus；GPU 未参与本轮（体素化/网格化均 CPU）。
@@ -230,15 +241,29 @@ CPU Intel Core Ultra 7 270K Plus；GPU 未参与本轮（体素化/网格化均 
 
 **确定性**：同输入重复运行的网格哈希一致；球 `cd8f000dba7bfb4e`、环面 `34c7846b7b85a520`、
 blobs `13af4cee910c6343`（哈希随实现/默认值变化，不能跨版本当契约）。
-单线程、按 PLY 顺序累加；没有并行归约带来的顺序不确定性。
+按 PLY 顺序累加；多线程 z-slab 不改变每体素的累加顺序，1T 与 N 线程逐位一致
+（`parallel_splat_matches_single_thread_bitwise`）。
 
-**耗时结构**：体素化约 90%（球 356 / 390 ms；环面 155 / 181 ms）；12k density 含重试 0.5–0.9 s。
-Surface Nets 本身 2–7 ms，不是瓶颈；GPU 化应先做体素化 splat，而不是先换 mesher。
+### 6.1 多线程 splat（z-slab，24 线程）
+
+| 用例 | vox 1T | vox auto | 加速 | total 1T | total auto | 哈希 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 球 surfel | 360.8 ms | **42.2 ms** | **8.55×** | 375.2 ms | **58.4 ms** | 同 `cd8f…` |
+| 环面 surfel | 161.8 ms | **29.0 ms** | **5.58×** | 173.1 ms | **39.5 ms** | 同 `34c7…` |
+| blobs density | 472.2 ms | **53.7 ms** | **8.79×** | 484.1 ms | **66.6 ms** | 同 `13af…` |
+
+n=64，3 次中位数；`field.threads=24`。体素化之外的 load/prune/mesh/write 约 13–17 ms，
+所以总加速低于体素加速。1T 与 auto 的网格哈希、体积、χ 完全一致；`threads=1` 保留为逐位基线。
+
+**耗时结构**：多线程后体素化仍是大头（球 42 / 58 ms ≈ 72%；blobs 54 / 67 ms ≈ 80%）；
+1T 参照为 356 / 390 ms。Surface Nets 本身 2–7 ms，不是瓶颈；GPU 化应先做体素化 splat，而不是先换 mesher。
 
 ## 7. 限制与否证条件（不许当结论）
 
-1. **CPU 单线程**：64³/20k 高斯 0.2–0.5 s；128³ 约 8× 体素，未测；逐帧实时不成立。
-   下一步是 wgpu compute splat（体素化），Surface Nets 已有 GPU 腿可接。
+1. **CPU 多线程，非实时**：64³/20k 高斯总耗时约 0.04–0.07 s（24 线程；1T 参照 0.17–0.5 s）；
+   128³ 约 8× 体素，未测；逐帧实时仍不成立。下一步是 wgpu compute splat（体素化），
+   CPU 多线程版可作为 GPU 的逐位参照。GPU 原子累加会破坏逐位确定性，需要排序/分段归约，
+   这是比多线程 CPU 大得多的切片。
 2. **稠密 n³**：256³ = 6700 万格，内存与遍历都上不去；量产要走稀疏分块 + 1-voxel halo（T-GC-05，`W15A-034/035`）。
 3. **只读标准 3DGS PLY**（ASCII/二进制 little-endian）；SPZ/量化/planar 布局未接（`W15A-040..044` 是参照）。
 4. **density 的 iso 是全局值**：非均匀场景会破壳或局部过胖；自动重试只是启发式，不是自适应阈值。
@@ -304,7 +329,8 @@ CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- convert scene.ply --
 
 1. **自适应 iso**：按每个高斯中心的密度分位/局部块阈值，替代"全局 q99.9 + 失败重试"；
    判据：真实非均匀场景的重试率、体积误差、χ 稳定性。
-2. **GPU splat**：体素化约 90%，先把 density/TSDF splat 搬上 wgpu compute，再接现有 GPU Surface Nets。
+2. **GPU splat**：多线程后体素化仍占 70–80%；把 density/TSDF splat 搬上 wgpu compute，
+   再接现有 GPU Surface Nets。GPU 侧要解决确定性累加（排序/分段归约），CPU 的 1T/多线程逐位哈希是现成参照。
 3. **稀疏分块**：256³/大场景的 1-voxel halo 无缝契约（T-GC-05）。
 4. **质量档**：DC/MT 对尖角/薄流的改善；需要薄流/尖特征测试对象（W15A-025 的教训：光滑球堆测不出差异）。
 5. **真实资产**：2DGS/SuGaR 训练产物的法线一致性、尺度分布、SPZ 读入。

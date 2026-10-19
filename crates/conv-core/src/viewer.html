@@ -66,6 +66,7 @@ function main() {
   const rows = [
     ['模式', S.mode || '—'],
     ['网格', (S.grid || '—') + '³'],
+    ['线程', S.workers || '—'],
     ['顶点', fmtInt(S.vertices)],
     ['三角形', fmtInt(S.triangles)],
     ['体积', fmtNum(S.volume, 5)],

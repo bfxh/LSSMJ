@@ -13,6 +13,7 @@ LSSMJ gauss2mesh · 高斯体素 → 网格
 
 常用选项：
   --grid <N>             体素分辨率 8..256（默认 64）
+  --threads <N>          splat 线程数（默认 0=自动；1=单线程参照）
   --mode <auto|density|surfel>（默认 auto）
   --iso <auto|数值>      密度阈值；auto = 0.65 × 正密度 99.9 分位
   --prune-opacity <f>    不透明度下限（默认 0.05）
@@ -55,6 +56,7 @@ impl ModeSel {
 
 pub(crate) struct Config {
     pub(crate) grid: u32,
+    pub(crate) threads: usize,
     pub(crate) mode: ModeSel,
     pub(crate) iso: Option<f32>,
     pub(crate) prune_opacity: f32,
@@ -77,6 +79,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             grid: 64,
+            threads: 0,
             mode: ModeSel::Auto,
             iso: None,
             prune_opacity: 0.05,
@@ -110,6 +113,7 @@ pub(crate) fn parse_config(
 ) -> Result<Config, String> {
     let known = [
         "grid",
+        "threads",
         "mode",
         "iso",
         "prune-opacity",
@@ -131,6 +135,12 @@ pub(crate) fn parse_config(
         cfg.grid = v.parse().map_err(|_| format!("--grid 不是整数：{v}"))?;
         if !(8..=256).contains(&cfg.grid) {
             return Err("--grid 必须在 8..=256".into());
+        }
+    }
+    if let Some(v) = flags.get("threads") {
+        cfg.threads = v.parse().map_err(|_| format!("--threads 不是整数：{v}"))?;
+        if cfg.threads > 256 {
+            return Err("--threads 必须在 0..=256".into());
         }
     }
     if let Some(v) = flags.get("mode") {

@@ -94,6 +94,8 @@ pub struct VoxelizeOptions {
     /// 未知区封闭：从域边界泛洪标记外部，被围住的未知区填成内部。
     /// 关掉会得到"壳体"（内外两张面），打开得到实心体（默认）。
     pub seal: bool,
+    /// splat 工作线程数；1 = 单线程参照（逐位基线）。实际值会夹到 `[1, n]`。
+    pub threads: usize,
     /// 手动取景（世界坐标）；None = 自动按 3σ 包围盒取景。
     pub aabb: Option<Aabb>,
 }
@@ -110,6 +112,7 @@ impl Default for VoxelizeOptions {
             normal_band_cells: 1.0,
             min_weight: 0.02,
             seal: true,
+            threads: 1,
             aabb: None,
         }
     }
@@ -127,6 +130,8 @@ pub struct Field {
     pub observed: usize,
     /// 封闭填充的体素数（未知且被围住 → 内部）；0 = 壳体或开放面。
     pub sealed_interior: usize,
+    /// 实际使用的 splat 工作线程数。
+    pub workers: usize,
     /// 自动/手动取景实际使用的包围盒。
     pub bounds: Aabb,
 }
@@ -193,15 +198,74 @@ fn quantile(sorted: &[f32], q: f32) -> f32 {
     sorted[idx.min(sorted.len() - 1)]
 }
 
-fn voxelize_density(
-    gaussians: &[Gaussian],
-    opts: &VoxelizeOptions,
-    grid: Grid,
-    bounds: Aabb,
-) -> Result<Field, String> {
-    let count = (grid.n * grid.n * grid.n) as usize;
-    let mut density = vec![0f32; count];
+#[derive(Clone, Copy)]
+struct Prepared {
+    mean: [f32; 3],
+    opacity: f32,
+    eigen: super::Eigen,
+    lam: [f32; 3],
+    radius: [f32; 3],
+    normal: [f32; 3],
+}
+
+#[derive(Clone, Copy)]
+struct Chunk {
+    /// [z0, z1)
+    z0: u32,
+    z1: u32,
+}
+
+fn chunk_ranges(n: u32, chunks: usize) -> Vec<Chunk> {
+    let chunks = chunks.clamp(1, n as usize);
+    let base = n as usize / chunks;
+    let rem = n as usize % chunks;
+    let mut out = Vec::with_capacity(chunks);
+    let mut z = 0u32;
+    for i in 0..chunks {
+        let h = (base + usize::from(i < rem)) as u32;
+        out.push(Chunk { z0: z, z1: z + h });
+        z += h;
+    }
+    out
+}
+
+/// z 层分块并行：每块输出独占，无原子/无锁；返回 (块号, 块结果)。
+/// 分块只改变写入位置，不改变每个体素的 Gaussian 累加顺序。
+fn parallel_map_chunks<T, F>(chunks: &[Chunk], workers: usize, f: F) -> Vec<(usize, T)>
+where
+    T: Send,
+    F: Fn(&Chunk) -> T + Sync,
+{
+    let workers = workers.min(chunks.len()).max(1);
+    if workers <= 1 || chunks.len() <= 1 {
+        return chunks.iter().enumerate().map(|(i, c)| (i, f(c))).collect();
+    }
+    std::thread::scope(|s| {
+        let mut handles = Vec::with_capacity(workers);
+        for w in 0..workers {
+            let f = &f;
+            handles.push(s.spawn(move || {
+                let mut out = Vec::new();
+                for i in (w..chunks.len()).step_by(workers) {
+                    out.push((i, f(&chunks[i])));
+                }
+                out
+            }));
+        }
+        let mut all = Vec::new();
+        for h in handles {
+            match h.join() {
+                Ok(v) => all.extend(v),
+                Err(_) => panic!("splat worker panicked"),
+            }
+        }
+        all
+    })
+}
+
+fn prepare_density(gaussians: &[Gaussian], grid: &Grid, opts: &VoxelizeOptions) -> Vec<Prepared> {
     let min_var = (opts.kernel_clamp_cells.max(0.001) * grid.h).powi(2);
+    let mut out = Vec::with_capacity(gaussians.len());
     for g in gaussians {
         if !g.is_finite() || g.opacity <= 0.0 {
             continue;
@@ -217,25 +281,233 @@ fn voxelize_density(
             world_sigma(&eigen, lam, 1),
             world_sigma(&eigen, lam, 2),
         ];
-        let range = splat_range(&grid, g.mean, radius);
+        out.push(Prepared {
+            mean: g.mean,
+            opacity: g.opacity.clamp(0.0, 1.0),
+            eigen,
+            lam,
+            radius,
+            normal: [0.0; 3],
+        });
+    }
+    out
+}
+
+fn prepare_surfel(
+    gaussians: &[Gaussian],
+    grid: &Grid,
+    opts: &VoxelizeOptions,
+) -> (Vec<Prepared>, f32) {
+    let centroid = {
+        let mut c = [0f32; 3];
+        let mut wsum = 0f32;
+        for g in gaussians {
+            if !g.is_finite() {
+                continue;
+            }
+            let w = g.opacity.max(0.0);
+            for (ci, mi) in c.iter_mut().zip(g.mean) {
+                *ci += mi * w;
+            }
+            wsum += w;
+        }
+        if wsum > 0.0 {
+            [c[0] / wsum, c[1] / wsum, c[2] / wsum]
+        } else {
+            [0f32; 3]
+        }
+    };
+    let normal_sigma = (opts.normal_band_cells.max(0.25) * grid.h).powi(2);
+    let tangent_floor = (0.25 * grid.h).powi(2);
+    let clamp_abs = 3.0 * grid.h;
+    let mut out = Vec::with_capacity(gaussians.len());
+    for g in gaussians {
+        if !g.is_finite() || g.opacity <= 0.0 {
+            continue;
+        }
+        let eigen = g.eigen();
+        let normal = match g.normal {
+            Some(n) => normalize_vec(n),
+            None => {
+                let n = eigen.vectors[0];
+                let away = [
+                    g.mean[0] - centroid[0],
+                    g.mean[1] - centroid[1],
+                    g.mean[2] - centroid[2],
+                ];
+                if dot(n, away) < 0.0 {
+                    [-n[0], -n[1], -n[2]]
+                } else {
+                    n
+                }
+            }
+        };
+        let normal = normalize_vec(normal);
+        let lam = [
+            eigen.values[0].max(normal_sigma),
+            eigen.values[1].max(tangent_floor),
+            eigen.values[2].max(tangent_floor),
+        ];
+        let radius = [
+            world_sigma(&eigen, lam, 0),
+            world_sigma(&eigen, lam, 1),
+            world_sigma(&eigen, lam, 2),
+        ];
+        out.push(Prepared {
+            mean: g.mean,
+            opacity: g.opacity.clamp(0.0, 1.0),
+            eigen,
+            lam,
+            radius,
+            normal,
+        });
+    }
+    (out, clamp_abs)
+}
+
+fn splat_density_chunk(prepared: &[Prepared], grid: &Grid, chunk: Chunk, out: &mut [f32]) {
+    let n = grid.n as usize;
+    let n2 = n * n;
+    for g in prepared {
+        let range = splat_range(grid, g.mean, g.radius);
         if range.empty {
             continue;
         }
-        let opacity = g.opacity.clamp(0.0, 1.0);
-        for z in range.lo[2]..=range.hi[2] {
+        let z_lo = range.lo[2].max(chunk.z0);
+        let z_hi = range.hi[2].min(chunk.z1 - 1);
+        if z_lo > z_hi {
+            continue;
+        }
+        for z in z_lo..=z_hi {
+            let lz = (z - chunk.z0) as usize;
             for y in range.lo[1]..=range.hi[1] {
+                let row = lz * n2 + y as usize * n;
                 for x in range.lo[0]..=range.hi[0] {
                     let p = grid.world_of(x, y, z);
                     let d = [p[0] - g.mean[0], p[1] - g.mean[1], p[2] - g.mean[2]];
-                    let m = max_maha(&eigen, lam, d);
+                    let m = max_maha(&g.eigen, g.lam, d);
                     if m > 18.0 {
                         continue;
                     }
-                    density[grid.linear(x, y, z)] += opacity * (-0.5 * m).exp();
+                    out[row + x as usize] += g.opacity * (-0.5 * m).exp();
                 }
             }
         }
     }
+}
+
+fn splat_surfel_chunk(
+    prepared: &[Prepared],
+    grid: &Grid,
+    chunk: Chunk,
+    clamp_abs: f32,
+    num: &mut [f32],
+    den: &mut [f32],
+) {
+    let n = grid.n as usize;
+    let n2 = n * n;
+    for g in prepared {
+        let range = splat_range(grid, g.mean, g.radius);
+        if range.empty {
+            continue;
+        }
+        let z_lo = range.lo[2].max(chunk.z0);
+        let z_hi = range.hi[2].min(chunk.z1 - 1);
+        if z_lo > z_hi {
+            continue;
+        }
+        for z in z_lo..=z_hi {
+            let lz = (z - chunk.z0) as usize;
+            for y in range.lo[1]..=range.hi[1] {
+                let row = lz * n2 + y as usize * n;
+                for x in range.lo[0]..=range.hi[0] {
+                    let p = grid.world_of(x, y, z);
+                    let d = [p[0] - g.mean[0], p[1] - g.mean[1], p[2] - g.mean[2]];
+                    let m = max_maha(&g.eigen, g.lam, d);
+                    if m > 18.0 {
+                        continue;
+                    }
+                    let dist = dot(d, g.normal).clamp(-clamp_abs, clamp_abs);
+                    let w = g.opacity * (-0.5 * m).exp();
+                    let idx = row + x as usize;
+                    num[idx] += w * dist;
+                    den[idx] += w;
+                }
+            }
+        }
+    }
+}
+
+fn parallel_splat_density(prepared: &[Prepared], grid: &Grid, workers: usize) -> (Vec<f32>, usize) {
+    let n = grid.n as usize;
+    let n2 = n * n;
+    let chunk_count = if workers <= 1 {
+        1
+    } else {
+        (workers * 2).min(n).max(1)
+    };
+    let chunks = chunk_ranges(grid.n, chunk_count);
+    let workers = workers.min(chunks.len()).max(1);
+    let mut parts = parallel_map_chunks(&chunks, workers, |c| {
+        let mut local = vec![0f32; n2 * (c.z1 - c.z0) as usize];
+        splat_density_chunk(prepared, grid, *c, &mut local);
+        local
+    });
+    parts.sort_by_key(|(i, _)| *i);
+    let mut out = vec![0f32; n * n * n];
+    for (i, local) in parts {
+        let c = &chunks[i];
+        let start = c.z0 as usize * n2;
+        out[start..start + local.len()].copy_from_slice(&local);
+    }
+    (out, workers)
+}
+
+fn parallel_splat_surfel(
+    prepared: &[Prepared],
+    grid: &Grid,
+    clamp_abs: f32,
+    workers: usize,
+) -> (Vec<f32>, Vec<f32>, usize) {
+    let n = grid.n as usize;
+    let n2 = n * n;
+    let chunk_count = if workers <= 1 {
+        1
+    } else {
+        (workers * 2).min(n).max(1)
+    };
+    let chunks = chunk_ranges(grid.n, chunk_count);
+    let workers = workers.min(chunks.len()).max(1);
+    let mut parts = parallel_map_chunks(&chunks, workers, |c| {
+        let len = n2 * (c.z1 - c.z0) as usize;
+        let mut num = vec![0f32; len];
+        let mut den = vec![0f32; len];
+        splat_surfel_chunk(prepared, grid, *c, clamp_abs, &mut num, &mut den);
+        (num, den)
+    });
+    parts.sort_by_key(|(i, _)| *i);
+    let mut num_all = vec![0f32; n * n * n];
+    let mut den_all = vec![0f32; n * n * n];
+    for (i, (num, den)) in parts {
+        let c = &chunks[i];
+        let start = c.z0 as usize * n2;
+        num_all[start..start + num.len()].copy_from_slice(&num);
+        den_all[start..start + den.len()].copy_from_slice(&den);
+    }
+    (num_all, den_all, workers)
+}
+
+fn voxelize_density(
+    gaussians: &[Gaussian],
+    opts: &VoxelizeOptions,
+    grid: Grid,
+    bounds: Aabb,
+) -> Result<Field, String> {
+    let prepared = prepare_density(gaussians, &grid, opts);
+    if prepared.is_empty() {
+        return Err("没有有效的高斯（NaN/Inf/非正不透明度）".into());
+    }
+    let (density, workers) = parallel_splat_density(&prepared, &grid, opts.threads);
     let mut positive: Vec<f32> = density.iter().copied().filter(|v| *v > 0.0).collect();
     if positive.is_empty() {
         return Err("密度场全为 0（高斯是否落在域外？）".into());
@@ -278,6 +550,7 @@ fn voxelize_density(
         iso,
         observed,
         sealed_interior,
+        workers,
         bounds,
     })
 }
@@ -288,84 +561,12 @@ fn voxelize_surfel(
     grid: Grid,
     bounds: Aabb,
 ) -> Result<Field, String> {
-    let count = (grid.n * grid.n * grid.n) as usize;
-    let mut num = vec![0f32; count];
-    let mut den = vec![0f32; count];
-    let centroid = {
-        let mut c = [0f32; 3];
-        let mut wsum = 0f32;
-        for g in gaussians {
-            let w = g.opacity.max(0.0);
-            for (ci, mi) in c.iter_mut().zip(g.mean) {
-                *ci += mi * w;
-            }
-            wsum += w;
-        }
-        if wsum > 0.0 {
-            [c[0] / wsum, c[1] / wsum, c[2] / wsum]
-        } else {
-            [0f32; 3]
-        }
-    };
-    let normal_sigma = (opts.normal_band_cells.max(0.25) * grid.h).powi(2);
-    let tangent_floor = (0.25 * grid.h).powi(2);
-    let clamp_abs = 3.0 * grid.h;
-    for g in gaussians {
-        if !g.is_finite() || g.opacity <= 0.0 {
-            continue;
-        }
-        let eigen = g.eigen();
-        let mut normal = match g.normal {
-            Some(n) => normalize_vec(n),
-            None => {
-                let n = eigen.vectors[0];
-                let away = [
-                    g.mean[0] - centroid[0],
-                    g.mean[1] - centroid[1],
-                    g.mean[2] - centroid[2],
-                ];
-                if dot(n, away) < 0.0 {
-                    [-n[0], -n[1], -n[2]]
-                } else {
-                    n
-                }
-            }
-        };
-        normal = normalize_vec(normal);
-        // 最薄轴就是法线轴；资产给出的法线可能与最薄轴有偏差，不强制改轴。
-        let lam = [
-            eigen.values[0].max(normal_sigma),
-            eigen.values[1].max(tangent_floor),
-            eigen.values[2].max(tangent_floor),
-        ];
-        let radius = [
-            world_sigma(&eigen, lam, 0),
-            world_sigma(&eigen, lam, 1),
-            world_sigma(&eigen, lam, 2),
-        ];
-        let range = splat_range(&grid, g.mean, radius);
-        if range.empty {
-            continue;
-        }
-        let opacity = g.opacity.clamp(0.0, 1.0);
-        for z in range.lo[2]..=range.hi[2] {
-            for y in range.lo[1]..=range.hi[1] {
-                for x in range.lo[0]..=range.hi[0] {
-                    let p = grid.world_of(x, y, z);
-                    let d = [p[0] - g.mean[0], p[1] - g.mean[1], p[2] - g.mean[2]];
-                    let m = max_maha(&eigen, lam, d);
-                    if m > 18.0 {
-                        continue;
-                    }
-                    let dist = dot(d, normal).clamp(-clamp_abs, clamp_abs);
-                    let w = opacity * (-0.5 * m).exp();
-                    let idx = grid.linear(x, y, z);
-                    num[idx] += w * dist;
-                    den[idx] += w;
-                }
-            }
-        }
+    let (prepared, clamp_abs) = prepare_surfel(gaussians, &grid, opts);
+    if prepared.is_empty() {
+        return Err("没有有效的高斯（NaN/Inf/非正不透明度）".into());
     }
+    let (num, den, workers) = parallel_splat_surfel(&prepared, &grid, clamp_abs, opts.threads);
+    let count = (grid.n * grid.n * grid.n) as usize;
     let outside = 3.0 * grid.h;
     let mut values = Vec::with_capacity(count);
     let mut known = vec![false; count];
@@ -394,6 +595,7 @@ fn voxelize_surfel(
         iso: 0.0,
         observed,
         sealed_interior,
+        workers,
         bounds,
     })
 }

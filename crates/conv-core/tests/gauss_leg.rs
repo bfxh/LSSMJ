@@ -186,6 +186,46 @@ fn ply_binary_activations_roundtrip() {
 }
 
 #[test]
+fn parallel_splat_matches_single_thread_bitwise() {
+    // C22：线程数不是数值来源；z-slab 分块只改写入位置，不改累加顺序。
+    let gs = sphere_gaussians(4_000, R, 0.99);
+    let mut single = opts(VoxelMode::Surfel, 48);
+    single.threads = 1;
+    let f1 = voxelize(&gs, &single).expect("single surfel");
+    let mut multi = single.clone();
+    multi.threads = 8;
+    let f2 = voxelize(&gs, &multi).expect("multi surfel");
+    assert!(f2.workers > 1, "expected parallel workers");
+    assert_eq!(f1.values.len(), f2.values.len());
+    for (a, b) in f1.values.iter().zip(&f2.values) {
+        assert_eq!(a.to_bits(), b.to_bits(), "surfel field bitwise");
+    }
+    assert_eq!(f1.observed, f2.observed);
+    assert_eq!(f1.sealed_interior, f2.sealed_interior);
+    let m1 = field_to_mesh(&f1);
+    let m2 = field_to_mesh(&f2);
+    assert_eq!(m1.stats.hash, m2.stats.hash, "surfel mesh hash");
+
+    let gs = blob_sphere_gaussians(3_000, R, 0.05, 0.95, 7);
+    let mut single = opts(VoxelMode::Density, 48);
+    single.threads = 1;
+    let d1 = voxelize(&gs, &single).expect("single density");
+    let mut multi = single.clone();
+    multi.threads = 8;
+    let d2 = voxelize(&gs, &multi).expect("multi density");
+    for (a, b) in d1.values.iter().zip(&d2.values) {
+        assert_eq!(a.to_bits(), b.to_bits(), "density field bitwise");
+    }
+    let dm1 = field_to_mesh(&d1);
+    let dm2 = field_to_mesh(&d2);
+    println!(
+        "parallel: surfel workers {} hash {:016x}; density workers {} hash {:016x}",
+        f2.workers, m2.stats.hash, d2.workers, dm2.stats.hash
+    );
+    assert_eq!(dm1.stats.hash, dm2.stats.hash, "density mesh hash");
+}
+
+#[test]
 fn eigen_and_flatness() {
     let e = jacobi_eigen([[3.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 2.0]]);
     assert!((e.values[0] - 1.0).abs() < 1e-5);

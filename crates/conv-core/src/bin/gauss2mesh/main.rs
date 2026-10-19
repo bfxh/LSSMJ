@@ -285,6 +285,13 @@ fn convert_and_write(
 
     let flatness = median_flatness(&kept);
     let (mut mode, auto_reason) = choose_mode(cfg.mode, loaded.has_normals, flatness);
+    let threads = if cfg.threads == 0 {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+    } else {
+        cfg.threads
+    };
     let mut voxel_opts = VoxelizeOptions {
         mode,
         n: cfg.grid,
@@ -292,6 +299,7 @@ fn convert_and_write(
         iso_frac: 0.65,
         iso_abs: cfg.iso,
         seal: cfg.seal,
+        threads,
         ..VoxelizeOptions::default()
     };
     let mut result = run_leg(&kept, &voxel_opts);
@@ -365,11 +373,12 @@ fn convert_and_write(
             5,
             "体素化",
             &format!(
-                "{} · {}³ · h={:.5} · iso={:.5} · 观测 {} · 封闭内部 {} · {:.1} ms · {}",
+                "{} · {}³ · h={:.5} · iso={:.5} · threads={} · 观测 {} · 封闭内部 {} · {:.1} ms · {}",
                 field.mode.name(),
                 cfg.grid,
                 field.grid.h,
                 field.iso,
+                field.workers,
                 fmt_int(field.observed),
                 fmt_int(field.sealed_interior),
                 timings.voxel,
