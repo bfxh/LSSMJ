@@ -309,6 +309,19 @@ n=64，3 次中位数；`field.threads=24`。体素化之外的 load/prune/mesh/
   但单次转换的设备 init ~0.9–1.1 s 让 64³/128³ 的端到端反而更慢；默认 CPU，`--gpu` 留给批处理/
   更高分辨率。下一步应把设备/管线生命周期做成服务化或批量入口，而不是每次转换重建。
 
+### 6.3 后处理：q99.9 改 k-th 选择
+
+密度阈值原来对全部正密度 `sort_by` 取 99.9 分位（O(n log n)）。改为
+`select_nth_unstable_by` 的 k-th 顺序统计量（O(n)），结果与排序后同一下标逐位相同：
+
+| 元素数 | 全排序 | k-th 选择 | 加速 |
+| --- | --- | --- | --- |
+| 2,000,000 | 34.20 ms | **1.98 ms** | **17.3×** |
+
+microbench 在 `gauss::voxel::bench_post::bench_quantile_select`（`#[ignore]` 诊断项）。
+q999/iso/网格哈希不变；128³ density 的排序段不再是瓶颈。密封遍历试过 `Vec<u32>` DFS，
+128³ 球无收益（略慢/噪声内），已回退原 BFS。
+
 **耗时结构**：多线程后体素化仍是大头（球 42 / 58 ms ≈ 72%；blobs 54 / 67 ms ≈ 80%）；
 1T 参照为 356 / 390 ms。Surface Nets 本身 2–7 ms，不是瓶颈；GPU 化应先做体素化 splat，而不是先换 mesher。
 

@@ -236,6 +236,17 @@ fn quantile(sorted: &[f32], q: f32) -> f32 {
     sorted[idx.min(sorted.len() - 1)]
 }
 
+/// 第 k 顺序统计量（O(n)），不排序整个数组；结果与排序后取同一下标逐位一致。
+fn quantile_select(values: &mut [f32], q: f32) -> f32 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    let idx = ((values.len() - 1) as f32 * q.clamp(0.0, 1.0)).round() as usize;
+    let idx = idx.min(values.len() - 1);
+    let (_, pivot, _) = values.select_nth_unstable_by(idx, f32::total_cmp);
+    *pivot
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct Prepared {
     pub(crate) mean: [f32; 3],
@@ -565,8 +576,7 @@ pub(crate) fn density_post(
     if positive.is_empty() {
         return Err("密度场全为 0（高斯是否落在域外？）".into());
     }
-    positive.sort_by(f32::total_cmp);
-    let q999 = quantile(&positive, 0.999);
+    let q999 = quantile_select(&mut positive, 0.999);
     let iso = match opts.iso_abs {
         Some(v) => v,
         None => {
@@ -673,10 +683,10 @@ pub(crate) fn surfel_post(
 /// 这是 TSDF 体融合的符号传播；开放面会让泛洪漏进内部（sealed_interior≈0），
 /// 上层应据此告警而不是静默出一个破面。
 fn seal_unknown(values: &mut [f32], known: &[bool], grid: &Grid, outside: f32) -> usize {
-    use std::collections::VecDeque;
     let n = grid.n;
     let n_usize = n as usize;
     let count = n_usize * n_usize * n_usize;
+    use std::collections::VecDeque;
     let mut outside_mask = vec![false; count];
     let mut queue = VecDeque::new();
     let push = |idx: usize, mask: &mut [bool], q: &mut VecDeque<usize>| {
@@ -751,4 +761,37 @@ pub fn field_percentiles(field: &Field) -> [f32; 3] {
     }
     v.sort_by(f32::total_cmp);
     [quantile(&v, 0.01), quantile(&v, 0.5), quantile(&v, 0.99)]
+}
+
+#[cfg(test)]
+mod bench_post {
+    use super::*;
+    use std::time::Instant;
+
+    #[test]
+    #[ignore = "diagnostic timing probe"]
+    fn bench_quantile_select() {
+        let n = 2_000_000usize;
+        let mut lcg = crate::Lcg::new(1);
+        let mut v = Vec::with_capacity(n);
+        for _ in 0..n {
+            v.push(lcg.next01() * 100.0);
+        }
+        let mut sorted = v.clone();
+        let t = Instant::now();
+        sorted.sort_by(f32::total_cmp);
+        let q_sort = quantile(&sorted, 0.999);
+        let sort_ms = t.elapsed().as_secs_f64() * 1e3;
+
+        let mut selected = v;
+        let t = Instant::now();
+        let q_sel = quantile_select(&mut selected, 0.999);
+        let sel_ms = t.elapsed().as_secs_f64() * 1e3;
+
+        assert_eq!(q_sort.to_bits(), q_sel.to_bits());
+        println!(
+            "n={n} sort={sort_ms:.2} ms select={sel_ms:.2} ms ratio={:.1}x",
+            sort_ms / sel_ms
+        );
+    }
 }
