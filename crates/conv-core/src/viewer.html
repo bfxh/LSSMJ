@@ -65,6 +65,7 @@ function main() {
   const stats = document.getElementById('stats');
   const rows = [
     ['模式', S.mode || '—'],
+    ['后端', S.backend || '—'],
     ['网格', (S.grid || '—') + '³'],
     ['线程', S.workers || '—'],
     ['顶点', fmtInt(S.vertices)],

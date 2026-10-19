@@ -17,10 +17,15 @@ pub struct Headless {
 
 /// 无头设备（判据/离线管线用；显示面走引擎侧 T-PH-01）。
 pub fn headless_device() -> Headless {
+    try_headless_device().expect("no wgpu adapter")
+}
+
+/// 可失败的设备创建：供 `--gpu` 在无适配器/驱动异常时显式回退 CPU。
+pub fn try_headless_device() -> Result<Headless, String> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter =
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-            .expect("no wgpu adapter");
+            .map_err(|e| format!("no wgpu adapter: {e:?}"))?;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("conv-core-headless"),
         required_features: wgpu::Features::empty(),
@@ -29,8 +34,8 @@ pub fn headless_device() -> Headless {
         memory_hints: wgpu::MemoryHints::MemoryUsage,
         trace: wgpu::Trace::Off,
     }))
-    .expect("request_device");
-    Headless { device, queue }
+    .map_err(|e| format!("request_device: {e:?}"))?;
+    Ok(Headless { device, queue })
 }
 
 #[repr(C)]

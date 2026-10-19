@@ -5,6 +5,7 @@
 //! `Surfel`（以最薄轴为法线做加权 TSDF 融合，2DGS/带法线资产的路线）。
 //! 两者都输出"负值=内部"的场，交给 [`crate::gauss::mesh`] 做 Surface Nets。
 
+pub mod gpu;
 pub mod mesh;
 pub mod ply;
 pub mod voxel;

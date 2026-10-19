@@ -12,6 +12,7 @@ pub(crate) struct Timings {
     pub(crate) voxel: f64,
     pub(crate) mesh: f64,
     pub(crate) write: f64,
+    pub(crate) gpu_init: f64,
 }
 impl Timings {
     pub(crate) fn new() -> Self {
@@ -21,6 +22,7 @@ impl Timings {
             voxel: 0.0,
             mesh: 0.0,
             write: 0.0,
+            gpu_init: 0.0,
         }
     }
 }
@@ -33,6 +35,7 @@ pub(crate) struct ReportData<'a> {
     pub(crate) mode_used: &'a str,
     pub(crate) auto_reason: &'a str,
     pub(crate) fallback: Option<&'a str>,
+    pub(crate) gpu_fallback: Option<&'a str>,
     pub(crate) iso_retry: Option<&'a str>,
     pub(crate) timings: Timings,
     pub(crate) prune_stats: PruneStats,
@@ -69,15 +72,16 @@ pub(crate) fn report_json(d: &ReportData<'_>) -> String {
             "  \"mode_used\": {},\n",
             "  \"auto_reason\": {},\n",
             "  \"fallback\": {},\n",
+            "  \"gpu_fallback\": {},\n",
             "  \"iso_retry\": {},\n",
             "  \"has_normals\": {},\n",
             "  \"flatness_p50\": {:.5},\n",
             "  \"hollow\": {},\n",
             "  \"gaussians\": {{\"input\": {}, \"kept\": {}, \"dropped_opacity\": {}, \"dropped_radius\": {}, \"dropped_invalid\": {}}},\n",
             "  \"grid\": {{\"n\": {}, \"h\": {:.8}}},\n",
-            "  \"field\": {{\"mode\": {}, \"iso\": {:.8}, \"threads\": {}, \"observed\": {}, \"sealed_interior\": {}}},\n",
+            "  \"field\": {{\"mode\": {}, \"backend\": {}, \"iso\": {:.8}, \"threads\": {}, \"observed\": {}, \"sealed_interior\": {}}},\n",
             "  \"mesh\": {{\"vertices\": {}, \"triangles\": {}, \"components\": {}, \"chi\": {}, \"volume\": {:.8}, \"boundary_touch\": {}, \"hash\": \"{:016x}\", \"bounds\": {}}},\n",
-            "  \"timings_ms\": {{\"load\": {:.3}, \"prune\": {:.3}, \"voxel\": {:.3}, \"mesh\": {:.3}, \"write\": {:.3}}},\n",
+            "  \"timings_ms\": {{\"load\": {:.3}, \"prune\": {:.3}, \"voxel\": {:.3}, \"mesh\": {:.3}, \"write\": {:.3}, \"gpu_init\": {:.3}}},\n",
             "  \"warnings\": [{}]\n",
             "}}\n"
         ),
@@ -88,6 +92,7 @@ pub(crate) fn report_json(d: &ReportData<'_>) -> String {
         jstr(d.mode_used),
         jstr(d.auto_reason),
         d.fallback.map(jstr).unwrap_or_else(|| "null".into()),
+        d.gpu_fallback.map(jstr).unwrap_or_else(|| "null".into()),
         d.iso_retry.map(jstr).unwrap_or_else(|| "null".into()),
         d.has_normals,
         d.flatness,
@@ -100,6 +105,7 @@ pub(crate) fn report_json(d: &ReportData<'_>) -> String {
         d.field.grid.n,
         d.field.grid.h,
         jstr(d.field.mode.name()),
+        jstr(d.field.backend.name()),
         d.field.iso,
         d.field.workers,
         d.field.observed,
@@ -117,6 +123,7 @@ pub(crate) fn report_json(d: &ReportData<'_>) -> String {
         d.timings.voxel,
         d.timings.mesh,
         d.timings.write,
+        d.timings.gpu_init,
         warnings
     );
     s

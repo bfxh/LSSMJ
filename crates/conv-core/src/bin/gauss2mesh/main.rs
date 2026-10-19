@@ -10,11 +10,14 @@ mod report;
 use args::{Config, HELP, ModeSel, is_bool_flag, parse_config};
 use conv_core::gauss::mesh::{Mesh, field_to_mesh, write_obj};
 use conv_core::gauss::ply::{PlyReadOptions, parse_ply_with};
-use conv_core::gauss::voxel::{Field, VoxelMode, VoxelizeOptions, voxelize};
+use conv_core::gauss::voxel::{
+    Backend, Field, VoxelMode, VoxelizeOptions, voxelize, voxelize_gpu_with,
+};
 use conv_core::gauss::{
     Gaussian, PruneOptions, add_floaters, blob_sphere_gaussians, bounds_of, median_flatness, prune,
     sphere_gaussians, torus_gaussians,
 };
+use conv_core::jfa::{Headless, try_headless_device};
 use html::write_html;
 use report::{ReportData, Timings, jstr, report_json};
 use std::collections::{HashMap, HashSet};
@@ -292,8 +295,30 @@ fn convert_and_write(
     } else {
         cfg.threads
     };
+    let mut gpu_fallback = None;
+    let gpu_device = if cfg.gpu {
+        let t = Instant::now();
+        match try_headless_device() {
+            Ok(hd) => {
+                timings.gpu_init = t.elapsed().as_secs_f64() * 1e3;
+                Some(hd)
+            }
+            Err(e) => {
+                gpu_fallback = Some(format!("GPU 初始化失败（{e}）→ CPU"));
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let gpu_ref = gpu_device.as_ref();
     let mut voxel_opts = VoxelizeOptions {
         mode,
+        backend: if gpu_device.is_some() {
+            Backend::Gpu
+        } else {
+            Backend::Cpu
+        },
         n: cfg.grid,
         padding: cfg.padding,
         iso_frac: 0.65,
@@ -302,12 +327,31 @@ fn convert_and_write(
         threads,
         ..VoxelizeOptions::default()
     };
-    let mut result = run_leg(&kept, &voxel_opts);
+    let mut result = run_leg(&kept, &voxel_opts, gpu_ref);
     let mut acc_vox = 0.0;
     let mut acc_mesh = 0.0;
     if let Ok((_, _, v, m)) = &result {
         acc_vox += *v;
         acc_mesh += *m;
+    }
+    if gpu_device.is_some() {
+        let bad = match &result {
+            Err(_) => true,
+            Ok((_, m, _, _)) => m.stats.triangles == 0 || m.stats.volume <= 0.0,
+        };
+        if bad {
+            let reason = match &result {
+                Err(e) => e.clone(),
+                Ok(_) => "GPU 输出空网格".to_string(),
+            };
+            voxel_opts.backend = Backend::Cpu;
+            result = run_leg(&kept, &voxel_opts, gpu_ref);
+            if let Ok((_, _, v, m)) = &result {
+                acc_vox += *v;
+                acc_mesh += *m;
+            }
+            gpu_fallback = Some(format!("GPU 失败（{reason}）→ CPU"));
+        }
     }
     let mut fallback = None;
     if cfg.mode == ModeSel::Auto && mode == VoxelMode::Surfel {
@@ -322,7 +366,7 @@ fn convert_and_write(
             };
             voxel_opts.mode = VoxelMode::Density;
             mode = VoxelMode::Density;
-            result = run_leg(&kept, &voxel_opts);
+            result = run_leg(&kept, &voxel_opts, gpu_ref);
             if let Ok((_, _, v, m)) = &result {
                 acc_vox += *v;
                 acc_mesh += *m;
@@ -352,7 +396,7 @@ fn convert_and_write(
             for factor in [0.75f32, 0.5] {
                 let mut o = voxel_opts.clone();
                 o.iso_frac = base_frac * factor;
-                if let Ok((f2, m2, v2, mm2)) = run_leg(&kept, &o) {
+                if let Ok((f2, m2, v2, mm2)) = run_leg(&kept, &o, gpu_ref) {
                     acc_vox += v2;
                     acc_mesh += mm2;
                     if m2.stats.triangles > 0 && f2.sealed_interior > 0 && m2.stats.chi >= 2 {
@@ -368,17 +412,21 @@ fn convert_and_write(
         }
     }
     if !cfg.quiet {
+        let exec = match field.backend {
+            Backend::Gpu => format!("gpu (init {:.0} ms)", timings.gpu_init),
+            Backend::Cpu => format!("cpu/{}t", field.workers),
+        };
         stage(
             3,
             5,
             "体素化",
             &format!(
-                "{} · {}³ · h={:.5} · iso={:.5} · threads={} · 观测 {} · 封闭内部 {} · {:.1} ms · {}",
+                "{} · {} · {}³ · h={:.5} · iso={:.5} · 观测 {} · 封闭内部 {} · {:.1} ms · {}",
                 field.mode.name(),
+                exec,
                 cfg.grid,
                 field.grid.h,
                 field.iso,
-                field.workers,
                 fmt_int(field.observed),
                 fmt_int(field.sealed_interior),
                 timings.voxel,
@@ -401,6 +449,9 @@ fn convert_and_write(
     }
 
     let mut warnings = Vec::new();
+    if let Some(g) = &gpu_fallback {
+        warnings.push(g.clone());
+    }
     if let Some(f) = &fallback {
         warnings.push(f.clone());
     }
@@ -447,6 +498,7 @@ fn convert_and_write(
         mode_used: mode.name(),
         auto_reason: &auto_reason,
         fallback: fallback.as_deref(),
+        gpu_fallback: gpu_fallback.as_deref(),
         iso_retry: iso_retry.as_deref(),
         timings,
         prune_stats,
@@ -508,7 +560,12 @@ fn convert_and_write(
         mesh.stats.components,
         field.grid.n,
         mode.name(),
-        timings.load + timings.prune + timings.voxel + timings.mesh + timings.write
+        timings.load
+            + timings.prune
+            + timings.voxel
+            + timings.mesh
+            + timings.write
+            + timings.gpu_init
     );
     if let Some((name, v)) = reference {
         let rel = ((mesh.stats.volume - v) / v).abs() * 100.0;
@@ -533,9 +590,13 @@ fn convert_and_write(
 fn run_leg(
     gaussians: &[Gaussian],
     opts: &VoxelizeOptions,
+    gpu: Option<&Headless>,
 ) -> Result<(Field, Mesh, f64, f64), String> {
     let t = Instant::now();
-    let field = voxelize(gaussians, opts)?;
+    let field = match (opts.backend, gpu) {
+        (Backend::Gpu, Some(hd)) => voxelize_gpu_with(hd, gaussians, opts)?,
+        _ => voxelize(gaussians, opts)?,
+    };
     let voxel_ms = t.elapsed().as_secs_f64() * 1e3;
     let t = Instant::now();
     let mesh = field_to_mesh(&field);

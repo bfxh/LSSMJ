@@ -22,6 +22,21 @@ impl VoxelMode {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Backend {
+    Cpu,
+    Gpu,
+}
+
+impl Backend {
+    pub fn name(self) -> &'static str {
+        match self {
+            Backend::Cpu => "cpu",
+            Backend::Gpu => "gpu",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Grid {
     pub n: u32,
@@ -80,6 +95,7 @@ impl Grid {
 #[derive(Clone, Debug)]
 pub struct VoxelizeOptions {
     pub mode: VoxelMode,
+    pub backend: Backend,
     pub n: u32,
     pub padding: u32,
     /// 密度场：阈值 = iso_frac × 正密度的 99.9 分位；0 表示使用 `iso_abs`。
@@ -104,6 +120,7 @@ impl Default for VoxelizeOptions {
     fn default() -> Self {
         Self {
             mode: VoxelMode::Density,
+            backend: Backend::Cpu,
             n: 64,
             padding: 3,
             iso_frac: 0.65,
@@ -124,6 +141,7 @@ pub struct Field {
     pub values: Vec<f32>,
     pub grid: Grid,
     pub mode: VoxelMode,
+    pub backend: Backend,
     /// 密度模式=实际阈值；面元模式=0。
     pub iso: f32,
     /// 被场覆盖（密度 > iso / TSDF 权重足够）的体素数。
@@ -136,25 +154,45 @@ pub struct Field {
     pub bounds: Aabb,
 }
 
-pub fn voxelize(gaussians: &[Gaussian], opts: &VoxelizeOptions) -> Result<Field, String> {
+fn fit_inputs(gaussians: &[Gaussian], opts: &VoxelizeOptions) -> Result<(Grid, Aabb), String> {
     if gaussians.is_empty() {
         return Err("没有高斯可体素化".into());
     }
     let bounds = opts.aabb.unwrap_or_else(|| bounds_of(gaussians));
     let grid = Grid::fit(bounds, opts.n, opts.padding)?;
-    match opts.mode {
-        VoxelMode::Density => voxelize_density(gaussians, opts, grid, bounds),
-        VoxelMode::Surfel => voxelize_surfel(gaussians, opts, grid, bounds),
+    Ok((grid, bounds))
+}
+
+pub fn voxelize(gaussians: &[Gaussian], opts: &VoxelizeOptions) -> Result<Field, String> {
+    let (grid, bounds) = fit_inputs(gaussians, opts)?;
+    match opts.backend {
+        Backend::Cpu => match opts.mode {
+            VoxelMode::Density => voxelize_density(gaussians, opts, grid, bounds),
+            VoxelMode::Surfel => voxelize_surfel(gaussians, opts, grid, bounds),
+        },
+        Backend::Gpu => super::gpu::voxelize_gpu(gaussians, opts, grid, bounds),
     }
 }
 
-struct SplatRange {
-    lo: [u32; 3],
-    hi: [u32; 3],
-    empty: bool,
+/// 复用调用方提供的 GPU 设备（批处理/判据用；一次转换请用 [`voxelize`]）。
+pub fn voxelize_gpu_with(
+    headless: &crate::jfa::Headless,
+    gaussians: &[Gaussian],
+    opts: &VoxelizeOptions,
+) -> Result<Field, String> {
+    let (grid, bounds) = fit_inputs(gaussians, opts)?;
+    let mut opts = opts.clone();
+    opts.backend = Backend::Gpu;
+    super::gpu::voxelize_gpu_with(headless, gaussians, &opts, grid, bounds)
 }
 
-fn splat_range(grid: &Grid, center: [f32; 3], radius: [f32; 3]) -> SplatRange {
+pub(crate) struct SplatRange {
+    pub(crate) lo: [u32; 3],
+    pub(crate) hi: [u32; 3],
+    pub(crate) empty: bool,
+}
+
+pub(crate) fn splat_range(grid: &Grid, center: [f32; 3], radius: [f32; 3]) -> SplatRange {
     let n = grid.n as i64;
     let mut lo = [0u32; 3];
     let mut hi = [0u32; 3];
@@ -199,13 +237,13 @@ fn quantile(sorted: &[f32], q: f32) -> f32 {
 }
 
 #[derive(Clone, Copy)]
-struct Prepared {
-    mean: [f32; 3],
-    opacity: f32,
-    eigen: super::Eigen,
-    lam: [f32; 3],
-    radius: [f32; 3],
-    normal: [f32; 3],
+pub(crate) struct Prepared {
+    pub(crate) mean: [f32; 3],
+    pub(crate) opacity: f32,
+    pub(crate) eigen: super::Eigen,
+    pub(crate) lam: [f32; 3],
+    pub(crate) radius: [f32; 3],
+    pub(crate) normal: [f32; 3],
 }
 
 #[derive(Clone, Copy)]
@@ -263,7 +301,11 @@ where
     })
 }
 
-fn prepare_density(gaussians: &[Gaussian], grid: &Grid, opts: &VoxelizeOptions) -> Vec<Prepared> {
+pub(crate) fn prepare_density(
+    gaussians: &[Gaussian],
+    grid: &Grid,
+    opts: &VoxelizeOptions,
+) -> Vec<Prepared> {
     let min_var = (opts.kernel_clamp_cells.max(0.001) * grid.h).powi(2);
     let mut out = Vec::with_capacity(gaussians.len());
     for g in gaussians {
@@ -293,7 +335,7 @@ fn prepare_density(gaussians: &[Gaussian], grid: &Grid, opts: &VoxelizeOptions) 
     out
 }
 
-fn prepare_surfel(
+pub(crate) fn prepare_surfel(
     gaussians: &[Gaussian],
     grid: &Grid,
     opts: &VoxelizeOptions,
@@ -508,6 +550,17 @@ fn voxelize_density(
         return Err("没有有效的高斯（NaN/Inf/非正不透明度）".into());
     }
     let (density, workers) = parallel_splat_density(&prepared, &grid, opts.threads);
+    density_post(density, opts, grid, bounds, workers, Backend::Cpu)
+}
+
+pub(crate) fn density_post(
+    density: Vec<f32>,
+    opts: &VoxelizeOptions,
+    grid: Grid,
+    bounds: Aabb,
+    workers: usize,
+    backend: Backend,
+) -> Result<Field, String> {
     let mut positive: Vec<f32> = density.iter().copied().filter(|v| *v > 0.0).collect();
     if positive.is_empty() {
         return Err("密度场全为 0（高斯是否落在域外？）".into());
@@ -547,6 +600,7 @@ fn voxelize_density(
         values,
         grid,
         mode: VoxelMode::Density,
+        backend,
         iso,
         observed,
         sealed_interior,
@@ -566,6 +620,18 @@ fn voxelize_surfel(
         return Err("没有有效的高斯（NaN/Inf/非正不透明度）".into());
     }
     let (num, den, workers) = parallel_splat_surfel(&prepared, &grid, clamp_abs, opts.threads);
+    surfel_post(num, den, opts, grid, bounds, workers, Backend::Cpu)
+}
+
+pub(crate) fn surfel_post(
+    num: Vec<f32>,
+    den: Vec<f32>,
+    opts: &VoxelizeOptions,
+    grid: Grid,
+    bounds: Aabb,
+    workers: usize,
+    backend: Backend,
+) -> Result<Field, String> {
     let count = (grid.n * grid.n * grid.n) as usize;
     let outside = 3.0 * grid.h;
     let mut values = Vec::with_capacity(count);
@@ -592,6 +658,7 @@ fn voxelize_surfel(
         values,
         grid,
         mode: VoxelMode::Surfel,
+        backend,
         iso: 0.0,
         observed,
         sealed_interior,

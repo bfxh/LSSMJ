@@ -14,6 +14,7 @@ LSSMJ gauss2mesh · 高斯体素 → 网格
 常用选项：
   --grid <N>             体素分辨率 8..256（默认 64）
   --threads <N>          splat 线程数（默认 0=自动；1=单线程参照）
+  --gpu                  GPU splat（定点整数原子；失败回退 CPU；忽略 --threads）
   --mode <auto|density|surfel>（默认 auto）
   --iso <auto|数值>      密度阈值；auto = 0.65 × 正密度 99.9 分位
   --prune-opacity <f>    不透明度下限（默认 0.05）
@@ -57,6 +58,7 @@ impl ModeSel {
 pub(crate) struct Config {
     pub(crate) grid: u32,
     pub(crate) threads: usize,
+    pub(crate) gpu: bool,
     pub(crate) mode: ModeSel,
     pub(crate) iso: Option<f32>,
     pub(crate) prune_opacity: f32,
@@ -80,6 +82,7 @@ impl Default for Config {
         Self {
             grid: 64,
             threads: 0,
+            gpu: false,
             mode: ModeSel::Auto,
             iso: None,
             prune_opacity: 0.05,
@@ -103,7 +106,7 @@ impl Default for Config {
 pub(crate) fn is_bool_flag(name: &str) -> bool {
     matches!(
         name,
-        "no-html" | "hollow" | "raw-scale" | "raw-opacity" | "quiet" | "help"
+        "no-html" | "hollow" | "raw-scale" | "raw-opacity" | "quiet" | "help" | "gpu"
     )
 }
 
@@ -186,6 +189,7 @@ pub(crate) fn parse_config(
         cfg.seed = v.parse().map_err(|_| format!("--seed 不是整数：{v}"))?;
     }
     cfg.seal = !bools.contains("hollow");
+    cfg.gpu = bools.contains("gpu");
     cfg.raw_scale = bools.contains("raw-scale");
     cfg.raw_opacity = bools.contains("raw-opacity");
     cfg.quiet = bools.contains("quiet");
