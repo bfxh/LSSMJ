@@ -6,6 +6,8 @@ dist/
 node_modules/
 __pycache__/
 *.pyc
+# gauss2mesh 的 demo/convert 默认输出
+crates/conv-core/out/
 # 大件压缩包
 *.zip
 *.tar.gz

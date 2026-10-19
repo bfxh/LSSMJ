@@ -192,6 +192,9 @@
 7. 3DGS 锚为 v1 摘要口径；后续演进（3DGRT/3DGUT 等）未覆盖。
 8. bevy_gaussian_splatting / wgpu-3dgs-core / meshopt-rs / nanovdb-rs 经 gh api 只抓了 README + 两个源文件
    （@sha 见 `targets-lock.json`），未克隆全树；源码行仅覆盖 README/模块清单。
+9. **离线实现批（2026-10-20）**：高斯→体素（密度 / 朝向面元 TSDF）→ Surface Nets 的 CPU 离线工具已落地
+   （`crates/conv-core` + `gauss2mesh`），路线、实测与 UX 见 [`gaussian-voxel-to-mesh.md`](gaussian-voxel-to-mesh.md)；
+   结论不变：**仍不是逐帧实时**（64³/20k 高斯 ~0.2–0.5 s，体素化约占 90%），GPU splat 是下一片。
 
 ## 7. 复算命令
 
