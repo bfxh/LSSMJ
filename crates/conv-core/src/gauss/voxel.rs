@@ -964,3 +964,6 @@ mod bench_prepare {
         );
     }
 }
+
+#[cfg(test)]
+mod bench_tiles;
