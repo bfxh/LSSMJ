@@ -271,3 +271,81 @@ fn eigen_and_flatness() {
     let iso = blob_sphere_gaussians(100, R, 0.05, 0.9, 1);
     assert!(median_flatness(&iso) < 1.01);
 }
+
+#[test]
+#[ignore = "diagnostic prep breakdown"]
+fn bench_prep_breakdown() {
+    use std::hint::black_box;
+    use std::time::Instant;
+    let gs = sphere_gaussians(100_000, R, 0.99);
+    let t = Instant::now();
+    for g in &gs {
+        black_box(g.covariance());
+    }
+    let cov_ms = t.elapsed().as_secs_f64() * 1e3;
+    let t = Instant::now();
+    for g in &gs {
+        black_box(g.eigen());
+    }
+    let eig_ms = t.elapsed().as_secs_f64() * 1e3;
+    println!(
+        "n={} covariance={cov_ms:.1}ms eigen={eig_ms:.1}ms jacobi≈{:.1}ms ({:.1}%)",
+        gs.len(),
+        eig_ms - cov_ms,
+        (eig_ms - cov_ms) / eig_ms * 100.0
+    );
+}
+
+#[test]
+fn simd_prep_close_to_scalar() {
+    let gs = sphere_gaussians(4_000, R, 0.99);
+    let mut base = opts(VoxelMode::Surfel, 48);
+    base.threads = 8;
+    let a = voxelize(&gs, &base).expect("scalar surfel");
+    let mut b = base.clone();
+    b.simd_prep = true;
+    let c = voxelize(&gs, &b).expect("simd surfel");
+    assert!(!a.simd_prep && c.simd_prep);
+    let diff = a
+        .values
+        .iter()
+        .zip(&c.values)
+        .map(|(x, y)| (x - y).abs())
+        .fold(0.0f32, f32::max);
+    let ma = field_to_mesh(&a);
+    let mc = field_to_mesh(&c);
+    let rel = ((ma.stats.volume - mc.stats.volume) / ma.stats.volume).abs();
+    println!(
+        "simd surfel: hash {} -> {} max_diff={diff:.6} vol {:.5}->{:.5} rel={rel:.5} chi {}->{}",
+        ma.stats.hash, mc.stats.hash, ma.stats.volume, mc.stats.volume, ma.stats.chi, mc.stats.chi
+    );
+    assert!(rel < 0.02, "surfel simd volume rel {rel}");
+    assert_eq!(ma.stats.chi, mc.stats.chi);
+    assert_eq!(ma.stats.components, mc.stats.components);
+
+    let gs = blob_sphere_gaussians(3_000, R, 0.05, 0.95, 7);
+    let mut base = opts(VoxelMode::Density, 48);
+    base.threads = 8;
+    let a = voxelize(&gs, &base).expect("scalar density");
+    let mut b = base.clone();
+    b.simd_prep = true;
+    let c = voxelize(&gs, &b).expect("simd density");
+    let ma = field_to_mesh(&a);
+    let mc = field_to_mesh(&c);
+    let rel = ((ma.stats.volume - mc.stats.volume) / ma.stats.volume).abs();
+    println!(
+        "simd density: hash {} -> {} iso {:.5}->{:.5} vol {:.5}->{:.5} rel={rel:.5} chi {}->{}",
+        ma.stats.hash,
+        mc.stats.hash,
+        a.iso,
+        c.iso,
+        ma.stats.volume,
+        mc.stats.volume,
+        ma.stats.chi,
+        mc.stats.chi
+    );
+    assert!((a.iso - c.iso).abs() < 0.01);
+    assert!(rel < 0.02, "density simd volume rel {rel}");
+    assert_eq!(ma.stats.chi, mc.stats.chi);
+    assert_eq!(ma.stats.components, mc.stats.components);
+}

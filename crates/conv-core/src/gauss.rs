@@ -8,6 +8,7 @@
 pub mod gpu;
 pub mod mesh;
 pub mod ply;
+mod simd;
 pub mod voxel;
 
 use std::f32::consts::PI;

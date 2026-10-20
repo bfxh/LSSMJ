@@ -3,7 +3,7 @@
 > **这份文档是什么**：只回答一条边——**高斯体素怎么转网格，以及转换工具的 UX 该怎么做**。
 > 范围口径来自用户 2026-10-20："你就只研究研究高斯体素怎么转网格和 UX……而且要做出来"。
 > **实现位置**：`crates/conv-core/src/gauss.rs` + `src/gauss/{ply,voxel,mesh,gpu}.rs` +
-> `src/gauss/{splat_density,splat_surfel}.wgsl` + `src/bin/gauss2mesh/{main,args,report,html}.rs` +
+> `src/gauss/{splat_density,splat_surfel}.wgsl` + `src/gauss/simd.rs` + `src/bin/gauss2mesh/{main,args,report,html}.rs` +
 > `src/viewer.html`；机器判据在 `tests/gauss_leg.rs` + `tests/gauss_gpu.rs` + `tests/cli_batch.rs`。
 > **证据纪律**：设计判决只依赖本仓账本锚（`W15A-*`/`W15C-*`）与**本地实测**；
 > 2025–2026 的新论文只作 web 旁证，未入账，不单独支撑设计判决（本仓 `web` 纪律）。
@@ -132,6 +132,7 @@ f(p)   = num/den  if den ≥ min_weight else 未知
 | `--threads N` | 0（自动） | splat 线程数；0=`available_parallelism()`，1=逐位参照。z-slab 分块，无原子/锁 |
 | `--gpu` | 关 | GPU splat（定点整数原子）；失败回退 CPU；忽略 `--threads`；单次转换受设备 init 影响 |
 | `--bins3d` | 关 | CPU splat 走 3D tile 分桶（20k 1.14–1.25×）；默认 z-slab；GPU 忽略 |
+| `--simd-prep` | 关 | 可选 AVX2 cyclic eigen prep；默认标量逐位；opt-in 改哈希；当前规模无端到端收益 |
 | `--prune-opacity` | 0.05 | 丢低不透明度 floaters；太高会削掉真实薄结构 |
 | `--iso` | auto（0.65×q99.9） | 密度阈值；**低=胖/易闭合，高=紧/易破壳**；surfel 忽略 |
 | `--padding` | 3 | 域边界留白格；覆盖 3h 采样带宽，防止表面被截断 |
@@ -187,6 +188,20 @@ GPU 侧不直接用浮点原子（WGSL 无 `atomicAdd<f32>`，且浮点归约顺
 端到端 128³/20k（3 次中位数）：球 166.4→**141.1 ms**、blobs 402.9→**367.5 ms**；
 球/环面/blobs/PLY/GPU 的所有既有哈希不变（`cd8f…`、`ab6d…`、`13af…`、`c66e…`、`865a…`）。
 分桶只按 z；x/y 仍是单高斯全 bbox。另提供 `--bins3d` 3D tile 可选档（默认关，默认仍 z-slab；见 §6.4）。
+
+### 3.9 可选 SIMD prep（`--simd-prep`，默认关）
+
+`gauss/simd.rs`：固定序列 cyclic Jacobi（(0,1)(0,2)(1,2) × 5 sweeps）+ 8 路 AVX2；
+非 x86_64 或无 AVX2 时走标量 cyclic。默认仍是自适应 Jacobi 的标量逐位路径。
+
+- 判据：`eigen_batch` 对自适应 eigen 的特征值容差 1e-6；`simd_prep_close_to_scalar` 对拍
+  volume/χ/iso（surfel 的 mesh 哈希允许变，density 在测试场景哈希相同）。
+- 实测 100k 高斯：`eigen_batch` 4.6 ms vs 自适应 6.3 ms（**1.37×**）；但完整 prep
+  SIMD 5.4 ms vs 24T 标量 5.4 ms（density）、6.0 vs 5.3 ms（surfel）——现有 24T 标量已在
+  噪声底，**当前规模没有端到端收益**。128³/20k vox 球 154.6→153.0 ms、blobs 384.6→371.4 ms
+  （噪声/3% 内），也说明 prep 不是瓶颈。
+- 因此保留为 opt-in 实验档（默认关，不推荐当前规模使用）；若后续 1M 高斯/融合 covariance+eigen
+  的 AVX2 prep 有实测收益，再考虑转正。
 
 ## 4. 关键工程判决（每条都有实测或明确理由）
 
@@ -265,7 +280,7 @@ GPU（`--gpu`；设备 init 单独计入总计）：
 ### 5.4 JSON 报告字段
 
 `mode_requested / mode_used / auto_reason / fallback / gpu_fallback / iso_retry / has_normals / flatness_p50 /
-gaussians{input,kept,dropped_*} / grid{n,h} / field{mode,backend,bins3d,iso,threads,observed,sealed_interior} /
+gaussians{input,kept,dropped_*} / grid{n,h} / field{mode,backend,bins3d,simd_prep,iso,threads,observed,sealed_interior} /
 mesh{vertices,triangles,components,chi,volume,boundary_touch,hash,bounds} /
 timings_ms{load,prune,voxel,mesh,write,gpu_init} / warnings[]`。
 
@@ -385,6 +400,18 @@ q999/iso/网格哈希不变；128³ density 的排序段不再是瓶颈。密封
 端到端 128³/20k（3 次中位数，vox）：球 141.1→**126.9 ms**、blobs 351.4→**308.1 ms**，
 网格哈希不变（`ab6d…` / `c66e…`）。
 
+### 6.5 SIMD prep 试验（`--simd-prep`，默认关）
+
+| 项（100k 高斯） | 标量/24T | SIMD | 变化 |
+| --- | --- | --- | --- |
+| eigen_batch（1T vs 自适应 1T） | 6.3 ms | 4.6 ms | 1.37× |
+| prepare density | 5.4 ms | 5.4 ms | 1.00× |
+| prepare surfel | 5.3 ms | 6.0 ms | 0.88× |
+
+eigen 内核确实快了 1.37×，但完整 prep 已被 24T 标量压到 5–6 ms，SIMD 并行分块后与标量持平/略慢；
+128³/20k 的端到端差异在噪声/3% 内。结论：**当前规模不推荐**，默认标量逐位不变；`--simd-prep`
+保留为实验档。surfel 的 mesh 哈希会因 eigen 末位差异改变，density 在测试场景不变。
+
 ## 7. 限制与否证条件（不许当结论）
 
 1. **CPU 多线程，非实时**：64³/20k 高斯总耗时约 0.04–0.07 s（24 线程；1T 参照 0.17–0.5 s）；
@@ -409,7 +436,8 @@ q999/iso/网格哈希不变；128³ density 的排序段不再是瓶颈。密封
     重名 stem 自动 `_2`；首个文件仍付 init。
 13. **分桶只按 z，prep 的并行加速有上限**：x/y 仍扫单高斯全 bbox。3D tile 已作为
     `--bins3d` 可选档（默认关；20k 1.14–1.25×，100k 1.03–1.05×，逐位一致）。
-    100k 下 prep 只有 1.3–1.6×，eigen 是主要成本；更大 N 需要 AVX/SIMD 或减少特征分解。
+14. **AVX2 prep 当前没有端到端收益**：eigen_batch 1.37×，但 24T 标量 prep 已到 5–6 ms；
+    SIMD 并行后持平/略慢，且 opt-in 会改 surfel 哈希。保留 `--simd-prep` 实验档，默认标量。
 
 ## 8. 复算命令
 
@@ -469,8 +497,9 @@ CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- convert scene.ply --
 
 1. **自适应 iso**：按每个高斯中心的密度分位/局部块阈值，替代"全局 q99.9 + 失败重试"；
    判据：真实非均匀场景的重试率、体积误差、χ 稳定性。
-2. **3D tile 可选档已落**（`--bins3d`；20k 1.14–1.25×，100k 1.03–1.05×，逐位一致）；
-   下一步：AVX/SIMD prep、GPU 侧 iso/密封、更高分辨率/稀疏分块。
+2. **3D tile / SIMD prep 可选档已试验**：3D tile 有 20k 14–25% 收益（`--bins3d`），
+   SIMD prep 的 eigen 1.37× 但完整 prep 与 24T 持平（`--simd-prep` 实验档，默认关）。
+   下一步：GPU 侧 iso/密封、更高分辨率/稀疏分块；1M 高斯时再评估融合 AVX2 prep。
    单次转换仍被 ~1s 的 wgpu init 拖慢，不能把 GPU 当默认档。
 3. **稀疏分块**：256³/大场景的 1-voxel halo 无缝契约（T-GC-05）。
 4. **质量档**：DC/MT 对尖角/薄流的改善；需要薄流/尖特征测试对象（W15A-025 的教训：光滑球堆测不出差异）。

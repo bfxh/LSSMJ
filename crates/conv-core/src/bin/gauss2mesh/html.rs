@@ -16,12 +16,13 @@ pub(crate) fn write_html(
     let b = d.mesh.stats.bounds.unwrap_or_else(|| bounds_of(gaussians));
     let _ = write!(
         data,
-        "{{\n\"title\":{},\n\"subject\":{},\n\"stats\":{{\"mode\":{},\"backend\":{},\"bins3d\":{},\"grid\":{},\"workers\":{},\"vertices\":{},\"triangles\":{},\"volume\":{:.6},\"chi\":{},\"components\":{},\"observed\":{},\"sealed\":{},\"iso\":{:.6},\"hash\":\"{:016x}\"}},\n",
+        "{{\n\"title\":{},\n\"subject\":{},\n\"stats\":{{\"mode\":{},\"backend\":{},\"bins3d\":{},\"simd_prep\":{},\"grid\":{},\"workers\":{},\"vertices\":{},\"triangles\":{},\"volume\":{:.6},\"chi\":{},\"components\":{},\"observed\":{},\"sealed\":{},\"iso\":{:.6},\"hash\":\"{:016x}\"}},\n",
         jstr(d.title),
         jstr(d.subject),
         jstr(d.mode_used),
         jstr(d.field.backend.name()),
         d.field.bins3d,
+        d.field.simd_prep,
         d.field.grid.n,
         d.field.workers,
         d.mesh.stats.vertices,

@@ -388,6 +388,7 @@ fn convert_and_write(
     let mut voxel_opts = VoxelizeOptions {
         mode,
         bins3d: cfg.bins3d,
+        simd_prep: cfg.simd_prep,
         backend: if gpu_device.is_some() {
             Backend::Gpu
         } else {
@@ -486,7 +487,7 @@ fn convert_and_write(
         }
     }
     if !cfg.quiet {
-        let exec = match field.backend {
+        let mut exec = match field.backend {
             Backend::Gpu => {
                 if timings.gpu_init >= 0.5 {
                     format!("gpu (init {:.0} ms)", timings.gpu_init)
@@ -500,6 +501,9 @@ fn convert_and_write(
                 if field.bins3d { " +3dtile" } else { "" }
             ),
         };
+        if field.simd_prep {
+            exec.push_str(" +simdprep");
+        }
         stage(
             3,
             5,

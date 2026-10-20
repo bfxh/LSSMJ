@@ -100,6 +100,8 @@ pub struct VoxelizeOptions {
     pub backend: Backend,
     /// CPU splat 的 3D tile 可选档（默认 z-slab；GPU 忽略）。
     pub bins3d: bool,
+    /// 可选 SIMD prep（cyclic Jacobi + AVX2；默认标量逐位不变，opt-in 改哈希）。
+    pub simd_prep: bool,
     pub n: u32,
     pub padding: u32,
     /// 密度场：阈值 = iso_frac × 正密度的 99.9 分位；0 表示使用 `iso_abs`。
@@ -126,6 +128,7 @@ impl Default for VoxelizeOptions {
             mode: VoxelMode::Density,
             backend: Backend::Cpu,
             bins3d: false,
+            simd_prep: false,
             n: 64,
             padding: 3,
             iso_frac: 0.65,
@@ -149,6 +152,8 @@ pub struct Field {
     pub backend: Backend,
     /// 本次是否走了 CPU 3D tile 可选档。
     pub bins3d: bool,
+    /// 本次 prep 是否走了可选 SIMD/cyclic 路径。
+    pub simd_prep: bool,
     /// 密度模式=实际阈值；面元模式=0。
     pub iso: f32,
     /// 被场覆盖（密度 > iso / TSDF 权重足够）的体素数。
@@ -345,13 +350,7 @@ fn prepare_density_one(g: &Gaussian, min_var: f32) -> Prepared {
     }
 }
 
-fn prepare_surfel_one(
-    g: &Gaussian,
-    centroid: [f32; 3],
-    normal_sigma: f32,
-    tangent_floor: f32,
-) -> Prepared {
-    let eigen = g.eigen();
+fn surfel_normal(g: &Gaussian, eigen: &super::Eigen, centroid: [f32; 3]) -> [f32; 3] {
     let normal = match g.normal {
         Some(n) => normalize_vec(n),
         None => {
@@ -368,7 +367,17 @@ fn prepare_surfel_one(
             }
         }
     };
-    let normal = normalize_vec(normal);
+    normalize_vec(normal)
+}
+
+fn prepare_surfel_one(
+    g: &Gaussian,
+    centroid: [f32; 3],
+    normal_sigma: f32,
+    tangent_floor: f32,
+) -> Prepared {
+    let eigen = g.eigen();
+    let normal = surfel_normal(g, &eigen, centroid);
     let lam = [
         eigen.values[0].max(normal_sigma),
         eigen.values[1].max(tangent_floor),
@@ -421,12 +430,137 @@ where
     })
 }
 
+fn simd_prepared_density(filtered: &[&Gaussian], min_var: f32) -> Vec<Prepared> {
+    let covs: Vec<[[f32; 3]; 3]> = filtered.iter().map(|g| g.covariance()).collect();
+    let eigs = super::simd::eigen_batch(&covs);
+    let mut out = Vec::with_capacity(filtered.len());
+    for (g, eigen) in filtered.iter().zip(eigs) {
+        let lam = [
+            eigen.values[0].max(min_var),
+            eigen.values[1].max(min_var),
+            eigen.values[2].max(min_var),
+        ];
+        let radius = [
+            world_sigma(&eigen, lam, 0),
+            world_sigma(&eigen, lam, 1),
+            world_sigma(&eigen, lam, 2),
+        ];
+        out.push(Prepared {
+            mean: g.mean,
+            opacity: g.opacity.clamp(0.0, 1.0),
+            eigen,
+            lam,
+            radius,
+            normal: [0.0; 3],
+        });
+    }
+    out
+}
+
+fn prepare_density_simd(gaussians: &[Gaussian], min_var: f32, workers: usize) -> Vec<Prepared> {
+    let filtered: Vec<&Gaussian> = gaussians
+        .iter()
+        .filter(|g| g.is_finite() && g.opacity > 0.0)
+        .collect();
+    let n = filtered.len();
+    let workers = workers.min(n).max(1);
+    if workers <= 1 || n < 2048 {
+        return simd_prepared_density(&filtered, min_var);
+    }
+    let chunk_size = n.div_ceil(workers);
+    std::thread::scope(|s| {
+        let mut handles = Vec::new();
+        for chunk in filtered.chunks(chunk_size) {
+            handles.push(s.spawn(move || simd_prepared_density(chunk, min_var)));
+        }
+        let mut out = Vec::with_capacity(n);
+        for h in handles {
+            match h.join() {
+                Ok(v) => out.extend(v),
+                Err(_) => panic!("simd prepare worker panicked"),
+            }
+        }
+        out
+    })
+}
+
+fn simd_prepared_surfel(
+    filtered: &[&Gaussian],
+    centroid: [f32; 3],
+    normal_sigma: f32,
+    tangent_floor: f32,
+) -> Vec<Prepared> {
+    let covs: Vec<[[f32; 3]; 3]> = filtered.iter().map(|g| g.covariance()).collect();
+    let eigs = super::simd::eigen_batch(&covs);
+    let mut out = Vec::with_capacity(filtered.len());
+    for (g, eigen) in filtered.iter().zip(eigs) {
+        let normal = surfel_normal(g, &eigen, centroid);
+        let lam = [
+            eigen.values[0].max(normal_sigma),
+            eigen.values[1].max(tangent_floor),
+            eigen.values[2].max(tangent_floor),
+        ];
+        let radius = [
+            world_sigma(&eigen, lam, 0),
+            world_sigma(&eigen, lam, 1),
+            world_sigma(&eigen, lam, 2),
+        ];
+        out.push(Prepared {
+            mean: g.mean,
+            opacity: g.opacity.clamp(0.0, 1.0),
+            eigen,
+            lam,
+            radius,
+            normal,
+        });
+    }
+    out
+}
+
+fn prepare_surfel_simd(
+    gaussians: &[Gaussian],
+    centroid: [f32; 3],
+    normal_sigma: f32,
+    tangent_floor: f32,
+    workers: usize,
+) -> Vec<Prepared> {
+    let filtered: Vec<&Gaussian> = gaussians
+        .iter()
+        .filter(|g| g.is_finite() && g.opacity > 0.0)
+        .collect();
+    let n = filtered.len();
+    let workers = workers.min(n).max(1);
+    if workers <= 1 || n < 2048 {
+        return simd_prepared_surfel(&filtered, centroid, normal_sigma, tangent_floor);
+    }
+    let chunk_size = n.div_ceil(workers);
+    std::thread::scope(|s| {
+        let mut handles = Vec::new();
+        for chunk in filtered.chunks(chunk_size) {
+            handles.push(
+                s.spawn(move || simd_prepared_surfel(chunk, centroid, normal_sigma, tangent_floor)),
+            );
+        }
+        let mut out = Vec::with_capacity(n);
+        for h in handles {
+            match h.join() {
+                Ok(v) => out.extend(v),
+                Err(_) => panic!("simd prepare worker panicked"),
+            }
+        }
+        out
+    })
+}
+
 pub(crate) fn prepare_density(
     gaussians: &[Gaussian],
     grid: &Grid,
     opts: &VoxelizeOptions,
 ) -> Vec<Prepared> {
     let min_var = (opts.kernel_clamp_cells.max(0.001) * grid.h).powi(2);
+    if opts.simd_prep {
+        return prepare_density_simd(gaussians, min_var, opts.threads);
+    }
     parallel_prepare(gaussians, opts.threads, |g| prepare_density_one(g, min_var))
 }
 
@@ -457,6 +591,18 @@ pub(crate) fn prepare_surfel(
     let normal_sigma = (opts.normal_band_cells.max(0.25) * grid.h).powi(2);
     let tangent_floor = (0.25 * grid.h).powi(2);
     let clamp_abs = 3.0 * grid.h;
+    if opts.simd_prep {
+        return (
+            prepare_surfel_simd(
+                gaussians,
+                centroid,
+                normal_sigma,
+                tangent_floor,
+                opts.threads,
+            ),
+            clamp_abs,
+        );
+    }
     let out = parallel_prepare(gaussians, opts.threads, |g| {
         prepare_surfel_one(g, centroid, normal_sigma, tangent_floor)
     });
@@ -696,6 +842,7 @@ pub(crate) fn density_post(
         mode: VoxelMode::Density,
         backend,
         bins3d: backend == Backend::Cpu && opts.bins3d,
+        simd_prep: opts.simd_prep,
         iso,
         observed,
         sealed_interior,
@@ -759,6 +906,7 @@ pub(crate) fn surfel_post(
         mode: VoxelMode::Surfel,
         backend,
         bins3d: backend == Backend::Cpu && opts.bins3d,
+        simd_prep: opts.simd_prep,
         iso: 0.0,
         observed,
         sealed_interior,
@@ -942,6 +1090,24 @@ mod bench_prepare {
             t1 / t2
         );
 
+        let mut simd = many.clone();
+        simd.simd_prep = true;
+        let t = Instant::now();
+        let d3 = prepare_density(&gs, &grid, &simd);
+        let t3 = t.elapsed().as_secs_f64() * 1e3;
+        assert_eq!(d3.len(), d1.len());
+        for (x, y) in d1.iter().zip(&d3) {
+            for k in 0..3 {
+                let scale = x.eigen.values[k].abs().max(1.0);
+                assert!((x.eigen.values[k] - y.eigen.values[k]).abs() <= 1e-6 * scale);
+            }
+        }
+        println!(
+            "prepare density SIMD n={} {t3:.1}ms vs 1T {t1:.1}ms / 24T {t2:.1}ms speedup={:.2}x",
+            gs.len(),
+            t2 / t3
+        );
+
         let t = Instant::now();
         let (s1, _) = prepare_surfel(&gs, &grid, &one);
         let t1 = t.elapsed().as_secs_f64() * 1e3;
@@ -953,6 +1119,24 @@ mod bench_prepare {
             "prepare surfel  n={} 1T={t1:.1}ms 24T={t2:.1}ms ratio={:.2}x",
             gs.len(),
             t1 / t2
+        );
+
+        let mut simd = many.clone();
+        simd.simd_prep = true;
+        let t = Instant::now();
+        let (s3, _) = prepare_surfel(&gs, &grid, &simd);
+        let t3 = t.elapsed().as_secs_f64() * 1e3;
+        assert_eq!(s3.len(), s1.len());
+        for (x, y) in s1.iter().zip(&s3) {
+            for k in 0..3 {
+                let scale = x.eigen.values[k].abs().max(1.0);
+                assert!((x.eigen.values[k] - y.eigen.values[k]).abs() <= 1e-6 * scale);
+            }
+        }
+        println!(
+            "prepare surfel  SIMD n={} {t3:.1}ms vs 1T {t1:.1}ms / 24T {t2:.1}ms speedup={:.2}x",
+            gs.len(),
+            t2 / t3
         );
 
         let chunks = chunk_ranges(128, 48);
