@@ -570,7 +570,7 @@ fn convert_and_write(
     }
     if mesher_gpu {
         warnings.push(
-            "GPU 网格为实验档：单次含管线编译，明显慢于 CPU（64³ 热态 24–31 ms vs CPU 4 ms）；默认用 CPU 网格"
+            "GPU 网格为实验档：热态仍慢于 CPU（64³ 13–15 ms vs 4 ms；128³ 96–183 ms vs 21 ms），首跑还含管线编译"
                 .into(),
         );
     }

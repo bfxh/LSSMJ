@@ -36,18 +36,7 @@ pub struct Mesh {
 /// GPU Surface Nets（`crate::gsn`）网格化。四边形槽位在 GPU 上按 atomicAdd 写入、顺序不定，
 /// 这里按三角形规范序排序后再算统计/哈希 ⇒ 同输入逐位一致。
 pub fn field_to_mesh_gpu(hd: &crate::jfa::Headless, field: &Field) -> Result<Mesh, String> {
-    // gsn 的索引缓冲按"每 cell 3 个四边形"预留；超过绑定上限时 wgpu 会 panic，
-    // 这里先拒绝，让调用方走显式 CPU 回退。
-    let idx_bytes = (field.grid.n as u64).pow(3) * 3 * 6 * 4;
-    let limit = hd.device.limits().max_storage_buffer_binding_size;
-    if idx_bytes > limit {
-        return Err(format!(
-            "GPU 网格索引缓冲 {:.1} MB 超过设备绑定上限 {:.1} MB",
-            idx_bytes as f64 / (1 << 20) as f64,
-            limit as f64 / (1 << 20) as f64
-        ));
-    }
-    let gsn = crate::gsn::surface_nets_gpu(hd, &field.values, field.grid.n);
+    let gsn = crate::gsn::surface_nets_gpu(hd, &field.values, field.grid.n)?;
     Ok(mesh_from_gsn(&gsn, &field.grid))
 }
 

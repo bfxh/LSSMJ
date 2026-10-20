@@ -35,9 +35,9 @@
    **17–103 ms**（64³/128³，20k 球），但 wgpu 设备初始化 **~0.9–1.1 s**，单次转换端到端仍慢于
    缓存的 CPU ⇒ 默认仍 CPU；GPU 是批处理/更高分辨率档，`voxelize_gpu_with(&Headless, …)` 是复用入口。
 10. **GPU 网格目前不划算**：复用仓内 `gsn` 后与 CPU 网格的三角形数/χ/顶点数完全一致
-   （同一场、体积差 ~1e-6），但 64³ 热态 24–31 ms vs CPU 3.6–4.3 ms，首跑还含管线编译；
-   128³ 的索引缓冲 144 MB 超过 wgpu 默认 128 MB binding 上限 ⇒ `--gpu-mesh` 只作实验档，
-   默认仍 CPU；转正需要"场留在 GPU + GPU compaction/scan"的一整片改造。
+   （同一场、体积差 ~1e-6）；索引缓冲改精确分配后 128³ 解除 128 MB binding 限制，
+   但 64³ 热态 13–15 ms vs CPU 3.7–3.8 ms，128³ 96–183 ms vs CPU ~21 ms，首跑还含管线编译
+   ⇒ `--gpu-mesh` 只作实验档，默认仍 CPU；转正需要"场留在 GPU + GPU compaction/scan"的改造。
 
 ## 1. 术语：三种"高斯体素"
 
@@ -135,7 +135,7 @@ f(p)   = num/den  if den ≥ min_weight else 未知
 | `--grid N` | 64 | 体素分辨率；N³。128³ 体素数 ×8，时间约 ×8；薄特征/小孔建议 128 |
 | `--threads N` | 0（自动） | splat 线程数；0=`available_parallelism()`，1=逐位参照。z-slab 分块，无原子/锁 |
 | `--gpu` | 关 | GPU splat+iso+密封（定点整数原子）；失败回退 CPU；忽略 `--threads`；单次转换受设备 init 影响 |
-| `--gpu-mesh` | 关 | GPU Surface Nets 实验档；64³ 热态 24–31 ms（CPU 4 ms），128³ 超 binding 上限显式回退 |
+| `--gpu-mesh` | 关 | GPU Surface Nets 实验档；64³ 热态 13–15 ms、128³ 96–183 ms（CPU 4/21 ms），通常更慢 |
 | `--bins3d` | 关 | CPU splat 走 3D tile 分桶（20k 1.14–1.25×）；默认 z-slab；GPU 忽略 |
 | `--simd-prep` | 关 | 可选 AVX2 cyclic eigen prep；默认标量逐位；opt-in 改哈希；当前规模无端到端收益 |
 | `--prune-opacity` | 0.05 | 丢低不透明度 floaters；太高会削掉真实薄结构 |
@@ -232,11 +232,16 @@ GPU 侧不直接用浮点原子（WGSL 无 `atomicAdd<f32>`，且浮点归约顺
   按字典序排序，最后算体积/χ/哈希 ⇒ 同输入逐位一致。
 - 绕序由有符号体积校正；法线用面积加权的面法线（与 CPU 版的 SDF 梯度法线不同）。
 - 判据（48³，同一 GPU 场）：三角形数、χ、分量、顶点数与 CPU 完全一致，体积相对差 ~1e-6；
-  两次 GPU 网格哈希相同。64³ 对拍也保持三角形数/χ 一致。
-- **不推荐**：64³ 热态 24–31 ms（CPU fast-surface-nets 3.6–4.3 ms），首跑还含管线编译
-  ~460 ms。瓶颈是 gsn 读回 n³ 稀疏槽位（pos 16 B/cell、flag 4 B/cell、idx 最坏 72 B/cell）；
-  128³ 的索引缓冲 144 MB 超过 wgpu 默认 128 MB binding 上限，`field_to_mesh_gpu` 返回
-  Err，CLI 显式回退 CPU 网格（最终哈希与纯 CPU 路径相同）。
+  两次 GPU 网格哈希相同。64³/128³ 对拍也保持三角形数/χ 一致（128³ 体积差 ~1e-6）。
+- **索引缓冲精确分配**：`gsn` 以前按"每 cell 3 四边形"预分配 18·n³ 字节，128³ = 144 MB，
+  超过 wgpu 默认 128 MB binding 上限。现在宿主先按与 shader 相同的判据（三条轴边 + 同样
+  边界限制）数一遍 sign-changing edge，再按实际四边形数分配：128³ 球降到 ~1.6 MB
+  （density 139,248 quads）/ ~3.3 MB（surfel 135,840 quads），128³ 可运行；
+  GPU 计数与 CPU 预算不一致时显式报错。
+- **仍不推荐**：64³ 热态 13–15 ms（CPU fast-surface-nets 3.7–3.8 ms），首跑还含管线编译
+  ~460 ms；128³ 热态 96 ms（density）/ 183 ms（surfel），CPU 约 21 ms。瓶颈变成 gsn 的
+  n³ 稀疏槽位读回（pos 16 B/cell、flag 4 B/cell）与全格顶点生成；256³ 的 pos/flag 缓冲
+  268 MB/67 MB 仍会超过 128 MB binding 上限，`field_to_mesh_gpu` 显式返回 Err。
 - 要转正需要"场留在 GPU + GPU compaction/scan + 只回读压缩结果"的一整片改造；
   当前保留为库侧实验入口与 `--gpu-mesh` opt-in，默认 CPU 网格不变。
 
@@ -463,13 +468,15 @@ eigen 内核确实快了 1.37×，但完整 prep 已被 24T 标量压到 5–6 m
 | n / 场景 | CPU 网格 | GPU 网格（热态） | GPU 网格（首跑） | 结果 |
 | --- | --- | --- | --- | --- |
 | 48³ / 4k surfel | — | — | — | tri 14,880 一致，χ=2，vol 差 1e-6 |
-| 64³ / 20k density | 3.8 ms | **27.1 ms** | 460 ms | tri 31,584 一致，χ=2 |
-| 64³ / 20k surfel | 3.7–4.1 ms | **24.3–26.2 ms** | — | tri 30,144 一致，χ=2 |
-| 128³ / 20k 任一模态 | 20.9–24.1 ms | 跳过 | — | idx 缓冲 144 MB > 128 MB binding 上限，显式回退 CPU |
+| 64³ / 20k density | 3.7 ms | **13.3 ms** | 460 ms | tri 31,584 一致，χ=2 |
+| 64³ / 20k surfel | 3.8 ms | **15.3 ms** | — | tri 30,144 一致，χ=2 |
+| 128³ / 20k density | 21.4 ms | **95.6 ms** | — | tri 139,248 一致，χ=2，vol 差 2e-6 |
+| 128³ / 20k surfel | 20.9 ms | **182.8 ms** | 111.5 ms（CLI 单次） | tri 135,840 一致，χ=2，vol 差 1e-6 |
 
-原因：`gsn` 的槽位缓冲是 n³ 稀疏布局（pos 16 B/cell、flag 4 B/cell、索引最坏 72 B/cell），
-每次网格化要建 3 个大缓冲并回读；CPU fast-surface-nets 只处理表面局部。当前 gsn 形态
-不适合接到本管线，**不推荐**；保留 `--gpu-mesh` 作为实验入口，默认 CPU 网格不变。
+索引缓冲改为**按 CPU 预数的实际四边形数精确分配**（此前最坏 18·n³ = 144 MB @128³，
+超过 128 MB binding 上限；精确分配后 128³ 球仅 ~1.6–3.3 MB）。剩余成本是 gsn 的 n³
+稀疏槽位：pos 16 B/cell、flag 4 B/cell 的全格生成与回读；256³ 仍会超限并显式回退。
+当前 gsn 形态不适合接到本管线，**不推荐**；保留 `--gpu-mesh` 作为实验入口，默认 CPU 网格不变。
 
 ## 7. 限制与否证条件（不许当结论）
 
@@ -499,9 +506,10 @@ eigen 内核确实快了 1.37×，但完整 prep 已被 24T 标量压到 5–6 m
 14. **AVX2 prep 当前没有端到端收益**：eigen_batch 1.37×，但 24T 标量 prep 已到 5–6 ms；
     SIMD 并行后持平/略慢，且 opt-in 会改 surfel 哈希。保留 `--simd-prep` 实验档，默认标量。
 15. **GPU 网格是实验档，不是加速档**：`field_to_mesh_gpu`/`--gpu-mesh` 复用 `gsn` 的 n³ 稀疏
-    槽位缓冲，64³ 热态 24–31 ms（CPU 3.6–4.3 ms），首跑含管线编译 ~460 ms；128³ 索引缓冲
-    144 MB 超过默认 128 MB binding 上限，显式回退 CPU。法线是面积加权面法线，不是 SDF 梯度。
-    转正前提是 GPU compaction/scan + 场留 GPU；在此之前不要把它写进默认档或性能宣传。
+    槽位缓冲，64³ 热态 13–15 ms（CPU 3.7–3.8 ms），128³ 96–183 ms（CPU ~21 ms），首跑含
+    管线编译 ~460 ms。索引缓冲已按 CPU 预数精确分配（128³ 不再触发 binding 上限；256³ 的
+    pos/flag 缓冲仍超限并显式回退）。法线是面积加权面法线，不是 SDF 梯度。转正前提是
+    GPU compaction/scan + 场留 GPU；在此之前不要把它写进默认档或性能宣传。
 
 ## 8. 复算命令
 
@@ -567,8 +575,8 @@ CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- convert scene.ply --
    判据：真实非均匀场景的重试率、体积误差、χ 稳定性。
 2. **3D tile / SIMD prep 可选档已试验**：3D tile 有 20k 14–25% 收益（`--bins3d`），
    SIMD prep 的 eigen 1.37× 但完整 prep 与 24T 持平（`--simd-prep` 实验档，默认关）。
-   GPU 侧 iso/密封已落地（§3.7/§6.2）；GPU 网格已试但不划算（§3.10/§6.6），
-   转正需先做 GPU compaction/scan；下一步：256³ 稀疏分块、GPU 网格的缓冲级改造；
+   GPU 侧 iso/密封已落地（§3.7/§6.2）；GPU 网格已试但不划算（§3.10/§6.6），索引缓冲精确
+   分配已解除 128³ binding 限制，但热态仍慢 5–9×；下一步：256³ 稀疏分块、GPU 网格的缓冲级改造；
    1M 高斯时再评估融合 AVX2 prep。单次转换仍被 ~1s 的 wgpu init 拖慢，不能把 GPU 当默认档。
 3. **稀疏分块**：256³/大场景的 1-voxel halo 无缝契约（T-GC-05）。
 4. **质量档**：DC/MT 对尖角/薄流的改善；需要薄流/尖特征测试对象（W15A-025 的教训：光滑球堆测不出差异）。
