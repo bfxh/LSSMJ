@@ -727,13 +727,13 @@ sphere/torus/blobs 单测同样零漏选。模块只负责定位；下一步才�
 
 ### 6.16 候选块细 splat + halo 网格（`SparseDensity`，2026-10-20）
 
-`SparseDensity::build(gaussians, opts, fine_grid, blocks, iso)`：
+`SparseDensity::build(gaussians, opts, fine_grid, blocks, iso, seal)`：
 
 1. 只对 `SurfaceBlocks` 候选块分配 (B+2)³ halo 场；按 Gaussian 的细 splat 范围 + 1 格
    构建块→Gaussian bin，只 splat 与 halo 相交的高斯。
 2. 每块用 `fast_surface_nets` 生成 local cells 0..B（覆盖 global x0−1..x0+B−1），
    顶点按全局 cell key 去重、四边形按 4 cell 规范键去重 ⇒ halo 拼接无缝。
-3. 未知角点当前一律 +outside（hollow 语义）；稀疏内部密封（细 flood fill）尚未实现。
+3. `seal=false` 未知角点一律 +outside（hollow 语义）；`seal=true` 走 §6.17 的稀疏密封。
 
 判据（与 dense hollow 对拍）：
 
@@ -742,8 +742,37 @@ sphere/torus/blobs 单测同样零漏选。模块只负责定位；下一步才�
 | blobs 128³ b=16 | 43,920 / 0.43488 / −6 | 43,920 / 0.43488 / −6 | 64 (12.5%) | **逐项一致** |
 | blobs 256³ b=16 | 184,732 / 0.54887 / 4 | 184,732 / 0.54887 / 4 | 278 (6.8%) | **逐项一致** |
 
-256³ 实测：dense hollow 592.9 ms；sparse detect 18.5 + build 493.6 + mesh 41.2 = **553.3 ms**，
-内存从整格 4096 块降到 278 块。当前只支持 density；solid 密封与 surfel 稀疏是下一片。
+256³ 实测（同日复跑，数值有 ±20% 抖动）：dense hollow 495.4 ms；sparse detect 13.0 +
+build 499.5 + mesh 39.3 = **551.8 ms**，内存从整格 4096 块降到 278 块。
+
+### 6.17 稀疏内部密封与 surfel 稀疏路径（2026-10-20）
+
+`seal_blocks` 对 density / surfel 共用，差别只在“已知”判据：
+
+- density：`value < 0` 为已知；surfel：`den ≥ min_weight && den > 0` 的 known 掩码为已知。
+- 块级分类：活跃块 = 2；非活跃块取块范围内粗场角点全负 ⇒ 1（内部屏障），否则 0（未知）。
+- 从格边界对 class 0 块做 6 邻域泛洪，得到“外部空块”；未被泛洪到的空块视为内部。
+- 细网格：活跃块内未知角点按 6 邻接播种（域外/外部空块 → 外，内部空块 → 内），
+  再在活跃块之间对未知角点做 BFS；已知值是屏障。未知角点最终写 `±outside`
+  （density 的 outside 由 iso 推，surfel 取 `3h`）。
+
+判据：solid 与 dense 密封对拍；surfel hollow 与 dense hollow 逐位对拍：
+
+| 场景 | dense tri / vol / χ / comp | sparse tri / vol / χ / comp | 候选块 | 结果 |
+| --- | --- | --- | --- | --- |
+| density blobs 128³ solid | 24,316 / 1.96549 / 2 / 1 | 24,316 / 1.96548 / 2 / 1 | 64 (12.5%) | 体积相对误差 <1e-5 |
+| surfel sphere 128³ hollow | 255,552 / 0.30904 / 4 / 2 | 255,552 / 0.30904 / 4 / 2 | 376 (73.4%) | **逐项一致** |
+| surfel torus 128³ hollow | 150,768 / 0.20014 / 0 / 2 | 150,768 / 0.20014 / 0 / 2 | 216 (42.2%) | **逐项一致** |
+| surfel sphere 128³ solid | 135,840 / 1.77618 / 2 / 1 | 135,840 / 1.77618 / 2 / 1 | 328 (64.1%) | **逐项一致** |
+
+256³ surfel hollow（60k 球）：dense 894.5 ms；sparse detect 53.6 + build 683.7 +
+mesh 293.1 = **1030.4 ms**，候选 1816 (44.3%)，tri/vol/χ 逐项一致。
+
+**结论**：稀疏路径当前是**内存档**，不是加速档。density 256³ 的 build 已与 dense
+整格持平（块 halo 重复 splat 抵消了少扫的收益），surfel 因候选块占比高（44–73%）
+反而慢 ~15%。要变成加速档，下一步要么降低候选带（更准的粗场/更薄的 halo），
+要么把“候选块 + 细 splat”搬到 GPU 的稀疏 dispatch；在此之前默认路径仍是稠密。
+
 
 ## 7. 限制与否证条件（不许当结论）
 
@@ -751,6 +780,8 @@ sphere/torus/blobs 单测同样零漏选。模块只负责定位；下一步才�
    128³ 已测（§3.8/§6.2），逐帧实时仍不成立。GPU 路径已落地（整数原子 + GPU iso/密封），
    但默认档仍是 CPU；CPU 多线程版继续作 GPU 的逐位参照。
 2. **稠密 n³**：256³ = 6700 万格，内存与遍历都上不去；量产要走稀疏分块 + 1-voxel halo（T-GC-05，`W15A-034/035`）。
+   稀疏库路径已落地（`SurfaceBlocks` + `SparseDensity`/`SparseSurfel`，§6.15–6.17），但尚未接 CLI，
+   且当前是内存档不是加速档（§6.17 结论）。
 3. **只读标准 3DGS PLY**（ASCII/二进制 little-endian）；SPZ/量化/planar 布局未接（`W15A-040..044` 是参照）。
 4. **density 的 iso 是全局值**：非均匀场景会破壳或局部过胖；自动重试只是启发式，不是自适应阈值。
    否证条件：在 3 个以上真实非均匀 3DGS 场景上，auto 重试率 >30% 或体积误差 >25% ⇒ 需要局部/分块阈值。
@@ -794,6 +825,9 @@ CARGO_INCREMENTAL=0 cargo test --release --test gauss_gpu -- --test-threads=1 --
 CARGO_INCREMENTAL=0 cargo test --release --test gauss_gpu -- --test-threads=1 --ignored bench_gpu_scenes --nocapture
 # 完整性能对比（CPU 1T/24T、GPU、GPU 网格；64³/128³ × density/surfel）
 CARGO_INCREMENTAL=0 cargo test --release --test perf_compare -- --test-threads=1 --ignored --nocapture
+# 稀疏块：定位 / halo 网格 / 密封 / surfel 对拍（含 256³ ignored 计时）
+CARGO_INCREMENTAL=0 cargo test --release --lib sparse_ -- --test-threads=1 --nocapture
+CARGO_INCREMENTAL=0 cargo test --release --lib sparse_ -- --test-threads=1 --ignored --nocapture
 # 自包含 HTML 的 base64 载荷（长度/首顶点/旧格式）
 cargo test --release --test html_embed -- --test-threads=1 --nocapture
 # 全量门（含 GPU，必须串行）
