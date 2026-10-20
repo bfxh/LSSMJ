@@ -414,6 +414,7 @@ n=64，3 次中位数；`field.threads=24`。体素化之外的 load/prune/mesh/
 - **结论**：GPU 体素化+后处理已全面快于 24T CPU（64³ 17–19 vs 45–55 ms；128³ 球 103 vs 145 ms、
   blobs 73 vs ≈368 ms），但单次转换的设备 init ~0.9–1.1 s 让端到端反而更慢；默认 CPU，`--gpu`
   留给批处理/更高分辨率。下一步仍是设备/管线生命周期服务化，或直接做稀疏分块降低 256³ 的掩码/场内存。
+  完整 CPU/GPU 对比（含 CPU 1T/24T、GPU 网格与单次 init）见 §6.7。
 
 ### 6.3 后处理：q99.9 改 k-th 选择
 
@@ -478,6 +479,46 @@ eigen 内核确实快了 1.37×，但完整 prep 已被 24T 标量压到 5–6 m
 稀疏槽位：pos 16 B/cell、flag 4 B/cell 的全格生成与回读；256³ 仍会超限并显式回退。
 当前 gsn 形态不适合接到本管线，**不推荐**；保留 `--gpu-mesh` 作为实验入口，默认 CPU 网格不变。
 
+### 6.7 完整性能对比（2026-10-20，3 次中位数）
+
+口径：64³/128³；球 = 20k surfel，blobs = 12k density（+300 floaters，先按 CLI 默认剪掉）；
+每项 3 次取中位数；GPU 复用同一设备，GPU 网格先预热一次；`vox+mesh` 不含 load/prune/write
+与设备 init。复算：`tests/perf_compare.rs`（ignored 诊断）。
+
+| 场景 | CPU 1T | CPU 24T | GPU（CPU 网格） | GPU + GPU 网格 |
+| --- | --- | --- | --- | --- |
+| 64³ 球 | 356 | 46 | 19 | 28 |
+| 64³ blobs | 475 | 60 | 22 | 42 |
+| 128³ 球 | 1461 | 179 | 79 | 135 |
+| 128³ blobs | 3920 | 448 | 66 | 146 |
+
+分解（同一批中位数）：
+
+| 项 | 64³ 球 | 64³ blobs | 128³ 球 | 128³ blobs |
+| --- | --- | --- | --- | --- |
+| GPU vox（复用） | 14.6 | 18.4 | 54.4 | 45.2 |
+| CPU 24T vox | 41.6 | 57.0 | 157.8 | 427.3 |
+| CPU 网格 | 4.0 | 3.3 | 21.6 | 18.4 |
+| GPU 网格 | 14.2 | 22.9 | 89.3 | 107.0 |
+
+- **热态 GPU 全面快于 CPU 24T**：vox 段 2.8–9.5×；但 128³ 球的 GPU vox 在 42–116 ms 间波动
+  （读回/map/poll 抖动），表中取中位数，三轮结论一致。
+- **GPU 网格从未胜过“GPU vox + CPU 网格”**：网格段慢 3.5–6.9×，整腿 28 vs 19、42 vs 22、
+  135 vs 79、146 vs 66 ms；`--gpu-mesh` 保持实验档（§3.10/§6.6）。
+- CPU 24T 对 1T：7.7× / 7.9× / 8.2× / 8.8×（球 64、blobs 64、球 128、blobs 128）。
+
+**单次 CLI（含设备 init，1 次代表性读数）**：
+
+| 场景 | CPU 24T 转换 / 总计 | GPU 转换 / 总计 | GPU+网格 转换 / 总计 |
+| --- | --- | --- | --- |
+| 64³ 球 | 46.7 / **57.1** | 25.2 / 1016.1 | 39.1 / 977.1 |
+| 64³ blobs | 61.8 / **70.5** | 21.5 / 619.4 | 31.3 / 991.0 |
+| 128³ 球 | 168.0 / **200.9** | 82.3 / 720.3 | 154.0 / 1138.8 |
+| 128³ blobs | 388.1 / **413.1** | 73.6 / 1023.5 | 140.4 / 1277.3 |
+
+init 读数 590–1109 ms（本机波动可到 2 s+）。热态的 GPU 优势在单次转换里被 init 完全吃掉，
+所以默认仍 CPU；GPU 的收益场景是 `batch`/`voxelize_gpu_with` 的设备复用。
+
 ## 7. 限制与否证条件（不许当结论）
 
 1. **CPU 多线程，非实时**：64³/20k 高斯总耗时约 0.04–0.07 s（24 线程；1T 参照 0.17–0.5 s）；
@@ -521,6 +562,8 @@ CARGO_INCREMENTAL=0 cargo test --release --test gauss_leg -- --test-threads=1 --
 CARGO_INCREMENTAL=0 cargo test --release --test gauss_gpu -- --test-threads=1 --nocapture
 # GPU 64³/128³ 计时（含 hollow 对照）
 CARGO_INCREMENTAL=0 cargo test --release --test gauss_gpu -- --test-threads=1 --ignored bench_gpu_scenes --nocapture
+# 完整性能对比（CPU 1T/24T、GPU、GPU 网格；64³/128³ × density/surfel）
+CARGO_INCREMENTAL=0 cargo test --release --test perf_compare -- --test-threads=1 --ignored --nocapture
 # 全量门（含 GPU，必须串行）
 CARGO_INCREMENTAL=0 cargo test --release -- --test-threads=1
 CARGO_INCREMENTAL=0 cargo clippy --all-targets -- -D warnings
