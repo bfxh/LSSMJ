@@ -17,8 +17,7 @@ LSSMJ gauss2mesh · 高斯体素 → 网格
   --threads <N>          splat 线程数（默认 0=自动；1=单线程参照）
   --gpu                  GPU splat（定点整数原子；失败回退 CPU；忽略 --threads）
   --gpu-mesh             GPU Surface Nets 网格化（实验档：读回开销大，通常慢于 CPU；失败回退）
-  --bins3d               CPU splat 强制 3D tile 分桶（默认：n≥64 且 ≤50k 高斯自动开）
-  --no-bins3d            关闭自动 3D tile，回到 z-slab
+  --bins3d               CPU splat 走 3D tile 分桶（默认 z-slab；GPU 忽略）
   --simd-prep            可选 SIMD/cyclic eigen prep（默认标量逐位；opt-in 改哈希）
   --mode <auto|density|surfel>（默认 auto）
   --iso <auto|数值>      密度阈值；auto = 0.65 × 正密度 99.9 分位
@@ -68,7 +67,6 @@ pub(crate) struct Config {
     pub(crate) gpu: bool,
     pub(crate) gpu_mesh: bool,
     pub(crate) bins3d: bool,
-    pub(crate) bins3d_off: bool,
     pub(crate) simd_prep: bool,
     pub(crate) mode: ModeSel,
     pub(crate) iso: Option<f32>,
@@ -96,7 +94,6 @@ impl Default for Config {
             gpu: false,
             gpu_mesh: false,
             bins3d: false,
-            bins3d_off: false,
             simd_prep: false,
             mode: ModeSel::Auto,
             iso: None,
@@ -118,15 +115,6 @@ impl Default for Config {
     }
 }
 
-/// 小规模 CPU 默认走 3D tile：12–20k 实测快 15–34%，100k 收益降到 3–5%；
-/// 超过 50k、单线程或 n<64 时保持 z-slab。显式 `--bins3d`/`--no-bins3d` 优先。
-pub(crate) fn use_bins3d(cfg: &Config, grid: u32, threads: usize, kept: usize) -> bool {
-    if cfg.bins3d_off {
-        return false;
-    }
-    cfg.bins3d || (threads > 1 && grid >= 64 && kept <= 50_000)
-}
-
 pub(crate) fn is_bool_flag(name: &str) -> bool {
     matches!(
         name,
@@ -139,7 +127,6 @@ pub(crate) fn is_bool_flag(name: &str) -> bool {
             | "gpu"
             | "gpu-mesh"
             | "bins3d"
-            | "no-bins3d"
             | "simd-prep"
     )
 }
@@ -226,10 +213,6 @@ pub(crate) fn parse_config(
     cfg.gpu = bools.contains("gpu");
     cfg.gpu_mesh = bools.contains("gpu-mesh");
     cfg.bins3d = bools.contains("bins3d");
-    cfg.bins3d_off = bools.contains("no-bins3d");
-    if cfg.bins3d && cfg.bins3d_off {
-        return Err("--bins3d 与 --no-bins3d 不能同时使用".into());
-    }
     cfg.simd_prep = bools.contains("simd-prep");
     cfg.raw_scale = bools.contains("raw-scale");
     cfg.raw_opacity = bools.contains("raw-opacity");
@@ -243,24 +226,4 @@ pub(crate) fn parse_config(
     cfg.html = flags.get("html").map(PathBuf::from);
     cfg.json = flags.get("json").map(PathBuf::from);
     Ok(cfg)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn auto_bins3d_rules() {
-        let mut c = Config::default();
-        assert!(use_bins3d(&c, 64, 24, 20_000));
-        assert!(use_bins3d(&c, 128, 24, 50_000));
-        assert!(!use_bins3d(&c, 64, 1, 20_000));
-        assert!(!use_bins3d(&c, 32, 24, 20_000));
-        assert!(!use_bins3d(&c, 128, 24, 50_001));
-        c.bins3d = true;
-        assert!(use_bins3d(&c, 32, 1, 100_000));
-        c.bins3d = false;
-        c.bins3d_off = true;
-        assert!(!use_bins3d(&c, 128, 24, 20_000));
-    }
 }
