@@ -118,4 +118,79 @@ fn gpu_splat_matches_cpu_within_tolerance() {
         mc.stats.components, md.stats.components,
         "density components"
     );
+
+    let mut hollow_opts = cpu_opts.clone();
+    hollow_opts.seal = false;
+    let cpu_hollow = voxelize(&gs, &hollow_opts).expect("cpu density hollow");
+    let gpu_hollow = voxelize_gpu_with(
+        &hd,
+        &gs,
+        &VoxelizeOptions {
+            backend: Backend::Gpu,
+            ..hollow_opts
+        },
+    )
+    .expect("gpu density hollow");
+    let mh = field_to_mesh(&cpu_hollow);
+    let gh = field_to_mesh(&gpu_hollow);
+    let rel = ((mh.stats.volume - gh.stats.volume) / mh.stats.volume).abs();
+    println!(
+        "gpu density hollow: cpu_sealed={} gpu_sealed={} cpu_vol={:.5} gpu_vol={:.5} rel={rel:.5} chi={}/{}",
+        cpu_hollow.sealed_interior,
+        gpu_hollow.sealed_interior,
+        mh.stats.volume,
+        gh.stats.volume,
+        mh.stats.chi,
+        gh.stats.chi
+    );
+    assert_eq!(cpu_hollow.sealed_interior, 0);
+    assert_eq!(gpu_hollow.sealed_interior, 0);
+    assert!(rel < 0.05, "density hollow volume rel {rel}");
+    assert_eq!(mh.stats.chi, gh.stats.chi, "density hollow chi");
+}
+
+#[test]
+#[ignore = "diagnostic GPU timings (64/128, density/surfel)"]
+fn bench_gpu_scenes() {
+    let _g = GPU_LOCK.lock().unwrap();
+    let hd = try_headless_device().expect("headless gpu");
+    let gs = sphere_gaussians(20_000, 0.75, 0.99);
+    for n in [64u32, 128] {
+        for mode in [VoxelMode::Density, VoxelMode::Surfel] {
+            let cpu_opts = opts(mode, n);
+            let t = Instant::now();
+            let cpu = voxelize(&gs, &cpu_opts).expect("cpu");
+            let cpu_ms = t.elapsed().as_secs_f64() * 1e3;
+            let gpu_opts = VoxelizeOptions {
+                backend: Backend::Gpu,
+                ..cpu_opts
+            };
+            let _ = voxelize_gpu_with(&hd, &gs, &gpu_opts).expect("gpu warmup");
+            let t = Instant::now();
+            let gpu = voxelize_gpu_with(&hd, &gs, &gpu_opts).expect("gpu");
+            let gpu_ms = t.elapsed().as_secs_f64() * 1e3;
+            let hollow_opts = VoxelizeOptions {
+                seal: false,
+                ..gpu_opts
+            };
+            let t = Instant::now();
+            let gpu_hollow = voxelize_gpu_with(&hd, &gs, &hollow_opts).expect("gpu hollow");
+            let hollow_ms = t.elapsed().as_secs_f64() * 1e3;
+            let mc = field_to_mesh(&cpu);
+            let mg = field_to_mesh(&gpu);
+            let rel = ((mc.stats.volume - mg.stats.volume) / mc.stats.volume).abs();
+            println!(
+                "n={n} {:<7} cpu={cpu_ms:7.1}ms gpu={gpu_ms:7.1}ms (hollow {hollow_ms:.1}) iso={:.4}/{:.4} vol_rel={rel:.5} chi={}/{}",
+                mode.name(),
+                cpu.iso,
+                gpu.iso,
+                mc.stats.chi,
+                mg.stats.chi
+            );
+            // hollow 是开放壳，χ 与实心体不可比；只验"没有内部填充"且仍出网格。
+            let mgh = field_to_mesh(&gpu_hollow);
+            assert_eq!(gpu_hollow.sealed_interior, 0);
+            assert!(mgh.stats.triangles > 0, "hollow triangles at n={n}");
+        }
+    }
 }

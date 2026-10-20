@@ -9,7 +9,7 @@
 > 2025–2026 的新论文只作 web 旁证，未入账，不单独支撑设计判决（本仓 `web` 纪律）。
 > 本轮没有新增 ledger 条目；新增的外部链接在 §9 明示"未入账/未复算"。
 
-## TL;DR（8 条）
+## TL;DR（9 条）
 
 1. **高斯没有拓扑**；"高斯体素→网格"不是一条转换公式，而是三步：**选一个可度量的标量场 → 定阈值 → 提等值面**。
    这是本报告最重要的口径修正：讨论"怎么转"之前先回答"场是什么"。
@@ -30,10 +30,10 @@
 8. **UX 的核心不是参数面板**，而是"先诊断、再转换、可解释降级、可预览"：
    `inspect` 先看资产；`auto` 说出选路理由；三旋钮（分辨率/剪枝/阈值）都有默认值与后果提示；
    失败/回退/重试进警告与 JSON；自包含 WebGL 预览默认只显示网格（20k 高斯点盖上去会摩尔纹）。
-9. **GPU 首片（`--gpu`）用定点整数原子累加**：整数加法与执行顺序无关 ⇒ 两次 GPU 运行逐位一致；
-   设备复用后 kernel+后处理 **3–57 ms**（48³/128³ 探针），但 wgpu 设备初始化 **~0.9–1.1 s**，
-   单次 64³/128³ 反而比 24T CPU 慢 ⇒ 默认仍 CPU；GPU 是批处理/更高分辨率档，
-   `voxelize_gpu_with(&Headless, …)` 是复用入口。
+9. **GPU（`--gpu`）已覆盖 splat + iso + 密封**：定点整数原子 + 全格 ping-pong 泛洪 ⇒ 两次 GPU 运行
+   逐位一致，且与 frontier 版后处理逐位等价（四个 CLI 哈希不变）；设备复用后体素化+后处理
+   **17–103 ms**（64³/128³，20k 球），但 wgpu 设备初始化 **~0.9–1.1 s**，单次转换端到端仍慢于
+   缓存的 CPU ⇒ 默认仍 CPU；GPU 是批处理/更高分辨率档，`voxelize_gpu_with(&Headless, …)` 是复用入口。
 
 ## 1. 术语：三种"高斯体素"
 
@@ -157,12 +157,27 @@ GPU 侧不直接用浮点原子（WGSL 无 `atomicAdd<f32>`，且浮点归约顺
    (Gaussian, voxel)，GPU 线程用二分查回高斯下标。表大小 = Σ bbox 体素数（64³/20k 高斯约 15M）。
 2. **GPU 整数原子**：density 把权重 `w·scale` 量化成 u32；surfel 把 `w·dist` 量化成 i32、
    `w` 量化成 u32，分别 atomicAdd。整数加法可交换/可结合 ⇒ **与执行顺序无关，逐位确定**。
-3. **回读 + CPU 后处理**：定点转 f32 后仍走同一套 iso/密封/Surface Nets；GPU 只替换 splat。
+3. **GPU iso（density）**：stats（atomicMax + 正密度计数）→ 直方图（`step = max/65536 + 1`，
+   65536 桶在 `counters_hist[8..]`）→ 回读直方图，CPU 做前缀和选 q99.9（`round((positive-1)·0.999)`），
+   `iso = iso_abs.unwrap_or(frac · q99.9)`。q99.9 取桶下界，误差 ≤ step（约为 max 的 1/65536）。
+4. **GPU 密封**：`seal_init` 把与域边界相连的未知体素写成种子；之后**全格 ping-pong 泛洪**——
+   每趟只读 `mask_in`、只写 `mask_out`（两份 n³ u32），端点 `known` 的体素恒为 0。
+   16 趟编码进一个 command buffer；每趟先 `clear_buffer` 清零"有变化"标志，批次末趟无变化即到不动点；
+   最多 `2n` 趟，未收敛则显式报错。`seal=false` 跳过泛洪，未知区一律 +outside。
+   掩码最终用于 field pass：外部未知区 +outside，被围住的内部未知区 −outside。
+5. **GPU 写场 + 一次回读**：density/surfel 各一个 field 入口写 f32 场并统计 observed/sealed；
+   回读后交给 CPU Surface Nets。GPU 已覆盖 splat + iso + 密封，只剩网格化在 CPU。
 
 量化尺度：`DENS=2^16`、`DEN=2^16`、`DIST=2^14`；在 20k 量级/常规场景内不溢出 u32/i32。
+整数原子 + ping-pong 掩码使 GPU 路径自身逐位确定；与上一版 frontier 实现相比，四个 CLI 场景的
+网格哈希完全相同（`0d1d…`/`a36f…`/`89a8…`/`27ad…`，见 §6.2），即泛洪重写是**逐位等价**的。
 代价：GPU 场与 CPU f32 场**不是逐位相等**（量化 + WGSL `exp` 差异）；判据看 GPU 两次逐位一致 +
 与 CPU 的体积/χ 容差（`tests/gauss_gpu.rs`）。surfel 场最大差 ~2e-2（低权重体素在 `min_weight`
 附近翻转观测判定）；density 的原始场在 iso 边界会从 0 翻到 `+outside`，因此密度判据看 iso 差 + 网格。
+
+存储面：默认 `max_storage_buffers_per_shader_stage = 8`，后处理把"计数器 + 直方图"合并成
+一个 `counters_hist`（0..5 计数，8.. 直方图），避免第 9 个 storage buffer；两份 n³ u32 掩码在
+128³ 占 16 MB、256³ 占 128 MB，仍是稠密路径的固有成本。
 
 **设备 init 是单次转换的主要成本**：本机 wgpu 初始化 ~0.9–1.1 s，而 48³/4k 高斯的 kernel+后处理
 只有 3–6 ms。因此 `--gpu` 默认关闭；`voxelize_gpu_with(&Headless, …)` 供批处理复用设备；
@@ -258,10 +273,10 @@ cargo run --release --bin gauss2mesh -- batch a.ply b.ply --out-dir out/batch --
 GPU（`--gpu`；设备 init 单独计入总计）：
 
 ```text
-[3/5] 体素化   surfel · gpu (init 1014 ms) · 64³ · h=0.02655 · iso=0.00000 · 观测 73,959 · 封闭内部 62,176 · 19.3 ms · auto→surfel：资产带法线
-[4/5] 网格     Surface Nets · 15,074 顶点 · 30,144 三角形 · χ=2 · 1 分量 · 4.7 ms
-体积 1.77430 · χ=2 · 分量 1 · 64³ · surfel · 1053.9 ms 总计（含 init）
-哈希 865a67b610e95cd6 · 导出 ...
+[3/5] 体素化   surfel · gpu (init 1130 ms) · 64³ · h=0.02655 · iso=0.00000 · 观测 73,959 · 封闭内部 62,176 · 17.2 ms · auto→surfel：资产带法线
+[4/5] 网格     Surface Nets · 15,074 顶点 · 30,144 三角形 · χ=2 · 1 分量 · 4.5 ms
+体积 1.77430 · χ=2 · 分量 1 · 64³ · surfel · 1163.1 ms 总计（含 init）
+哈希 0d1d9007e49ffa7e · 导出 ...
 ```
 
 每行回答一个用户问题：**读到了什么 / 丢了什么 / 用了什么场和阈值 / 网格质量如何 / 产物在哪**。
@@ -344,28 +359,34 @@ n=64，3 次中位数；`field.threads=24`。体素化之外的 load/prune/mesh/
 在 3.8 的分桶 + 并行 prep 之后，128³/20k 的端到端：球 166.4→**141.1 ms**、blobs 402.9→**367.5 ms**，
 既有哈希全部不变。
 
-### 6.2 GPU splat（`--gpu`，定点整数原子）
+### 6.2 GPU splat + iso + 密封（`--gpu`，定点整数原子）
 
-| 场景 | 后端 | init | vox（kernel+后处理） | total | 体积 / χ |
+| 场景 | 后端 | init | vox（splat+iso+密封+回读） | total | 体积 / χ / GPU 哈希 |
 | --- | --- | --- | --- | --- | --- |
 | 64³ / 20k 球 | CPU 24T | — | 45.1 ms | 60.3 ms | 1.77436 / χ=2 |
-| 64³ / 20k 球 | GPU | 870–1014 ms | **15.5–19.3 ms** | 903–1054 ms | 1.77430 / χ=2，hash `865a…`（两次同） |
+| 64³ / 20k 球 | GPU | 1129.6 ms | **17.2 ms** | 1163.1 ms | 1.77430 / χ=2 / `0d1d…` |
 | 64³ / 12k blobs | CPU 24T | — | 54.6 ms | 67.0 ms | 1.99052 / χ=2 |
-| 64³ / 12k blobs | GPU | 1040.6 ms | **9.5 ms** | 1062.2 ms | 1.99052 / χ=2，hash `b0de…` |
-| 64³ / 12k PLY blobs（含 iso 重试） | GPU | 909.1 ms | **17.6 ms** | 964.5 ms | 2.13619 / χ=2，`iso_retry` 同 CPU |
+| 64³ / 12k blobs | GPU | 980.7 ms | **18.6 ms** | 1012.0 ms | 1.99052 / χ=2 / `a36f…` |
 | 128³ / 20k 球 | CPU 24T | — | 145.2 ms | 202.4 ms | 1.77618 / χ=2 |
-| 128³ / 20k 球 | GPU | 1058.5 ms | **56.5 ms** | 1170.7 ms | 1.77607 / χ=2 |
+| 128³ / 20k 球 | GPU | 1051.3 ms | **103.0 ms** | 1213.7 ms | 1.77607 / χ=2 / `89a8…` |
+| 128³ / 12k blobs | CPU 24T | — | — | 367.5 ms（§3.8） | — |
+| 128³ / 12k blobs | GPU | 921.5 ms | **73.0 ms** | 1036.7 ms | 2.02660 / χ=2 / `27ad…` |
 
-- **设备复用**（`voxelize_gpu_with(&Headless, …)`，48³/4k 探针）：surfel 首 6.1 ms、次 3.9 ms；
-  density 首 3.3 ms、次 2.8 ms；设备 init 936.6 ms。
+- **后处理全部在 GPU**（本切片）：iso 直方图 + 全格 ping-pong 泛洪 + field 写入；CPU 只做直方图前缀和
+  与最终 Surface Nets。泛洪本身不是瓶颈：同一场景 `--hollow`（跳过泛洪）vs 密封，64³ density
+  9.5→10.5 ms、128³ density 34.1→35.0 ms、128³ surfel 94.2→103.4 ms（`bench_gpu_scenes`）。
+- **逐位等价**：重写泛洪后四个 CLI 场景网格哈希与 frontier 版完全相同（上表 `0d1d…`/`a36f…`/`89a8…`/`27ad…`），
+  GPU 两次运行也逐位一致；CPU 与 GPU 哈希仍不同（定点量化 + WGSL `exp`）。
+- **设备复用**（`voxelize_gpu_with(&Headless, …)`，48³/4k 探针）：surfel 首 7.6 ms、次 4.5 ms；
+  density 首 6.1 ms、次 4.5 ms；设备 init 937.4 ms。
 - **batch 设备复用**（两份 PLY）：独立 GPU 进程 1424.0 + 1162.8 = 2586.8 ms（init 1015/889）→
   一次 batch 1233.0 ms（init 911/0），省 **1353.8 ms**；第二文件 stage 为 `gpu (cached)`。
-- GPU 两次运行哈希逐位一致；CPU 与 GPU 哈希不同（定点量化 + WGSL `exp`）。
-  48³ 对拍：surfel 体积差 3e-5、场最大差 0.0197；density 体积差 3.6e-4、iso 同值、χ 同为 -184；
-  density 原始场最大差 7.18 是 iso 边界体素在"0 ↔ +outside"之间的密封翻转（见 §3.7）。
-- **结论**：GPU kernel 已快于 24T CPU（64³ 15–19 vs 45 ms；128³ 56.5 vs 145 ms），
-  但单次转换的设备 init ~0.9–1.1 s 让 64³/128³ 的端到端反而更慢；默认 CPU，`--gpu` 留给批处理/
-  更高分辨率。下一步应把设备/管线生命周期做成服务化或批量入口，而不是每次转换重建。
+- **CPU 对拍（48³/4k）**：surfel 体积差 3e-5、场最大差 0.0197；density 体积差 5.7e-4、iso 同值、
+  χ 同为 -184；`--hollow` 分支 `sealed_interior=0` 且与 CPU 壳体积差 5.7e-4。
+  density 原始场最大差 7.18 是 iso 边界体素在"0 ↔ +outside"之间的密封翻转（见 §3.7），不作判据。
+- **结论**：GPU 体素化+后处理已全面快于 24T CPU（64³ 17–19 vs 45–55 ms；128³ 球 103 vs 145 ms、
+  blobs 73 vs ≈368 ms），但单次转换的设备 init ~0.9–1.1 s 让端到端反而更慢；默认 CPU，`--gpu`
+  留给批处理/更高分辨率。下一步仍是设备/管线生命周期服务化，或直接做稀疏分块降低 256³ 的掩码/场内存。
 
 ### 6.3 后处理：q99.9 改 k-th 选择
 
@@ -415,9 +436,8 @@ eigen 内核确实快了 1.37×，但完整 prep 已被 24T 标量压到 5–6 m
 ## 7. 限制与否证条件（不许当结论）
 
 1. **CPU 多线程，非实时**：64³/20k 高斯总耗时约 0.04–0.07 s（24 线程；1T 参照 0.17–0.5 s）；
-   128³ 约 8× 体素，未测；逐帧实时仍不成立。下一步是 wgpu compute splat（体素化），
-   CPU 多线程版可作为 GPU 的逐位参照。GPU 原子累加会破坏逐位确定性，需要排序/分段归约，
-   这是比多线程 CPU 大得多的切片。
+   128³ 已测（§3.8/§6.2），逐帧实时仍不成立。GPU 路径已落地（整数原子 + GPU iso/密封），
+   但默认档仍是 CPU；CPU 多线程版继续作 GPU 的逐位参照。
 2. **稠密 n³**：256³ = 6700 万格，内存与遍历都上不去；量产要走稀疏分块 + 1-voxel halo（T-GC-05，`W15A-034/035`）。
 3. **只读标准 3DGS PLY**（ASCII/二进制 little-endian）；SPZ/量化/planar 布局未接（`W15A-040..044` 是参照）。
 4. **density 的 iso 是全局值**：非均匀场景会破壳或局部过胖；自动重试只是启发式，不是自适应阈值。
@@ -429,9 +449,11 @@ eigen 内核确实快了 1.37×，但完整 prep 已被 24T 标量压到 5–6 m
 9. **封闭填充假设"物体是实心"**：空心物体（杯子/壳体）会被填实；需要 `--hollow` 或专门的开口检测。
 10. **未见真 2DGS/SuGaR 资产**：本轮的真实 PLY 是用脚本按 3DGS 语义合成的；
     对训练产物的法线一致性/尺度分布尚未实测。
-11. **GPU 首片的边界**：定点量化不等于 CPU 逐位；u32/i32 累加在超大重叠/极端尺度下可能溢出；
-    job 表在 CPU 建；post（iso/密封/网格）仍在 CPU；2D dispatch 上限 65535；设备 init ~0.9–1.1 s，
-    单次转换默认仍 CPU。GPU 当前是批处理/更高分辨率档，不是“一键实时”。
+11. **GPU 档的边界**：定点量化不等于 CPU 逐位；u32/i32 累加在超大重叠/极端尺度下可能溢出；
+    job 表与 Surface Nets 仍在 CPU；iso 用 65536 桶直方图取 q99.9 的**桶下界**（误差 ≤ max/65536），
+    密封最多 2n 趟、未收敛显式报错；全格 ping-pong 掩码占 2×n³ u32（128³ 16 MB、256³ 128 MB）；
+    2D dispatch 上限 65535；设备 init ~0.9–1.1 s，单次转换默认仍 CPU。GPU 当前是批处理/
+    更高分辨率档，不是“一键实时”。
 12. **batch 是顺序的**：不并行多个文件；设备缓存是进程级；每文件默认写 JSON，无聚合报告；
     重名 stem 自动 `_2`；首个文件仍付 init。
 13. **分桶只按 z，prep 的并行加速有上限**：x/y 仍扫单高斯全 bbox。3D tile 已作为
@@ -445,8 +467,10 @@ eigen 内核确实快了 1.37×，但完整 prep 已被 24T 标量压到 5–6 m
 cd crates/conv-core
 # 高斯腿判据（球/环面/密度/剪枝/PLY/确定性/多线程逐位）
 CARGO_INCREMENTAL=0 cargo test --release --test gauss_leg -- --test-threads=1 --nocapture
-# GPU splat 判据（逐位确定 + CPU 容差对拍；串行）
+# GPU splat + iso + 密封判据（逐位确定 + CPU 容差对拍 + hollow；串行）
 CARGO_INCREMENTAL=0 cargo test --release --test gauss_gpu -- --test-threads=1 --nocapture
+# GPU 64³/128³ 计时（含 hollow 对照）
+CARGO_INCREMENTAL=0 cargo test --release --test gauss_gpu -- --test-threads=1 --ignored bench_gpu_scenes --nocapture
 # 全量门（含 GPU，必须串行）
 CARGO_INCREMENTAL=0 cargo test --release -- --test-threads=1
 CARGO_INCREMENTAL=0 cargo clippy --all-targets -- -D warnings
@@ -456,7 +480,7 @@ cargo fmt --all --check
 CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo sphere
 CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo torus
 CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo blobs
-# GPU 首片（单次转换 init 主导；批处理用 voxelize_gpu_with）
+# GPU（splat+iso+密封；单次转换 init 主导；批处理用 voxelize_gpu_with）
 CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo sphere --gpu
 # 打开 out/sphere.html（自包含，无外部依赖）
 
@@ -499,8 +523,8 @@ CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- convert scene.ply --
    判据：真实非均匀场景的重试率、体积误差、χ 稳定性。
 2. **3D tile / SIMD prep 可选档已试验**：3D tile 有 20k 14–25% 收益（`--bins3d`），
    SIMD prep 的 eigen 1.37× 但完整 prep 与 24T 持平（`--simd-prep` 实验档，默认关）。
-   下一步：GPU 侧 iso/密封、更高分辨率/稀疏分块；1M 高斯时再评估融合 AVX2 prep。
-   单次转换仍被 ~1s 的 wgpu init 拖慢，不能把 GPU 当默认档。
+   GPU 侧 iso/密封已落地（§3.7/§6.2）；下一步：GPU Surface Nets、256³ 稀疏分块；
+   1M 高斯时再评估融合 AVX2 prep。单次转换仍被 ~1s 的 wgpu init 拖慢，不能把 GPU 当默认档。
 3. **稀疏分块**：256³/大场景的 1-voxel halo 无缝契约（T-GC-05）。
 4. **质量档**：DC/MT 对尖角/薄流的改善；需要薄流/尖特征测试对象（W15A-025 的教训：光滑球堆测不出差异）。
 5. **真实资产**：2DGS/SuGaR 训练产物的法线一致性、尺度分布、SPZ 读入。

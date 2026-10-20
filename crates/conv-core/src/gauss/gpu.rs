@@ -9,11 +9,12 @@
 //! 处理一个 (Gaussian, voxel) job，二分查回 Gaussian 下标。无稀疏结构、无排序。
 
 use super::voxel::{
-    Backend, Field, Grid, Prepared, VoxelMode, VoxelizeOptions, density_post, prepare_density,
-    prepare_surfel, splat_range, surfel_post,
+    Field, Grid, Prepared, VoxelMode, VoxelizeOptions, prepare_density, prepare_surfel, splat_range,
 };
 use super::{Aabb, Gaussian};
-use crate::jfa::{Headless, readback_f32, storage_entry, try_headless_device, uniform_entry};
+use crate::jfa::{Headless, storage_entry, try_headless_device, uniform_entry};
+mod gpu_post;
+
 use wgpu::util::DeviceExt;
 
 const DENS_SCALE: f32 = 65536.0;
@@ -44,6 +45,27 @@ struct Params {
     pad: u32,
     origin_h: [f32; 4],
     extra: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct PostParams {
+    n: u32,
+    mode: u32,
+    count: u32,
+    dispatch_x: u32,
+    step: u32,
+    seal: u32,
+    pad1: u32,
+    pad2: u32,
+    iso: f32,
+    outside: f32,
+    min_weight: f32,
+    max_density: f32,
+    dens_scale: f32,
+    den_scale: f32,
+    dist_scale: f32,
+    pad3: f32,
 }
 
 struct JobTable {
@@ -126,26 +148,14 @@ fn dispatch_dims(total: u32) -> Result<(u32, u32), String> {
     Ok((x, y))
 }
 
-fn readback_u32(hd: &Headless, buf: &wgpu::Buffer) -> Vec<u32> {
-    readback_f32(hd, buf)
-        .into_iter()
-        .map(f32::to_bits)
-        .collect()
-}
-
-fn readback_i32(hd: &Headless, buf: &wgpu::Buffer) -> Vec<i32> {
-    readback_f32(hd, buf)
-        .into_iter()
-        .map(|v| v.to_bits() as i32)
-        .collect()
-}
-
 fn buffer_zeroed(device: &wgpu::Device, label: &str, bytes: usize) -> wgpu::Buffer {
     let zeros = vec![0u8; bytes];
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some(label),
         contents: &zeros,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_SRC
+            | wgpu::BufferUsages::COPY_DST,
     })
 }
 
@@ -153,7 +163,7 @@ fn splat_density_gpu(
     hd: &Headless,
     prepared: &[Prepared],
     grid: &Grid,
-) -> Result<Vec<f32>, String> {
+) -> Result<wgpu::Buffer, String> {
     let table = build_job_table(prepared, grid)?;
     let (wg_x, wg_y) = dispatch_dims(table.total)?;
     let device = &hd.device;
@@ -241,8 +251,7 @@ fn splat_density_gpu(
         pass.dispatch_workgroups(wg_x, wg_y, 1);
     }
     queue.submit([enc.finish()]);
-    let raw = readback_u32(hd, &out_buf);
-    Ok(raw.into_iter().map(|q| q as f32 / DENS_SCALE).collect())
+    Ok(out_buf)
 }
 
 fn splat_surfel_gpu(
@@ -250,7 +259,7 @@ fn splat_surfel_gpu(
     prepared: &[Prepared],
     grid: &Grid,
     clamp_abs: f32,
-) -> Result<(Vec<f32>, Vec<f32>), String> {
+) -> Result<(wgpu::Buffer, wgpu::Buffer), String> {
     let table = build_job_table(prepared, grid)?;
     let (wg_x, wg_y) = dispatch_dims(table.total)?;
     let device = &hd.device;
@@ -344,15 +353,7 @@ fn splat_surfel_gpu(
         pass.dispatch_workgroups(wg_x, wg_y, 1);
     }
     queue.submit([enc.finish()]);
-    let num = readback_i32(hd, &num_buf)
-        .into_iter()
-        .map(|v| v as f32 / DIST_SCALE)
-        .collect();
-    let den = readback_u32(hd, &den_buf)
-        .into_iter()
-        .map(|v| v as f32 / DEN_SCALE)
-        .collect();
-    Ok((num, den))
+    Ok((num_buf, den_buf))
 }
 
 pub(crate) fn voxelize_gpu_with(
@@ -369,7 +370,16 @@ pub(crate) fn voxelize_gpu_with(
                 return Err("没有有效的高斯（NaN/Inf/非正不透明度）".into());
             }
             let density = splat_density_gpu(hd, &prepared, &grid)?;
-            density_post(density, opts, grid, bounds, 0, Backend::Gpu)
+            gpu_post::post_gpu(
+                hd,
+                Some(&density),
+                None,
+                None,
+                grid,
+                opts,
+                bounds,
+                VoxelMode::Density,
+            )
         }
         VoxelMode::Surfel => {
             let (prepared, clamp_abs) = prepare_surfel(gaussians, &grid, opts);
@@ -377,7 +387,16 @@ pub(crate) fn voxelize_gpu_with(
                 return Err("没有有效的高斯（NaN/Inf/非正不透明度）".into());
             }
             let (num, den) = splat_surfel_gpu(hd, &prepared, &grid, clamp_abs)?;
-            surfel_post(num, den, opts, grid, bounds, 0, Backend::Gpu)
+            gpu_post::post_gpu(
+                hd,
+                None,
+                Some(&num),
+                Some(&den),
+                grid,
+                opts,
+                bounds,
+                VoxelMode::Surfel,
+            )
         }
     }
 }
