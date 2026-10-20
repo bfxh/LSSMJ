@@ -22,20 +22,29 @@ pub fn headless_device() -> Headless {
 
 /// 可失败的设备创建：供 `--gpu` 在无适配器/驱动异常时显式回退 CPU。
 pub fn try_headless_device() -> Result<Headless, String> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-    let adapter =
-        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-            .map_err(|e| format!("no wgpu adapter: {e:?}"))?;
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("conv-core-headless"),
-        required_features: wgpu::Features::empty(),
-        required_limits: wgpu::Limits::default(),
-        experimental_features: wgpu::ExperimentalFeatures::disabled(),
-        memory_hints: wgpu::MemoryHints::MemoryUsage,
-        trace: wgpu::Trace::Off,
-    }))
-    .map_err(|e| format!("request_device: {e:?}"))?;
-    Ok(Headless { device, queue })
+    // 先只探 Vulkan，失败再回退全后端（macOS/无 Vulkan 平台）。
+    // 本机 A/B：Vulkan-only init 中位数 ~436 ms vs 全后端 ~870 ms，转换耗时不变。
+    for backends in [wgpu::Backends::VULKAN, wgpu::Backends::all()] {
+        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        desc.backends = backends;
+        let instance = wgpu::Instance::new(desc);
+        let Ok(adapter) =
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+        else {
+            continue;
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("conv-core-headless"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            experimental_features: wgpu::ExperimentalFeatures::disabled(),
+            memory_hints: wgpu::MemoryHints::MemoryUsage,
+            trace: wgpu::Trace::Off,
+        }))
+        .map_err(|e| format!("request_device: {e:?}"))?;
+        return Ok(Headless { device, queue });
+    }
+    Err("no wgpu adapter".into())
 }
 
 #[repr(C)]
