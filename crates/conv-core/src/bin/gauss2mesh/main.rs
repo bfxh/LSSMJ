@@ -7,7 +7,7 @@ mod args;
 mod html;
 mod report;
 
-use args::{Config, HELP, ModeSel, is_bool_flag, parse_config};
+use args::{Config, HELP, ModeSel, is_bool_flag, parse_config, use_bins3d};
 use conv_core::gauss::mesh::{Mesh, field_to_mesh, field_to_mesh_gpu, write_obj};
 use conv_core::gauss::ply::{PlyReadOptions, parse_ply_with};
 use conv_core::gauss::voxel::{
@@ -385,9 +385,10 @@ fn convert_and_write(
         None
     };
     let gpu_ref = gpu_device;
+    let bins3d = use_bins3d(cfg, cfg.grid, threads, kept.len());
     let mut voxel_opts = VoxelizeOptions {
         mode,
-        bins3d: cfg.bins3d,
+        bins3d,
         simd_prep: cfg.simd_prep,
         backend: if cfg.gpu && gpu_device.is_some() {
             Backend::Gpu
