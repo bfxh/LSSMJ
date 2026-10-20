@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0c1018; color: #e8edf7;
+    font-family: "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif; }
+  #gl { display: block; width: 100vw; height: 100vh; touch-action: none; cursor: grab; }
+  #gl.drag { cursor: grabbing; }
+  #hud { position: fixed; top: 18px; left: 18px; width: min(360px, calc(100vw - 36px));
+    padding: 16px 18px; border: 1px solid rgba(150, 180, 230, .18); border-radius: 14px;
+    background: rgba(12, 17, 27, .82); backdrop-filter: blur(10px); box-shadow: 0 18px 50px rgba(0,0,0,.35); }
+  h1 { font-size: 15px; letter-spacing: .04em; margin: 0 0 4px; font-weight: 650; }
+  #subject { font-size: 11.5px; color: #8fa3c4; margin-bottom: 12px; word-break: break-all; }
+  #stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 12px;
+    font-size: 12px; margin-bottom: 13px; }
+  #stats div { display: flex; justify-content: space-between; gap: 8px; padding-bottom: 5px;
+    border-bottom: 1px solid rgba(140, 170, 220, .10); }
+  #stats span:first-child { color: #8496b5; }
+  #stats span:last-child { font-variant-numeric: tabular-nums; color: #dfe9fb; }
+  .warn { margin: 10px 0 4px; padding: 8px 10px; border: 1px solid rgba(255, 190, 90, .30);
+    background: rgba(255, 170, 60, .08); border-radius: 8px; font-size: 11.5px; color: #ffd79a;
+    line-height: 1.5; word-break: break-word; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px 12px; font-size: 12px; color: #b9c8e2; margin: 8px 0; }
+  label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
+  input { accent-color: #6ea8ff; }
+  button { appearance: none; border: 1px solid rgba(140, 180, 240, .28); background: rgba(70, 110, 180, .16);
+    color: #dce8ff; border-radius: 7px; padding: 5px 10px; font-size: 12px; cursor: pointer; }
+  button:hover { background: rgba(90, 140, 220, .25); }
+  #hint { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
+    font-size: 11.5px; color: #7e90ad; letter-spacing: .03em; }
+  #err { position: fixed; inset: 0; display: none; place-items: center; font-size: 14px; color: #ffb4b4; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="hud">
+  <h1>__TITLE__</h1>
+  <div id="subject">__SUBJECT__</div>
+  <div id="stats"></div>
+  <div class="row">
+    <label><input type="checkbox" id="showMesh" checked> 网格</label>
+    <label><input type="checkbox" id="showPoints"> 高斯点</label>
+    <label><input type="checkbox" id="wire"> 线框</label>
+    <label><input type="checkbox" id="spin"> 自动旋转</label>
+  </div>
+  <div class="row"><button id="reset">重置视角</button><button id="front">正视</button></div>
+</div>
+<div id="hint">拖拽旋转 · 滚轮缩放</div>
+<div id="err">浏览器不支持 WebGL2</div>
+<script>
+const DATA = __DATA_JSON__;
+const canvas = document.getElementById('gl');
+const gl = canvas.getContext('webgl2', { antialias: true, preserveDrawingBuffer: true });
+if (!gl) {
+  document.getElementById('err').style.display = 'grid';
+}
+
+function main() {
+  const S = DATA.stats || {};
+  const stats = document.getElementById('stats');
+  const rows = [
+    ['模式', S.mode || '—'],
+    ['后端', S.backend || '—'],
+    ['网格', S.mesher === 'gpu' ? 'GPU' : 'CPU'],
+    ['分桶', S.backend === 'gpu' ? '—' : (S.bins3d ? '3D tile' : 'z-slab')],
+    ['Prep', S.simd_prep ? 'SIMD' : 'scalar'],
+    ['网格', (S.grid || '—') + '³'],
+    ['线程', S.workers || '—'],
+    ['顶点', fmtInt(S.vertices)],
+    ['三角形', fmtInt(S.triangles)],
+    ['体积', fmtNum(S.volume, 5)],
+    ['欧拉 χ', S.chi],
+    ['连通分量', S.components],
+    ['观测体素', fmtInt(S.observed)],
+    ['封闭填充', fmtInt(S.sealed)],
+    ['阈值', S.iso === 0 ? '0（TSDF）' : fmtNum(S.iso, 4)],
+    ['哈希', S.hash || '—'],
+  ];
+  for (const [k, v] of rows) {
+    const d = document.createElement('div');
+    d.innerHTML = '<span>' + k + '</span><span>' + (v === undefined || v === null ? '—' : v) + '</span>';
+    stats.appendChild(d);
+  }
+  if (Array.isArray(DATA.warnings) && DATA.warnings.length) {
+    const w = document.createElement('div');
+    w.className = 'warn';
+    w.textContent = '⚠ ' + DATA.warnings.join(' · ');
+    stats.after(w);
+  }
+
+  const progMesh = makeProgram(VS_MESH, FS_MESH);
+  const progPoint = makeProgram(VS_POINT, FS_POINT);
+  const mesh = DATA.mesh || {};
+  const pts = DATA.points || {};
+  const mPos = mesh.pos ? b64f32(mesh.pos) : f32(mesh.positions);
+  const mNrm = mesh.nrm ? b64f32(mesh.nrm) : f32(mesh.normals);
+  const mIdx = mesh.idx ? b64u32(mesh.idx) : u32(mesh.indices);
+  const pPos = pts.pos ? b64f32(pts.pos) : f32(pts.positions);
+  const pCol = pts.col ? b64f32(pts.col) : f32(pts.colors);
+  const meshVAO = makeVAO(progMesh, mPos, mNrm, 'aNrm', mIdx);
+  const pointVAO = makeVAO(progPoint, pPos, pCol, 'aColor', null);
+  const wire = buildWire(mIdx);
+  const wireVAO = makeWireVAO(progMesh, mPos, wire);
+
+  const bounds = DATA.bounds || { min: [-1, -1, -1], max: [1, 1, 1] };
+  const center = [
+    (bounds.min[0] + bounds.max[0]) / 2,
+    (bounds.min[1] + bounds.max[1]) / 2,
+    (bounds.min[2] + bounds.max[2]) / 2,
+  ];
+  const radius = Math.max(
+    Math.hypot(bounds.max[0] - bounds.min[0], bounds.max[1] - bounds.min[1], bounds.max[2] - bounds.min[2]) / 2,
+    1e-4
+  );
+
+  let yaw = 0.62, pitch = 0.30, dist = radius * 2.9;
+  const initial = { yaw, pitch, dist };
+  let dragging = false, lx = 0, ly = 0;
+
+  canvas.addEventListener('pointerdown', (e) => {
+    dragging = true; lx = e.clientX; ly = e.clientY;
+    canvas.setPointerCapture(e.pointerId); canvas.classList.add('drag');
+  });
+  canvas.addEventListener('pointerup', (e) => {
+    dragging = false; canvas.classList.remove('drag');
+    try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    yaw += (e.clientX - lx) * 0.008;
+    pitch = Math.max(-1.45, Math.min(1.45, pitch + (e.clientY - ly) * 0.008));
+    lx = e.clientX; ly = e.clientY;
+  });
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    dist = Math.max(radius * 0.35, Math.min(radius * 40, dist * Math.exp(e.deltaY * 0.001)));
+  }, { passive: false });
+
+  const showMesh = document.getElementById('showMesh');
+  const showPoints = document.getElementById('showPoints');
+  const wireBox = document.getElementById('wire');
+  const spin = document.getElementById('spin');
+  document.getElementById('reset').onclick = () => { yaw = initial.yaw; pitch = initial.pitch; dist = initial.dist; spin.checked = false; };
+  document.getElementById('front').onclick = () => { yaw = 0; pitch = 0; spin.checked = false; };
+
+  const uMVP = gl.getUniformLocation(progMesh, 'uMVP');
+  const uMV = gl.getUniformLocation(progMesh, 'uMV');
+  const uLine = gl.getUniformLocation(progMesh, 'uLine');
+  const uPointMVP = gl.getUniformLocation(progPoint, 'uMVP');
+  const uDpr = gl.getUniformLocation(progPoint, 'uDpr');
+
+  function resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const vw = window.innerWidth || 960;
+    const vh = window.innerHeight || 640;
+    const w = Math.floor(vw * dpr), h = Math.floor(vh * dpr);
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  }
+  window.addEventListener('resize', resize);
+
+  function render() {
+    resize();
+    if (spin.checked) yaw += 0.0035;
+    const eye = [
+      center[0] + dist * Math.cos(pitch) * Math.sin(yaw),
+      center[1] + dist * Math.sin(pitch),
+      center[2] + dist * Math.cos(pitch) * Math.cos(yaw),
+    ];
+    const view = mat4LookAt(eye, center, [0, 1, 0]);
+    const proj = mat4Perspective(45 * Math.PI / 180, canvas.width / canvas.height, dist * 0.01, dist * 20);
+    const mvp = mat4Mul(proj, view);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(0.047, 0.063, 0.094, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.CULL_FACE);
+    gl.cullFace(gl.BACK);
+
+    if (showMesh.checked && mIdx.length) {
+      gl.useProgram(progMesh);
+      gl.uniformMatrix4fv(uMVP, false, mvp);
+      gl.uniformMatrix4fv(uMV, false, view);
+      gl.uniform1f(uLine, 0);
+      if (wireBox.checked) {
+        gl.enable(gl.POLYGON_OFFSET_FILL);
+        gl.polygonOffset(1, 1);
+      }
+      gl.bindVertexArray(meshVAO);
+      gl.drawElements(gl.TRIANGLES, mIdx.length, gl.UNSIGNED_INT, 0);
+      gl.disable(gl.POLYGON_OFFSET_FILL);
+      if (wireBox.checked && wire.length) {
+        gl.uniform1f(uLine, 1);
+        gl.bindVertexArray(wireVAO);
+        gl.drawArrays(gl.LINES, 0, wire.length);
+      }
+    }
+    if (showPoints.checked && pPos.length) {
+      gl.useProgram(progPoint);
+      gl.uniformMatrix4fv(uPointMVP, false, mvp);
+      gl.uniform1f(uDpr, Math.min(window.devicePixelRatio || 1, 2));
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.depthMask(false);
+      gl.bindVertexArray(pointVAO);
+      gl.drawArrays(gl.POINTS, 0, pPos.length / 3);
+      gl.depthMask(true);
+      gl.disable(gl.BLEND);
+    }
+    gl.bindVertexArray(null);
+  }
+  function frame() { render(); requestAnimationFrame(frame); }
+  requestAnimationFrame(frame);
+  window.__lssmj = {
+    info: { vertices: mPos.length / 3, triangles: mIdx.length / 3, points: pPos.length / 3 },
+    render,
+    pixels() {
+      const w = canvas.width, h = canvas.height;
+      const px = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      let nonBg = 0, min = 255, max = 0;
+      for (let i = 0; i < px.length; i += 4) {
+        const v = (px[i] + px[i + 1] + px[i + 2]) / 3;
+        if (v > 30) nonBg++;
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
+      return { w, h, nonBg, min, max, err: gl.getError() };
+    },
+  };
+}
+
+const VS_MESH = `#version 300 es
+in vec3 aPos;
+in vec3 aNrm;
+uniform mat4 uMVP;
+uniform mat4 uMV;
+out vec3 vN;
+void main() {
+  vN = mat3(uMV) * aNrm;
+  gl_Position = uMVP * vec4(aPos, 1.0);
+}`;
+
+const FS_MESH = `#version 300 es
+precision highp float;
+in vec3 vN;
+uniform float uLine;
+out vec4 outColor;
+void main() {
+  if (uLine > 0.5) { outColor = vec4(0.58, 0.78, 1.0, 0.85); return; }
+  vec3 n = normalize(vN);
+  vec3 key = normalize(vec3(0.45, 0.80, 0.55));
+  vec3 fill = normalize(vec3(-0.65, 0.15, -0.55));
+  float d = max(dot(n, key), 0.0) * 0.78 + max(dot(n, fill), 0.0) * 0.28 + 0.18;
+  vec3 base = vec3(0.70, 0.77, 0.92);
+  outColor = vec4(base * d, 1.0);
+}`;
+
+const VS_POINT = `#version 300 es
+in vec3 aPos;
+in vec3 aColor;
+uniform mat4 uMVP;
+uniform float uDpr;
+out vec3 vColor;
+void main() {
+  vColor = aColor;
+  gl_PointSize = 2.2 * uDpr;
+  gl_Position = uMVP * vec4(aPos, 1.0);
+}`;
+
+const FS_POINT = `#version 300 es
+precision highp float;
+in vec3 vColor;
+out vec4 outColor;
+void main() { outColor = vec4(vColor, 0.68); }`;
+
+function makeProgram(vsSrc, fsSrc) {
+  const p = gl.createProgram();
+  for (const [type, src] of [[gl.VERTEX_SHADER, vsSrc], [gl.FRAGMENT_SHADER, fsSrc]]) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    gl.attachShader(p, s);
+  }
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  return p;
+}
+
+function b64bytes(s) {
+  const bin = atob(s);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+function b64f32(s) {
+  const b = b64bytes(s);
+  return new Float32Array(b.buffer, b.byteOffset, b.byteLength >> 2);
+}
+function b64u32(s) {
+  const b = b64bytes(s);
+  return new Uint32Array(b.buffer, b.byteOffset, b.byteLength >> 2);
+}
+function f32(a) { return a instanceof Float32Array ? a : new Float32Array(a || []); }
+function u32(a) { return a instanceof Uint32Array ? a : new Uint32Array(a || []); }
+
+function makeVAO(prog, pos, aux, auxName, idx) {
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(gl.ARRAY_BUFFER, f32(pos), gl.STATIC_DRAW);
+  const locPos = gl.getAttribLocation(prog, 'aPos');
+  gl.enableVertexAttribArray(locPos);
+  gl.vertexAttribPointer(locPos, 3, gl.FLOAT, false, 0, 0);
+  if (aux && aux.length) {
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, f32(aux), gl.STATIC_DRAW);
+    const loc = gl.getAttribLocation(prog, auxName);
+    if (loc >= 0) {
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
+    }
+  }
+  if (idx && idx.length) {
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, u32(idx), gl.STATIC_DRAW);
+  }
+  gl.bindVertexArray(null);
+  return vao;
+}
+
+function makeWireVAO(prog, positions, wire) {
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(gl.ARRAY_BUFFER, f32(positions), gl.STATIC_DRAW);
+  const locPos = gl.getAttribLocation(prog, 'aPos');
+  gl.enableVertexAttribArray(locPos);
+  gl.vertexAttribPointer(locPos, 3, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, u32(wire), gl.STATIC_DRAW);
+  gl.bindVertexArray(null);
+  return vao;
+}
+
+function buildWire(idx) {
+  const seen = new Set();
+  const out = [];
+  for (let i = 0; i < idx.length; i += 3) {
+    const a = idx[i], b = idx[i + 1], c = idx[i + 2];
+    for (const [u, v] of [[a, b], [b, c], [c, a]]) {
+      const k = u < v ? u + ',' + v : v + ',' + u;
+      if (!seen.has(k)) { seen.add(k); out.push(u, v); }
+    }
+  }
+  return out;
+}
+
+function mat4Perspective(fovy, aspect, near, far) {
+  const f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far);
+  return new Float32Array([
+    f / aspect, 0, 0, 0,
+    0, f, 0, 0,
+    0, 0, (far + near) * nf, -1,
+    0, 0, 2 * far * near * nf, 0,
+  ]);
+}
+
+function mat4LookAt(eye, target, up) {
+  let zx = eye[0] - target[0], zy = eye[1] - target[1], zz = eye[2] - target[2];
+  let zl = Math.hypot(zx, zy, zz) || 1; zx /= zl; zy /= zl; zz /= zl;
+  let xx = up[1] * zz - up[2] * zy, xy = up[2] * zx - up[0] * zz, xz = up[0] * zy - up[1] * zx;
+  let xl = Math.hypot(xx, xy, xz) || 1; xx /= xl; xy /= xl; xz /= xl;
+  const yx = zy * xz - zz * xy, yy = zz * xx - zx * xz, yz = zx * xy - zy * xx;
+  return new Float32Array([
+    xx, yx, zx, 0,
+    xy, yy, zy, 0,
+    xz, yz, zz, 0,
+    -(xx * eye[0] + xy * eye[1] + xz * eye[2]),
+    -(yx * eye[0] + yy * eye[1] + yz * eye[2]),
+    -(zx * eye[0] + zy * eye[1] + zz * eye[2]),
+    1,
+  ]);
+}
+
+function mat4Mul(a, b) {
+  const out = new Float32Array(16);
+  for (let c = 0; c < 4; c++) {
+    for (let r = 0; r < 4; r++) {
+      out[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3];
+    }
+  }
+  return out;
+}
+
+function fmtInt(v) {
+  return (v === undefined || v === null) ? '—' : Number(v).toLocaleString('zh-CN');
+}
+
+function fmtNum(v, d) {
+  return (v === undefined || v === null || !isFinite(v)) ? '—' : Number(v).toFixed(d);
+}
+
+if (gl) {
+  try {
+    main();
+  } catch (e) {
+    const err = document.getElementById('err');
+    err.textContent = '预览初始化失败：' + e;
+    err.style.display = 'grid';
+    console.error(e);
+  }
+}
+</script>
+</body>
+</html>

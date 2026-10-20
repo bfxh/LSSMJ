@@ -4,6 +4,8 @@
 //! 做 cell 映射对拍——无需 GPU 压缩（compaction 属后续片）。
 //! 顺序口径：四边形槽位 = atomicAdd（执行序，非确定）；判据在读回侧按"四顶点规范键"
 //! 排序后对拍——四边形集合与绕序确定 ⇒ 排序流逐位确定。
+//! 索引缓冲按 CPU 预数的实际四边形数精确分配（不再用 `18·n³` 最坏值），
+//! 128³ 不再触发默认 128 MB storage binding 上限；超限时返回 Err 由调用方回退。
 //! 教训留档：base/前缀 + write_buffer 路线曾出现"输入逐位一致、输出随机"的未解非确定性
 //! （counts/base 读回一致、纯 kernel、identity-stub 稳定——证据在 w15c 判据档），
 //! 故本片弃用该机械；若后续需要 GPU 顺序，走 GPU scan（规范保证）而非 write_buffer。
@@ -32,11 +34,58 @@ pub struct GsnMesh {
     pub n: u32,
 }
 
+/// 与 `emit_quads` 同一判据（三条轴边 + 同样的边界限制）预数四边形，
+/// 让索引缓冲按实际大小分配而不是最坏 `18·n³` 字节。
+fn count_quads(sdf: &[f32], n: u32) -> u64 {
+    let nus = n as usize;
+    let nn = nus * nus;
+    let mut quads = 0u64;
+    for z in 0..nus - 1 {
+        for y in 0..nus - 1 {
+            let base = y * nus + z * nn;
+            for x in 0..nus - 1 {
+                let lin = base + x;
+                let s = sdf[lin];
+                if y > 0 && z > 0 && x + 2 < nus && sign_diff(s, sdf[lin + 1]) {
+                    quads += 1;
+                }
+                if x > 0 && z > 0 && y + 2 < nus && sign_diff(s, sdf[lin + nus]) {
+                    quads += 1;
+                }
+                if x > 0 && y > 0 && z + 2 < nus && sign_diff(s, sdf[lin + nn]) {
+                    quads += 1;
+                }
+            }
+        }
+    }
+    quads
+}
+
+fn sign_diff(a: f32, b: f32) -> bool {
+    (a < 0.0) != (b < 0.0)
+}
+
 /// GPU Surface Nets：`sdf` 为 index 单位（[0,n)³），cell 范围与 CPU 版一致（[0,n−2]³）。
-pub fn surface_nets_gpu(hd: &Headless, sdf: &[f32], n: u32) -> GsnMesh {
+pub fn surface_nets_gpu(hd: &Headless, sdf: &[f32], n: u32) -> Result<GsnMesh, String> {
     let device = &hd.device;
     let queue = &hd.queue;
     let count = (n * n * n) as usize;
+    let quads = count_quads(sdf, n);
+    let idx_bytes = quads * 6 * 4;
+    let max_bind = device.limits().max_storage_buffer_binding_size;
+    for (label, bytes) in [
+        ("顶点", count as u64 * 16),
+        ("标记", count as u64 * 4),
+        ("索引", idx_bytes),
+    ] {
+        if bytes > max_bind {
+            return Err(format!(
+                "GSN {label}缓冲 {:.1} MB 超过设备绑定上限 {:.1} MB",
+                bytes as f64 / (1 << 20) as f64,
+                max_bind as f64 / (1 << 20) as f64
+            ));
+        }
+    }
 
     let sdf_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("gsn-sdf"),
@@ -69,13 +118,20 @@ pub fn surface_nets_gpu(hd: &Headless, sdf: &[f32], n: u32) -> GsnMesh {
         contents: &[0u8; 4],
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
     });
-    // 上限 = cell 数 × 3 四边形 × 6 索引
-    let idx_buf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("gsn-idx"),
-        size: ((count as u64) * 3 * 6 * 4).max(4),
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    });
+    let idx_buf = if idx_bytes == 0 {
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("gsn-idx-empty"),
+            contents: &[0u8; 4],
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        })
+    } else {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gsn-idx"),
+            size: idx_bytes,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        })
+    };
 
     let module = device.create_shader_module(wgpu::include_wgsl!("gsn.wgsl"));
     let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -168,10 +224,19 @@ pub fn surface_nets_gpu(hd: &Headless, sdf: &[f32], n: u32) -> GsnMesh {
         .map(f32::to_bits)
         .next()
         .unwrap_or(0);
-    let mut indices = readback_f32(hd, &idx_buf)
-        .into_iter()
-        .map(f32::to_bits)
-        .collect::<Vec<u32>>();
+    if quad_count as u64 != quads {
+        return Err(format!(
+            "GSN 四边形计数与 CPU 预算不一致：gpu={quad_count} cpu={quads}"
+        ));
+    }
+    let mut indices = if quad_count == 0 {
+        Vec::new()
+    } else {
+        readback_f32(hd, &idx_buf)
+            .into_iter()
+            .map(f32::to_bits)
+            .collect::<Vec<u32>>()
+    };
     indices.truncate((quad_count as usize) * 6);
     let mut positions = Vec::with_capacity(count);
     let pos_raw = readback_f32(hd, &vtx_pos_buf);
@@ -183,11 +248,11 @@ pub fn surface_nets_gpu(hd: &Headless, sdf: &[f32], n: u32) -> GsnMesh {
         .map(f32::to_bits)
         .collect();
 
-    GsnMesh {
+    Ok(GsnMesh {
         positions,
         flags,
         indices,
         quad_count,
         n,
-    }
+    })
 }
