@@ -283,11 +283,15 @@ fn chunk_ranges(n: u32, chunks: usize) -> Vec<Chunk> {
 fn parallel_map_chunks<T, F>(chunks: &[Chunk], workers: usize, f: F) -> Vec<(usize, T)>
 where
     T: Send,
-    F: Fn(&Chunk) -> T + Sync,
+    F: Fn(usize, &Chunk) -> T + Sync,
 {
     let workers = workers.min(chunks.len()).max(1);
     if workers <= 1 || chunks.len() <= 1 {
-        return chunks.iter().enumerate().map(|(i, c)| (i, f(c))).collect();
+        return chunks
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (i, f(i, c)))
+            .collect();
     }
     std::thread::scope(|s| {
         let mut handles = Vec::with_capacity(workers);
@@ -296,7 +300,7 @@ where
             handles.push(s.spawn(move || {
                 let mut out = Vec::new();
                 for i in (w..chunks.len()).step_by(workers) {
-                    out.push((i, f(&chunks[i])));
+                    out.push((i, f(i, &chunks[i])));
                 }
                 out
             }));
@@ -312,38 +316,111 @@ where
     })
 }
 
+fn prepare_density_one(g: &Gaussian, min_var: f32) -> Prepared {
+    let eigen = g.eigen();
+    let lam = [
+        eigen.values[0].max(min_var),
+        eigen.values[1].max(min_var),
+        eigen.values[2].max(min_var),
+    ];
+    let radius = [
+        world_sigma(&eigen, lam, 0),
+        world_sigma(&eigen, lam, 1),
+        world_sigma(&eigen, lam, 2),
+    ];
+    Prepared {
+        mean: g.mean,
+        opacity: g.opacity.clamp(0.0, 1.0),
+        eigen,
+        lam,
+        radius,
+        normal: [0.0; 3],
+    }
+}
+
+fn prepare_surfel_one(
+    g: &Gaussian,
+    centroid: [f32; 3],
+    normal_sigma: f32,
+    tangent_floor: f32,
+) -> Prepared {
+    let eigen = g.eigen();
+    let normal = match g.normal {
+        Some(n) => normalize_vec(n),
+        None => {
+            let n = eigen.vectors[0];
+            let away = [
+                g.mean[0] - centroid[0],
+                g.mean[1] - centroid[1],
+                g.mean[2] - centroid[2],
+            ];
+            if dot(n, away) < 0.0 {
+                [-n[0], -n[1], -n[2]]
+            } else {
+                n
+            }
+        }
+    };
+    let normal = normalize_vec(normal);
+    let lam = [
+        eigen.values[0].max(normal_sigma),
+        eigen.values[1].max(tangent_floor),
+        eigen.values[2].max(tangent_floor),
+    ];
+    let radius = [
+        world_sigma(&eigen, lam, 0),
+        world_sigma(&eigen, lam, 1),
+        world_sigma(&eigen, lam, 2),
+    ];
+    Prepared {
+        mean: g.mean,
+        opacity: g.opacity.clamp(0.0, 1.0),
+        eigen,
+        lam,
+        radius,
+        normal,
+    }
+}
+
+/// 按输入顺序分块并行 prepare；每块内保持 Gaussian 顺序，拼回后与单线程逐位一致。
+fn parallel_prepare<F>(gaussians: &[Gaussian], workers: usize, f: F) -> Vec<Prepared>
+where
+    F: Fn(&Gaussian) -> Prepared + Sync,
+{
+    let filtered: Vec<&Gaussian> = gaussians
+        .iter()
+        .filter(|g| g.is_finite() && g.opacity > 0.0)
+        .collect();
+    let n = filtered.len();
+    let workers = workers.min(n).max(1);
+    if workers <= 1 || n < 2048 {
+        return filtered.iter().map(|g| f(g)).collect();
+    }
+    let chunk_size = n.div_ceil(workers);
+    std::thread::scope(|s| {
+        let mut handles = Vec::new();
+        for chunk in filtered.chunks(chunk_size) {
+            let f = &f;
+            handles.push(s.spawn(move || chunk.iter().map(|g| f(g)).collect::<Vec<_>>()));
+        }
+        let mut out = Vec::with_capacity(n);
+        for h in handles {
+            match h.join() {
+                Ok(v) => out.extend(v),
+                Err(_) => panic!("prepare worker panicked"),
+            }
+        }
+        out
+    })
+}
+
 pub(crate) fn prepare_density(
     gaussians: &[Gaussian],
     grid: &Grid,
     opts: &VoxelizeOptions,
 ) -> Vec<Prepared> {
     let min_var = (opts.kernel_clamp_cells.max(0.001) * grid.h).powi(2);
-    let mut out = Vec::with_capacity(gaussians.len());
-    for g in gaussians {
-        if !g.is_finite() || g.opacity <= 0.0 {
-            continue;
-        }
-        let eigen = g.eigen();
-        let lam = [
-            eigen.values[0].max(min_var),
-            eigen.values[1].max(min_var),
-            eigen.values[2].max(min_var),
-        ];
-        let radius = [
-            world_sigma(&eigen, lam, 0),
-            world_sigma(&eigen, lam, 1),
-            world_sigma(&eigen, lam, 2),
-        ];
-        out.push(Prepared {
-            mean: g.mean,
-            opacity: g.opacity.clamp(0.0, 1.0),
-            eigen,
-            lam,
-            radius,
-            normal: [0.0; 3],
-        });
-    }
-    out
+    parallel_prepare(gaussians, opts.threads, |g| prepare_density_one(g, min_var))
 }
 
 pub(crate) fn prepare_surfel(
@@ -373,55 +450,47 @@ pub(crate) fn prepare_surfel(
     let normal_sigma = (opts.normal_band_cells.max(0.25) * grid.h).powi(2);
     let tangent_floor = (0.25 * grid.h).powi(2);
     let clamp_abs = 3.0 * grid.h;
-    let mut out = Vec::with_capacity(gaussians.len());
-    for g in gaussians {
-        if !g.is_finite() || g.opacity <= 0.0 {
-            continue;
-        }
-        let eigen = g.eigen();
-        let normal = match g.normal {
-            Some(n) => normalize_vec(n),
-            None => {
-                let n = eigen.vectors[0];
-                let away = [
-                    g.mean[0] - centroid[0],
-                    g.mean[1] - centroid[1],
-                    g.mean[2] - centroid[2],
-                ];
-                if dot(n, away) < 0.0 {
-                    [-n[0], -n[1], -n[2]]
-                } else {
-                    n
-                }
-            }
-        };
-        let normal = normalize_vec(normal);
-        let lam = [
-            eigen.values[0].max(normal_sigma),
-            eigen.values[1].max(tangent_floor),
-            eigen.values[2].max(tangent_floor),
-        ];
-        let radius = [
-            world_sigma(&eigen, lam, 0),
-            world_sigma(&eigen, lam, 1),
-            world_sigma(&eigen, lam, 2),
-        ];
-        out.push(Prepared {
-            mean: g.mean,
-            opacity: g.opacity.clamp(0.0, 1.0),
-            eigen,
-            lam,
-            radius,
-            normal,
-        });
-    }
+    let out = parallel_prepare(gaussians, opts.threads, |g| {
+        prepare_surfel_one(g, centroid, normal_sigma, tangent_floor)
+    });
     (out, clamp_abs)
 }
 
-fn splat_density_chunk(prepared: &[Prepared], grid: &Grid, chunk: Chunk, out: &mut [f32]) {
+/// 每个 z 块只保留与它相交的 Gaussian 下标（按 prepared 顺序，故累加顺序不变）。
+fn build_bins(prepared: &[Prepared], grid: &Grid, chunks: &[Chunk]) -> Vec<Vec<u32>> {
+    let n = grid.n as usize;
+    let mut z_to_chunk = vec![0u32; n];
+    for (ci, c) in chunks.iter().enumerate() {
+        for z in c.z0..c.z1 {
+            z_to_chunk[z as usize] = ci as u32;
+        }
+    }
+    let mut bins: Vec<Vec<u32>> = (0..chunks.len()).map(|_| Vec::new()).collect();
+    for (i, g) in prepared.iter().enumerate() {
+        let range = splat_range(grid, g.mean, g.radius);
+        if range.empty {
+            continue;
+        }
+        let c0 = z_to_chunk[range.lo[2] as usize] as usize;
+        let c1 = z_to_chunk[range.hi[2] as usize] as usize;
+        for bin in &mut bins[c0..=c1] {
+            bin.push(i as u32);
+        }
+    }
+    bins
+}
+
+fn splat_density_chunk(
+    prepared: &[Prepared],
+    indices: &[u32],
+    grid: &Grid,
+    chunk: Chunk,
+    out: &mut [f32],
+) {
     let n = grid.n as usize;
     let n2 = n * n;
-    for g in prepared {
+    for &gi in indices {
+        let g = &prepared[gi as usize];
         let range = splat_range(grid, g.mean, g.radius);
         if range.empty {
             continue;
@@ -451,6 +520,7 @@ fn splat_density_chunk(prepared: &[Prepared], grid: &Grid, chunk: Chunk, out: &m
 
 fn splat_surfel_chunk(
     prepared: &[Prepared],
+    indices: &[u32],
     grid: &Grid,
     chunk: Chunk,
     clamp_abs: f32,
@@ -459,7 +529,8 @@ fn splat_surfel_chunk(
 ) {
     let n = grid.n as usize;
     let n2 = n * n;
-    for g in prepared {
+    for &gi in indices {
+        let g = &prepared[gi as usize];
         let range = splat_range(grid, g.mean, g.radius);
         if range.empty {
             continue;
@@ -501,9 +572,10 @@ fn parallel_splat_density(prepared: &[Prepared], grid: &Grid, workers: usize) ->
     };
     let chunks = chunk_ranges(grid.n, chunk_count);
     let workers = workers.min(chunks.len()).max(1);
-    let mut parts = parallel_map_chunks(&chunks, workers, |c| {
+    let bins = build_bins(prepared, grid, &chunks);
+    let mut parts = parallel_map_chunks(&chunks, workers, |i, c| {
         let mut local = vec![0f32; n2 * (c.z1 - c.z0) as usize];
-        splat_density_chunk(prepared, grid, *c, &mut local);
+        splat_density_chunk(prepared, &bins[i], grid, *c, &mut local);
         local
     });
     parts.sort_by_key(|(i, _)| *i);
@@ -531,11 +603,12 @@ fn parallel_splat_surfel(
     };
     let chunks = chunk_ranges(grid.n, chunk_count);
     let workers = workers.min(chunks.len()).max(1);
-    let mut parts = parallel_map_chunks(&chunks, workers, |c| {
+    let bins = build_bins(prepared, grid, &chunks);
+    let mut parts = parallel_map_chunks(&chunks, workers, |i, c| {
         let len = n2 * (c.z1 - c.z0) as usize;
         let mut num = vec![0f32; len];
         let mut den = vec![0f32; len];
-        splat_surfel_chunk(prepared, grid, *c, clamp_abs, &mut num, &mut den);
+        splat_surfel_chunk(prepared, &bins[i], grid, *c, clamp_abs, &mut num, &mut den);
         (num, den)
     });
     parts.sort_by_key(|(i, _)| *i);
@@ -792,6 +865,102 @@ mod bench_post {
         println!(
             "n={n} sort={sort_ms:.2} ms select={sel_ms:.2} ms ratio={:.1}x",
             sort_ms / sel_ms
+        );
+    }
+}
+
+#[cfg(test)]
+mod bench_prepare {
+    use super::*;
+    use crate::gauss::{bounds_of, sphere_gaussians};
+    use std::time::Instant;
+
+    fn assert_same(a: &[Prepared], b: &[Prepared]) {
+        assert_eq!(a.len(), b.len());
+        for (x, y) in a.iter().zip(b) {
+            assert_eq!(x.mean.map(f32::to_bits), y.mean.map(f32::to_bits));
+            assert_eq!(x.opacity.to_bits(), y.opacity.to_bits());
+            assert_eq!(x.lam.map(f32::to_bits), y.lam.map(f32::to_bits));
+            assert_eq!(x.radius.map(f32::to_bits), y.radius.map(f32::to_bits));
+            assert_eq!(x.normal.map(f32::to_bits), y.normal.map(f32::to_bits));
+            assert_eq!(
+                x.eigen.values.map(f32::to_bits),
+                y.eigen.values.map(f32::to_bits)
+            );
+            for k in 0..3 {
+                assert_eq!(
+                    x.eigen.vectors[k].map(f32::to_bits),
+                    y.eigen.vectors[k].map(f32::to_bits)
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "diagnostic timing probe"]
+    fn bench_prepare_and_bins() {
+        let gs = sphere_gaussians(100_000, 0.75, 0.99);
+        let bounds = bounds_of(&gs);
+        let grid = Grid::fit(bounds, 128, 3).unwrap();
+        let one = VoxelizeOptions {
+            n: 128,
+            threads: 1,
+            ..VoxelizeOptions::default()
+        };
+        let many = VoxelizeOptions {
+            threads: 24,
+            ..one.clone()
+        };
+
+        let t = Instant::now();
+        let d1 = prepare_density(&gs, &grid, &one);
+        let t1 = t.elapsed().as_secs_f64() * 1e3;
+        let t = Instant::now();
+        let d2 = prepare_density(&gs, &grid, &many);
+        let t2 = t.elapsed().as_secs_f64() * 1e3;
+        assert_same(&d1, &d2);
+        println!(
+            "prepare density n={} 1T={t1:.1}ms 24T={t2:.1}ms ratio={:.2}x",
+            gs.len(),
+            t1 / t2
+        );
+
+        let t = Instant::now();
+        let (s1, _) = prepare_surfel(&gs, &grid, &one);
+        let t1 = t.elapsed().as_secs_f64() * 1e3;
+        let t = Instant::now();
+        let (s2, _) = prepare_surfel(&gs, &grid, &many);
+        let t2 = t.elapsed().as_secs_f64() * 1e3;
+        assert_same(&s1, &s2);
+        println!(
+            "prepare surfel  n={} 1T={t1:.1}ms 24T={t2:.1}ms ratio={:.2}x",
+            gs.len(),
+            t1 / t2
+        );
+
+        let chunks = chunk_ranges(128, 48);
+        let t = Instant::now();
+        let mut checks = 0usize;
+        for c in &chunks {
+            for g in &d1 {
+                let r = splat_range(&grid, g.mean, g.radius);
+                if !r.empty {
+                    let z_lo = r.lo[2].max(c.z0);
+                    let z_hi = r.hi[2].min(c.z1 - 1);
+                    if z_lo <= z_hi {
+                        checks += 1;
+                    }
+                }
+            }
+        }
+        let old_ms = t.elapsed().as_secs_f64() * 1e3;
+        let t = Instant::now();
+        let bins = build_bins(&d1, &grid, &chunks);
+        let new_ms = t.elapsed().as_secs_f64() * 1e3;
+        let entries: usize = bins.iter().map(Vec::len).sum();
+        println!(
+            "bins n=1e5 chunks={} old_scan={old_ms:.1}ms checks={checks} build={new_ms:.1}ms entries={entries}",
+            chunks.len()
         );
     }
 }
