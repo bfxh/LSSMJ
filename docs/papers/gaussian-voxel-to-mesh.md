@@ -139,6 +139,7 @@ f(p)   = num/den  if den ≥ min_weight else 未知
 | `--gpu-mesh` | 关 | GPU Surface Nets 实验档；64³ 热态 13–15 ms、128³ 96–183 ms（CPU 4/21 ms），通常更慢 |
 | `--bins3d` | 关 | CPU splat 走 3D tile 分桶（20k 1.14–1.25×）；默认 z-slab；GPU 忽略 |
 | `--simd-prep` | 关 | 可选 AVX2 cyclic eigen prep；默认标量逐位；opt-in 改哈希；当前规模无端到端收益 |
+| `--largest-component` | 关 | 只保留三角形数最多的连通分量；去 floaters/碎片，但会删掉真实小物体 |
 | `--prune-opacity` | 0.05 | 丢低不透明度 floaters；太高会削掉真实薄结构 |
 | `--iso` | auto（0.65×q99.9） | 密度阈值；**低=胖/易闭合，高=紧/易破壳**；surfel 忽略 |
 | `--padding` | 3 | 域边界留白格；覆盖 3h 采样带宽，防止表面被截断 |
@@ -570,6 +571,20 @@ CPU 行是默认 z-slab；`--bins3d` 在 12–20k 实测快 15–35%（hash 不�
 
 （绝对值受同轮系统负载影响，只看 A/B 比值。）逐位测试 9/9 通过；`--threads 1` 路径不变。
 
+### 6.11 最大连通分量过滤（`--largest-component`）
+
+按三角形边做并查集，取三角形数最多的分量（同数取最小根 ⇒ 确定性），压缩顶点并重算
+体积/χ/哈希。两个分离球的合成场（各 2k 高斯、64³、density）：
+
+| 项 | 默认 | `--largest-component` |
+| --- | --- | --- |
+| 连通分量 | 2 | **1** |
+| 三角形 | 9,664 | **4,832** |
+| 体积 | 9.610 | **4.805（0.500×）** |
+| χ | 4（两壳） | **2** |
+
+判据在 `tests/largest_component.rs`；opt-in，默认不改变任何网格。
+
 ## 7. 限制与否证条件（不许当结论）
 
 1. **CPU 多线程，非实时**：64³/20k 高斯总耗时约 0.05–0.07 s（24 线程；1T 参照 0.36–0.48 s）；
@@ -583,6 +598,7 @@ CPU 行是默认 z-slab；`--bins3d` 在 12–20k 实测快 15–35%（hash 不�
 6. **无法线时不估法线**：`auto` 走 density；显式 surfel 用"最薄轴+质心定向"，只对凸/近凸场景可信。
 7. **Surface Nets 抹尖角**：DC/MT 质量档未接（`W15A-019/008`）；薄流/尖特征的质量判据尚未做（T-GC-03 的薄流场景）。
 8. **无颜色/UV/材质**：OBJ 只导几何+法线；SH 只用于预览点的颜色（DC 项）。
+   `--largest-component` 只适合“单主物体 + 碎片”资产；真实多物体场景会被删掉次物体。
 9. **封闭填充假设"物体是实心"**：空心物体（杯子/壳体）会被填实；需要 `--hollow` 或专门的开口检测。
 10. **未见真 2DGS/SuGaR 资产**：本轮的真实 PLY 是用脚本按 3DGS 语义合成的；
     对训练产物的法线一致性/尺度分布尚未实测。
@@ -631,6 +647,11 @@ CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo blobs
 CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo sphere --gpu
 # GPU 网格实验档（通常更慢；128³ 会显式回退 CPU）
 CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo sphere --gpu --gpu-mesh
+# CPU 可选档：3D tile / SIMD prep / 只保留最大连通分量
+CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo sphere --bins3d
+CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo sphere --simd-prep
+CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo blobs --largest-component
+CARGO_INCREMENTAL=0 cargo test --release --test largest_component -- --test-threads=1 --nocapture
 # 打开 out/sphere.html（自包含，无外部依赖）
 
 # 真实 PLY

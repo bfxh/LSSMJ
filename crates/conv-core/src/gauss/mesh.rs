@@ -74,13 +74,6 @@ fn mesh_from_gsn(gsn: &crate::gsn::GsnMesh, grid: &Grid) -> Mesh {
     }
     indices.as_chunks_mut::<3>().0.sort_unstable();
 
-    let mut vol = signed_volume(&positions, &indices);
-    if vol < 0.0 {
-        for t in indices.as_chunks_mut::<3>().0 {
-            t.swap(1, 2);
-        }
-        vol = -vol;
-    }
     let mut normals = vec![[0.0f32; 3]; positions.len()];
     for t in indices.as_chunks::<3>().0 {
         let n = face_normal(
@@ -98,7 +91,98 @@ fn mesh_from_gsn(gsn: &crate::gsn::GsnMesh, grid: &Grid) -> Mesh {
     for n in &mut normals {
         *n = super::normalize_vec(*n);
     }
+    finish_mesh(positions, normals, indices, grid)
+}
 
+/// 只保留三角形数最多的连通分量（同数取最小根，确定性），压缩顶点并重算统计/哈希。
+pub fn keep_largest_component(mesh: &Mesh, grid: &Grid) -> Mesh {
+    let n = mesh.positions.len();
+    if n == 0 || mesh.indices.is_empty() {
+        return finish_mesh(Vec::new(), Vec::new(), Vec::new(), grid);
+    }
+    let mut parent: Vec<u32> = (0..n as u32).collect();
+    fn find(parent: &mut [u32], mut x: u32) -> u32 {
+        while parent[x as usize] != x {
+            parent[x as usize] = parent[parent[x as usize] as usize];
+            x = parent[x as usize];
+        }
+        x
+    }
+    for t in mesh.indices.as_chunks::<3>().0 {
+        for e in 0..3 {
+            let a = find(&mut parent, t[e]);
+            let b = find(&mut parent, t[(e + 1) % 3]);
+            if a != b {
+                parent[a as usize] = b;
+            }
+        }
+    }
+    let mut tri_count = vec![0usize; n];
+    for t in mesh.indices.as_chunks::<3>().0 {
+        let r = find(&mut parent, t[0]) as usize;
+        tri_count[r] += 1;
+    }
+    let mut best = 0u32;
+    let mut best_count = 0usize;
+    for (i, &c) in tri_count.iter().enumerate() {
+        if c > best_count {
+            best_count = c;
+            best = i as u32;
+        }
+    }
+    if best_count == 0 {
+        return finish_mesh(Vec::new(), Vec::new(), Vec::new(), grid);
+    }
+    let mut remap = vec![u32::MAX; n];
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut indices = Vec::with_capacity(mesh.indices.len());
+    for t in mesh.indices.as_chunks::<3>().0 {
+        if find(&mut parent, t[0]) != best {
+            continue;
+        }
+        for &v in t {
+            let mut k = remap[v as usize];
+            if k == u32::MAX {
+                k = positions.len() as u32;
+                remap[v as usize] = k;
+                positions.push(mesh.positions[v as usize]);
+                normals.push(
+                    mesh.normals
+                        .get(v as usize)
+                        .copied()
+                        .unwrap_or([0.0, 1.0, 0.0]),
+                );
+            }
+            indices.push(k);
+        }
+    }
+    finish_mesh(positions, normals, indices, grid)
+}
+
+fn finish_mesh(
+    positions: Vec<[f32; 3]>,
+    mut normals: Vec<[f32; 3]>,
+    mut indices: Vec<u32>,
+    grid: &Grid,
+) -> Mesh {
+    if positions.is_empty() {
+        indices.clear();
+    }
+    let mut vol = signed_volume(&positions, &indices);
+    if vol < 0.0 {
+        for t in indices.as_chunks_mut::<3>().0 {
+            t.swap(1, 2);
+        }
+        for v in &mut normals {
+            *v = [-v[0], -v[1], -v[2]];
+        }
+        vol = -vol;
+    }
+    if normals.len() < positions.len() {
+        normals.resize(positions.len(), [0.0, 1.0, 0.0]);
+    }
+    normals.truncate(positions.len());
     let (components, chi, boundary_touch, bounds) = topo_stats(&positions, &indices, grid);
     let stats = MeshStats {
         vertices: positions.len(),
@@ -136,49 +220,12 @@ pub fn field_to_mesh(field: &Field) -> Mesh {
             ]
         })
         .collect();
-    let mut normals: Vec<[f32; 3]> = buf
+    let normals: Vec<[f32; 3]> = buf
         .normals
         .iter()
         .map(|v| super::normalize_vec(*v))
         .collect();
-    let mut indices = buf.indices;
-
-    let vol = signed_volume(&positions, &indices);
-    if vol < 0.0 {
-        for t in indices.as_chunks_mut::<3>().0 {
-            t.swap(1, 2);
-        }
-        for v in &mut normals {
-            *v = [-v[0], -v[1], -v[2]];
-        }
-    }
-    if normals.len() < positions.len() {
-        normals.resize(positions.len(), [0.0, 1.0, 0.0]);
-    }
-
-    let (components, chi, boundary_touch, bounds) = topo_stats(&positions, &indices, grid);
-    let hash = mesh_hash(&positions, &indices);
-    let stats = MeshStats {
-        vertices: positions.len(),
-        triangles: indices.len() / 3,
-        components,
-        chi,
-        volume: vol.abs(),
-        boundary_touch,
-        hash,
-        bounds,
-    };
-    // 顶点的法线数量应与位置一致；Surface Nets 保证这一点，防御性截断。
-    normals.truncate(positions.len());
-    if positions.is_empty() {
-        indices.clear();
-    }
-    Mesh {
-        positions,
-        normals,
-        indices,
-        stats,
-    }
+    finish_mesh(positions, normals, buf.indices, grid)
 }
 
 fn signed_volume(positions: &[[f32; 3]], indices: &[u32]) -> f32 {

@@ -19,6 +19,7 @@ LSSMJ gauss2mesh · 高斯体素 → 网格
   --gpu-mesh             GPU Surface Nets 网格化（实验档：读回开销大，通常慢于 CPU；失败回退）
   --bins3d               CPU splat 走 3D tile 分桶（默认 z-slab；GPU 忽略）
   --simd-prep            可选 SIMD/cyclic eigen prep（默认标量逐位；opt-in 改哈希）
+  --largest-component    只保留最大连通分量（去 floaters/碎片）
   --mode <auto|density|surfel>（默认 auto）
   --iso <auto|数值>      密度阈值；auto = 0.65 × 正密度 99.9 分位
   --prune-opacity <f>    不透明度下限（默认 0.05）
@@ -75,6 +76,7 @@ pub(crate) struct Config {
     pub(crate) max_radius: f32,
     pub(crate) padding: u32,
     pub(crate) seal: bool,
+    pub(crate) largest_component: bool,
     pub(crate) seed: u64,
     pub(crate) raw_scale: bool,
     pub(crate) raw_opacity: bool,
@@ -102,6 +104,7 @@ impl Default for Config {
             max_radius: 0.0,
             padding: 3,
             seal: true,
+            largest_component: false,
             seed: 7,
             raw_scale: false,
             raw_opacity: false,
@@ -128,6 +131,7 @@ pub(crate) fn is_bool_flag(name: &str) -> bool {
             | "gpu-mesh"
             | "bins3d"
             | "simd-prep"
+            | "largest-component"
     )
 }
 
@@ -210,6 +214,7 @@ pub(crate) fn parse_config(
         cfg.seed = v.parse().map_err(|_| format!("--seed 不是整数：{v}"))?;
     }
     cfg.seal = !bools.contains("hollow");
+    cfg.largest_component = bools.contains("largest-component");
     cfg.gpu = bools.contains("gpu");
     cfg.gpu_mesh = bools.contains("gpu-mesh");
     cfg.bins3d = bools.contains("bins3d");

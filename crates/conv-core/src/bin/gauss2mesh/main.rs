@@ -8,7 +8,9 @@ mod html;
 mod report;
 
 use args::{Config, HELP, ModeSel, is_bool_flag, parse_config};
-use conv_core::gauss::mesh::{Mesh, field_to_mesh, field_to_mesh_gpu, write_obj};
+use conv_core::gauss::mesh::{
+    Mesh, field_to_mesh, field_to_mesh_gpu, keep_largest_component, write_obj,
+};
 use conv_core::gauss::ply::{PlyReadOptions, parse_ply_with};
 use conv_core::gauss::voxel::{
     Backend, Field, VoxelMode, VoxelizeOptions, voxelize, voxelize_gpu_with,
@@ -504,6 +506,21 @@ fn convert_and_write(
             mesh_fallback = Some("--gpu-mesh 无可用 GPU → CPU Surface Nets".into());
         }
     }
+    let mut component_note = None;
+    if cfg.largest_component && mesh.stats.components > 1 {
+        let before_comps = mesh.stats.components;
+        let before_tris = mesh.stats.triangles;
+        let t = Instant::now();
+        mesh = keep_largest_component(&mesh, &field.grid);
+        timings.mesh += t.elapsed().as_secs_f64() * 1e3;
+        component_note = Some(format!(
+            "只保留最大连通分量：{}→{} 分量，{}→{} 三角形",
+            before_comps,
+            mesh.stats.components,
+            fmt_int(before_tris),
+            fmt_int(mesh.stats.triangles)
+        ));
+    }
     if !cfg.quiet {
         let mut exec = match field.backend {
             Backend::Gpu => {
@@ -567,6 +584,9 @@ fn convert_and_write(
     }
     if let Some(m) = &mesh_fallback {
         warnings.push(m.clone());
+    }
+    if let Some(n) = &component_note {
+        warnings.push(n.clone());
     }
     if mesher_gpu {
         warnings.push(
