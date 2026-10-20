@@ -32,7 +32,7 @@
    失败/回退/重试进警告与 JSON；自包含 WebGL 预览默认只显示网格（20k 高斯点盖上去会摩尔纹）。
 9. **GPU（`--gpu`）已覆盖 splat + iso + 密封**：定点整数原子 + 全格 ping-pong 泛洪 ⇒ 两次 GPU 运行
    逐位一致，且与 frontier 版后处理逐位等价（四个 CLI 哈希不变）；设备复用后体素化+后处理
-   **17–103 ms**（64³/128³，20k 球），Vulkan-first 设备初始化 **~0.44 s**（全后端枚举 ~0.87 s），
+   **14–30 ms**（64³/128³，20k 球，GPU clear 后），Vulkan-first 设备初始化 **~0.44 s**（全后端枚举 ~0.87 s），
    单次转换端到端仍慢于缓存的 CPU ⇒ 默认仍 CPU；GPU 是批处理/更高分辨率档，
    `voxelize_gpu_with(&Headless, …)` 是复用入口。
 10. **GPU 网格目前不划算**：复用仓内 `gsn` 后与 CPU 网格的三角形数/χ/顶点数完全一致
@@ -182,6 +182,10 @@ GPU 侧不直接用浮点原子（WGSL 无 `atomicAdd<f32>`，且浮点归约顺
 代价：GPU 场与 CPU f32 场**不是逐位相等**（量化 + WGSL `exp` 差异）；判据看 GPU 两次逐位一致 +
 与 CPU 的体积/χ 容差（`tests/gauss_gpu.rs`）。surfel 场最大差 ~2e-2（低权重体素在 `min_weight`
 附近翻转观测判定）；density 的原始场在 iso 边界会从 0 翻到 `+outside`，因此密度判据看 iso 差 + 网格。
+
+缓冲面：post 的 mask/计数器与 splat 输出缓冲不在 CPU 侧 `vec![0u8]` 上传，而是
+`create_buffer` 后用 `enc.clear_buffer` 在 GPU 清零（field 缓冲由 field pass 全写，不初始化）。
+128³ 的 post setup 从 26–32 ms 降到 5–6 ms，见 §6.12。
 
 存储面：默认 `max_storage_buffers_per_shader_stage = 8`，后处理把"计数器 + 直方图"合并成
 一个 `counters_hist`（0..5 计数，8.. 直方图），避免第 9 个 storage buffer；两份 n³ u32 掩码在
@@ -515,6 +519,7 @@ eigen 内核确实快了 1.37×，但完整 prep 已被 24T 标量压到 5–6 m
   135 vs 79、146 vs 66 ms；`--gpu-mesh` 保持实验档（§3.10/§6.6）。
 - CPU 24T 对 1T：7.7× / 7.9× / 8.2× / 8.8×（球 64、blobs 64、球 128、blobs 128）。
 - 表中 CPU 24T 是静态轮转读数；动态取块（§6.10）同轮 A/B 再快 11–31%（64³ 更明显）。
+- GPU 行是 GPU clear 优化前的读数；clear 后 GPU vox 128³ 降到 ~26 ms、64³ ~14 ms（§6.12）。
 
 **单次 CLI（含设备 init，1 次代表性读数）**：
 
@@ -584,6 +589,51 @@ CPU 行是默认 z-slab；`--bins3d` 在 12–20k 实测快 15–35%（hash 不�
 | χ | 4（两壳） | **2** |
 
 判据在 `tests/largest_component.rs`；opt-in，默认不改变任何网格。
+
+### 6.12 瓶颈剖析（2026-10-20，分阶段）
+
+CPU（24T、z-slab 动态取块；ms；`LSSMJ_STAGE_DEBUG` 临时探针）：
+
+| 场景 | prep | splat | post | vox | mesh | write |
+| --- | --- | --- | --- | --- | --- | --- |
+| 64³ 球 | 1.8 | 29.5 | 1.4 | 33.3 | 3.6 | 8.5 |
+| 64³ blobs | 1.5 | 46.5 | 1.8 | 50.2 | 3.6 | 5.2 |
+| 128³ 球 | 2.0 | 132.0 | 12.8 | 147.4 | 23.8 | 31.5 |
+| 128³ blobs | 1.9 | 305.7 | 17.1 | 325.1 | 18.7 | 22.3 |
+
+GPU（单次 CLI，init 420–474 ms；ms）：
+
+| 场景 | prep | splat | post | vox | mesh | write |
+| --- | --- | --- | --- | --- | --- | --- |
+| 64³ 球 | 3.8 | 4.9 | 11.7 | 21.4 | 4.8 | 7.2 |
+| 64³ blobs | 2.7 | 3.3 | 14.2 | 20.8 | 3.4 | 5.6 |
+| 128³ 球 | 2.8 | 18.9 | 41.1 | 63.9 | 26.6 | 32.3 |
+| 128³ blobs | 3.4 | 9.6 | 48.7 | 62.7 | 20.4 | 25.0 |
+
+GPU post 拆解：**post-buffers 24–30 ms**（CPU 侧 `vec![0u8]` 零初始化并上传 24 MB
+mask/field）、pipelines ~2–3 ms、实际计算 pass + 回读 12–15 ms。改成 GPU `clear_buffer`
+（mask 只清 mask_b；field 不初始化）后：
+
+| 项 | 修复前 | 修复后 |
+| --- | --- | --- |
+| post-buffers | 24.1 / 30.2 ms | **1.3 / 0.8 ms** |
+| post-setup | 26.8 / 32.2 ms | **5.7 / 5.1 ms** |
+| GPU vox 128³ 球 / blobs | 63.9 / 62.7 ms | **24.5–29.7 / 24.5–29.7 ms** |
+| GPU vox 64³ 球 / blobs | 21.4 / 20.8 ms | **14.6 / 13.5 ms** |
+
+四个 GPU hash 不变（`89a8…`/`27ad…`/`0d1d…`/`a36f…`）。
+
+**当前瓶颈排序**：
+
+1. **CPU 单次：splat 占 vox 的 88–94%**（128³ blobs 305.7/325.1 ms）。内层是
+   `max_maha`（3 次除法）+ `exp` + 访存，无 SIMD；24T 已是最优（24>20>16>12>8），
+   1T→24T 约 9×，受 P/E 核与带宽限制。再快需要 SIMD/向量 exp（会改哈希，只能 opt-in）。
+2. **GPU 单次：init 420–474 ms ≈ 85%**。转换本身只有 20–64 ms；单次无算法可救，
+   收益只能靠 `batch`/设备复用。
+3. **GPU 热态：CPU Surface Nets 18–27 ms 成为最大单段**（约占 vox+mesh 的 1/3–1/2）；
+   GPU post 计算 + 回读 12–15 ms，splat 3–19 ms，buffer/pipeline setup ~5 ms。
+4. **写盘：128³ 22–32 ms**（OBJ 主导；HTML 已 base64 减半）。
+5. 1T→24T 约 9×；要再上台阶必须 SIMD splat 或稀疏/更高分辨率架构，而不是调线程数。
 
 ## 7. 限制与否证条件（不许当结论）
 

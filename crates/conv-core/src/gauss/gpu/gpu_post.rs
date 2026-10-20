@@ -94,10 +94,10 @@ pub(crate) fn post_gpu(
     let num = num.unwrap_or(&dummy);
     let den = den.unwrap_or(&dummy);
 
-    let mask_a = buffer_zeroed(device, "post-mask-a", count * 4);
-    let mask_b = buffer_zeroed(device, "post-mask-b", count * 4);
-    let counters_hist = buffer_zeroed(device, "post-counters-hist", (8 + 65536) * 4);
-    let field_buf = buffer_zeroed(device, "post-field", count * 4);
+    let mask_a = buffer_uninit(device, "post-mask-a", count * 4);
+    let mask_b = buffer_cleared(hd, "post-mask-b", count * 4);
+    let counters_hist = buffer_cleared(hd, "post-counters-hist", (8 + 65536) * 4);
+    let field_buf = buffer_uninit(device, "post-field", count * 4);
     let mut params = PostParams {
         n,
         mode: if mode == VoxelMode::Density { 0 } else { 1 },
