@@ -697,8 +697,33 @@ mask/field）、pipelines ~2–3 ms、实际计算 pass + 回读 12–15 ms。�
 
 **注意**：post-seal 会把未知区写成 ±outside，所以“非零块”恒为 100%，不能当原始 splat
 分配率。结论：朴素“按块稀疏存储”不会降低分配率；要获得收益必须先做**粗分辨率表面定位**
-（如 64³ 粗场）再只对表面块 + halo 做细 splat，并实现稀疏密封与分块网格。这是 T-GC-05
-的真实成本。本轮只记录 256³ 基线与占用率，默认路径未改。
+（如 64³ 粗场）再只对表面块 + halo 做细 splat，并实现稀疏密封与分块网格。
+
+### 6.15 粗场定位与表面块探测（`SurfaceBlocks`，2026-10-20）
+
+`gauss::voxel::surface_blocks::SurfaceBlocks::detect(gaussians, opts, fine_grid, block, margin,
+coarse_factor)`：
+
+1. 构造**同域粗格**：`n_c = n / coarse_factor`（≥8），`h_c = (n−1)h/(n_c−1)`，origin 相同；
+   用现有 CPU density/surfel 管线在粗格上求场。
+2. 粗格单元 8 角点有正有负 ⇒ 表面粗块；按 `margin`（粗块单位）做 3D 膨胀。
+3. 细块（边长 `block` 个细体素）的角点范围映射到粗格单元；命中膨胀后的 mask 即候选。
+4. 输出升序块 id（`x + y*per + z*per²`）、`contains/xyz/fraction`，并保留粗场。
+
+256³ 召回判据（dense 256 场的有符号变化块为真值）：
+
+| 场景 | block | margin | truth | active | 漏选 |
+| --- | --- | --- | --- | --- | --- |
+| torus surfel | 16 | 0 | 688 | 888 (21.7%) | **0** |
+| torus surfel | 16 | 1 | 688 | 1,168 (28.5%) | 0 |
+| torus surfel | 32 | 0 | 176 | 208 (40.6%) | 0 |
+| blobs density | 16 | 0 | 188 | 257 (6.3%) | **0** |
+| blobs density | 16 | 1 | 188 | 357 (8.7%) | 0 |
+| blobs density | 32 | 0 | 48 | 60 (11.7%) | 0 |
+
+推荐 `margin=0`（本轮场景零漏选；要更保守用 1，候选约多 30%）。128³ 的
+sphere/torus/blobs 单测同样零漏选。模块只负责定位；下一步才是候选块细 splat + halo 网格。
+默认稠密路径未改。
 
 ## 7. 限制与否证条件（不许当结论）
 

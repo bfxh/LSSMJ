@@ -9,6 +9,7 @@ use super::{Aabb, Gaussian, bounds_of, dot, normalize_vec};
 
 #[cfg(target_arch = "x86_64")]
 mod avx2;
+pub mod surface_blocks;
 mod tiles;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
