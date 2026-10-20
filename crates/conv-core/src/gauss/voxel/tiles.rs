@@ -68,6 +68,8 @@ fn splat_density_tile(
     let x1 = (tile.x0 + T).min(n);
     let y1 = (tile.y0 + T).min(n);
     let z1 = (tile.z0 + T).min(n);
+    #[cfg(target_arch = "x86_64")]
+    let simd = super::avx2_splat();
     for &gi in indices {
         let g = &prepared[gi as usize];
         let r = splat_range(grid, g.mean, g.radius);
@@ -88,6 +90,13 @@ fn splat_density_tile(
             for y in y0..=ya {
                 let ly = (y - tile.y0) as usize;
                 let row = lz * (T as usize) * (T as usize) + ly * (T as usize);
+                #[cfg(target_arch = "x86_64")]
+                if simd {
+                    unsafe {
+                        super::avx2::density_row(g, grid, y, z, x0, xa, tile.x0, out, row);
+                    }
+                    continue;
+                }
                 for x in x0..=xa {
                     let p = grid.world_of(x, y, z);
                     let d = [p[0] - g.mean[0], p[1] - g.mean[1], p[2] - g.mean[2]];

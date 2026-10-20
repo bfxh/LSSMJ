@@ -157,6 +157,11 @@ f(p)   = num/den  if den ≥ min_weight else 未知
 `--threads 1` 保留为逐位参照；`--threads 0`（CLI 默认）= `available_parallelism()`。
 代价：每块分配 `n²×块高` 的局部数组；256³ 时约 75–150 MB，量产仍需稀疏分块。
 
+**AVX2 density 行内核（默认开启，逐位一致）**：x86_64 + AVX2 时一次算 8 个体素的
+Mahalanobis；点积/除法的运算顺序与标量 `max_maha` 逐项一致（无 FMA/无重排），
+exp 与累加仍按 x 升序标量执行 ⇒ 场与网格哈希不变（单元测试 + 既有 hash 判据）。
+surfel 的 A/B 无收益，保持标量；`LSSMJ_NO_AVX2=1` 可强制标量做对拍。
+
 ### 3.7 GPU splat（定点整数原子；`--gpu`）
 
 GPU 侧不直接用浮点原子（WGSL 无 `atomicAdd<f32>`，且浮点归约顺序不可复现），而是：
@@ -601,6 +606,8 @@ CPU（24T、z-slab 动态取块；ms；`LSSMJ_STAGE_DEBUG` 临时探针）：
 | 128³ 球 | 2.0 | 132.0 | 12.8 | 147.4 | 23.8 | 31.5 |
 | 128³ blobs | 1.9 | 305.7 | 17.1 | 325.1 | 18.7 | 22.3 |
 
+（上表是加 density AVX2 前；AVX2 后的 A/B 见下方。）
+
 GPU（单次 CLI，init 420–474 ms；ms）：
 
 | 场景 | prep | splat | post | vox | mesh | write |
@@ -626,8 +633,10 @@ mask/field）、pipelines ~2–3 ms、实际计算 pass + 回读 12–15 ms。�
 **当前瓶颈排序**：
 
 1. **CPU 单次：splat 占 vox 的 88–94%**（128³ blobs 305.7/325.1 ms）。内层是
-   `max_maha`（3 次除法）+ `exp` + 访存，无 SIMD；24T 已是最优（24>20>16>12>8），
-   1T→24T 约 9×，受 P/E 核与带宽限制。再快需要 SIMD/向量 exp（会改哈希，只能 opt-in）。
+   `max_maha`（3 次除法）+ `exp` + 访存。已加 **density AVX2 行内核**（m 向量化、逐位不变）：
+   同轮 A/B 128³ blobs **24T 939.8→851.1 ms（−9.4%）、1T 1105→818 ms（−25%）**；
+   64³ blobs 24T 约 −6%；surfel 无收益保持标量。24T 已是最优（24>20>16>12>8），
+   1T→24T 约 9×，受 P/E 核与带宽限制；再快要向量 exp（会改哈希，只能 opt-in）。
 2. **GPU 单次：init 420–474 ms ≈ 85%**。转换本身只有 20–64 ms；单次无算法可救，
    收益只能靠 `batch`/设备复用。
 3. **GPU 热态：CPU Surface Nets 18–27 ms 成为最大单段**（约占 vox+mesh 的 1/3–1/2）；
@@ -664,7 +673,9 @@ mask/field）、pipelines ~2–3 ms、实际计算 pass + 回读 12–15 ms。�
     `--bins3d` 可选档（默认关；20k 1.14–1.25×，100k 1.03–1.05×，逐位一致）。
 14. **AVX2 prep 当前没有端到端收益**：eigen_batch 1.37×，但 24T 标量 prep 已到 5–6 ms；
     SIMD 并行后持平/略慢，且 opt-in 会改 surfel 哈希。保留 `--simd-prep` 实验档，默认标量。
-15. **GPU 网格是实验档，不是加速档**：`field_to_mesh_gpu`/`--gpu-mesh` 复用 `gsn` 的 n³ 稀疏
+15. **AVX2 density 仅覆盖 x86_64**：无 AVX2/非 x86 自动回退标量；`LSSMJ_NO_AVX2=1`
+    可强制标量做对拍。surfel 没有 SIMD 路径，仍是标量热循环。
+16. **GPU 网格是实验档，不是加速档**：`field_to_mesh_gpu`/`--gpu-mesh` 复用 `gsn` 的 n³ 稀疏
     槽位缓冲，64³ 热态 13–15 ms（CPU 3.7–3.8 ms），128³ 96–183 ms（CPU ~21 ms），首跑含
     管线编译 ~460 ms。索引缓冲已按 CPU 预数精确分配（128³ 不再触发 binding 上限；256³ 的
     pos/flag 缓冲仍超限并显式回退）。法线是面积加权面法线，不是 SDF 梯度。转正前提是
@@ -702,6 +713,8 @@ CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo sphere --bins3d
 CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo sphere --simd-prep
 CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo blobs --largest-component
 CARGO_INCREMENTAL=0 cargo test --release --test largest_component -- --test-threads=1 --nocapture
+# AVX2 density 对拍：强制标量
+LSSMJ_NO_AVX2=1 CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo blobs --grid 128
 # 打开 out/sphere.html（自包含，无外部依赖）
 
 # 真实 PLY

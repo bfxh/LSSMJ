@@ -7,6 +7,8 @@
 
 use super::{Aabb, Gaussian, bounds_of, dot, normalize_vec};
 
+#[cfg(target_arch = "x86_64")]
+mod avx2;
 mod tiles;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -640,6 +642,20 @@ fn build_bins(prepared: &[Prepared], grid: &Grid, chunks: &[Chunk]) -> Vec<Vec<u
     bins
 }
 
+fn avx2_splat() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if std::env::var_os("LSSMJ_NO_AVX2").is_some() {
+            return false;
+        }
+        avx2::available()
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        false
+    }
+}
+
 fn splat_density_chunk(
     prepared: &[Prepared],
     indices: &[u32],
@@ -649,6 +665,8 @@ fn splat_density_chunk(
 ) {
     let n = grid.n as usize;
     let n2 = n * n;
+    #[cfg(target_arch = "x86_64")]
+    let simd = avx2_splat();
     for &gi in indices {
         let g = &prepared[gi as usize];
         let range = splat_range(grid, g.mean, g.radius);
@@ -664,6 +682,13 @@ fn splat_density_chunk(
             let lz = (z - chunk.z0) as usize;
             for y in range.lo[1]..=range.hi[1] {
                 let row = lz * n2 + y as usize * n;
+                #[cfg(target_arch = "x86_64")]
+                if simd {
+                    unsafe {
+                        avx2::density_row(g, grid, y, z, range.lo[0], range.hi[0], 0, out, row);
+                    }
+                    continue;
+                }
                 for x in range.lo[0]..=range.hi[0] {
                     let p = grid.world_of(x, y, z);
                     let d = [p[0] - g.mean[0], p[1] - g.mean[1], p[2] - g.mean[2]];
