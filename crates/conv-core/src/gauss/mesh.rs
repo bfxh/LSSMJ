@@ -160,6 +160,16 @@ pub fn keep_largest_component(mesh: &Mesh, grid: &Grid) -> Mesh {
     finish_mesh(positions, normals, indices, grid)
 }
 
+/// 供稀疏分块等外部网格器使用：统一走同一套绕序/统计/哈希口径。
+pub(crate) fn mesh_from_parts(
+    positions: Vec<[f32; 3]>,
+    normals: Vec<[f32; 3]>,
+    indices: Vec<u32>,
+    grid: &Grid,
+) -> Mesh {
+    finish_mesh(positions, normals, indices, grid)
+}
+
 fn finish_mesh(
     positions: Vec<[f32; 3]>,
     mut normals: Vec<[f32; 3]>,

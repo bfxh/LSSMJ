@@ -725,6 +725,26 @@ coarse_factor)`：
 sphere/torus/blobs 单测同样零漏选。模块只负责定位；下一步才是候选块细 splat + halo 网格。
 默认稠密路径未改。
 
+### 6.16 候选块细 splat + halo 网格（`SparseDensity`，2026-10-20）
+
+`SparseDensity::build(gaussians, opts, fine_grid, blocks, iso)`：
+
+1. 只对 `SurfaceBlocks` 候选块分配 (B+2)³ halo 场；按 Gaussian 的细 splat 范围 + 1 格
+   构建块→Gaussian bin，只 splat 与 halo 相交的高斯。
+2. 每块用 `fast_surface_nets` 生成 local cells 0..B（覆盖 global x0−1..x0+B−1），
+   顶点按全局 cell key 去重、四边形按 4 cell 规范键去重 ⇒ halo 拼接无缝。
+3. 未知角点当前一律 +outside（hollow 语义）；稀疏内部密封（细 flood fill）尚未实现。
+
+判据（与 dense hollow 对拍）：
+
+| 场景 | dense tri / vol / χ | sparse tri / vol / χ | 候选块 | 结果 |
+| --- | --- | --- | --- | --- |
+| blobs 128³ b=16 | 43,920 / 0.43488 / −6 | 43,920 / 0.43488 / −6 | 64 (12.5%) | **逐项一致** |
+| blobs 256³ b=16 | 184,732 / 0.54887 / 4 | 184,732 / 0.54887 / 4 | 278 (6.8%) | **逐项一致** |
+
+256³ 实测：dense hollow 592.9 ms；sparse detect 18.5 + build 493.6 + mesh 41.2 = **553.3 ms**，
+内存从整格 4096 块降到 278 块。当前只支持 density；solid 密封与 surfel 稀疏是下一片。
+
 ## 7. 限制与否证条件（不许当结论）
 
 1. **CPU 多线程，非实时**：64³/20k 高斯总耗时约 0.05–0.07 s（24 线程；1T 参照 0.36–0.48 s）；
