@@ -330,10 +330,13 @@ timings_ms{load,prune,voxel,mesh,write,gpu_init} / warnings[]`。
 ### 5.5 自包含 WebGL 预览
 
 - 一个 HTML 内嵌 mesh（positions/normals/indices）、高斯点（positions/colors）与 stats；无外部 CDN/JS。
+- 数组用 **base64 二进制**（f32 x3 / u32 LE）嵌入，不是 JSON 数字数组；128³/68k 顶点时 HTML
+  从 6.79 MB 降到 5.00 MB，写盘段 86.8→47.2 ms。查看器仍兼容旧的 JSON 数组载荷。
 - 轨道相机：拖拽旋转、滚轮缩放、重置/正视；网格/高斯点/线框/自动旋转开关。
 - 默认只显示网格；点云/线框按需开。
-- 预览校验（本机）：WebGL2 画布 960×640，`gl.getError()=0`；同步 `render()` 后 `readPixels` 得到
-  78,905 个非背景像素（含点云版本；后续多线程版读数为 77,586），并把画布降采样成 ASCII 轮廓确认球/环面形状。
+- 预览校验（本机）：WebGL2 画布 960×640，`gl.getError()=0`；二进制版同步 `render()` 后
+  `readPixels` 得到 77,591 个非背景像素（旧 JSON 版 77,586），并把画布降采样成 ASCII 轮廓确认形状。
+- 数据级回归：`tests/html_embed.rs` 校验 base64 长度与 stats 一致、首顶点与 OBJ 对齐、旧数组格式不再出现。
 
 ### 5.6 批处理（batch）
 
@@ -537,6 +540,20 @@ CPU 行是默认 z-slab；`--bins3d` 在 12–20k 实测快 15–35%（hash 不�
 转换耗时与四个网格 hash 不变；单次 GPU 总计 64³ 球 1016→**472 ms**、128³ 球 720→**560 ms**。
 仍慢于 CPU auto（48/188 ms），但 `batch` 首个文件少付 ~0.43 s，后续文件受益更多。
 
+### 6.9 HTML 二进制载荷（2026-10-20）
+
+自包含预览从"逐浮点写 JSON 数组"改为 base64 二进制（f32 x3 / u32 LE）；查看器用
+`atob`→TypedArray 解码，保留旧 JSON 数组回退。128³/20k 球（68k 顶点 / 135,840 三角形）：
+
+| 项 | 旧（JSON 数组） | 新（base64） | 变化 |
+| --- | --- | --- | --- |
+| HTML 文件 | 6.79 MB | **5.00 MB** | −26% |
+| 写盘段（OBJ+HTML+JSON） | 86.8 ms | **47.2 ms** | −46% |
+| CLI 总耗时 | 245.0 ms | **221.0 ms** | −10% |
+| 浏览器 `readPixels` 非背景像素 | 77,586 | 77,591 | 一致（±抗锯齿） |
+
+载荷是平台原生端序的 f32/u32；当前目标全为 little-endian。旧 HTML 的 JSON 数组格式仍能打开。
+
 ## 7. 限制与否证条件（不许当结论）
 
 1. **CPU 多线程，非实时**：64³/20k 高斯总耗时约 0.05–0.07 s（24 线程；1T 参照 0.36–0.48 s）；
@@ -583,6 +600,8 @@ CARGO_INCREMENTAL=0 cargo test --release --test gauss_gpu -- --test-threads=1 --
 CARGO_INCREMENTAL=0 cargo test --release --test gauss_gpu -- --test-threads=1 --ignored bench_gpu_scenes --nocapture
 # 完整性能对比（CPU 1T/24T、GPU、GPU 网格；64³/128³ × density/surfel）
 CARGO_INCREMENTAL=0 cargo test --release --test perf_compare -- --test-threads=1 --ignored --nocapture
+# 自包含 HTML 的 base64 载荷（长度/首顶点/旧格式）
+cargo test --release --test html_embed -- --test-threads=1 --nocapture
 # 全量门（含 GPU，必须串行）
 CARGO_INCREMENTAL=0 cargo test --release -- --test-threads=1
 CARGO_INCREMENTAL=0 cargo clippy --all-targets -- -D warnings

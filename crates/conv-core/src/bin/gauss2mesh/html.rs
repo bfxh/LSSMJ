@@ -49,47 +49,32 @@ pub(crate) fn write_html(
         "\"bounds\":{{\"min\":[{:.6},{:.6},{:.6}],\"max\":[{:.6},{:.6},{:.6}]}},",
         b.min[0], b.min[1], b.min[2], b.max[0], b.max[1], b.max[2]
     );
-    data.push_str("\"mesh\":{\"positions\":[");
-    for (i, p) in d.mesh.positions.iter().enumerate() {
-        if i > 0 {
-            data.push(',');
-        }
-        let _ = write!(data, "{:.6},{:.6},{:.6}", p[0], p[1], p[2]);
-    }
-    data.push_str("],\"normals\":[");
-    for (i, n) in d.mesh.normals.iter().enumerate() {
-        if i > 0 {
-            data.push(',');
-        }
-        let _ = write!(data, "{:.4},{:.4},{:.4}", n[0], n[1], n[2]);
-    }
-    data.push_str("],\"indices\":[");
-    for (i, idx) in d.mesh.indices.iter().enumerate() {
-        if i > 0 {
-            data.push(',');
-        }
-        let _ = write!(data, "{idx}");
-    }
-    data.push_str("]},\n\"points\":{\"positions\":[");
+    // 二进制数组用 base64 嵌入，避免逐浮点格式化：128³/68k 顶点时 HTML 写盘约减半。
+    data.push_str("\"mesh\":{\"pos\":\"");
+    data.push_str(&b64_f32x3(&d.mesh.positions));
+    data.push_str("\",\"nrm\":\"");
+    data.push_str(&b64_f32x3(&d.mesh.normals));
+    data.push_str("\",\"idx\":\"");
+    data.push_str(&b64_u32(&d.mesh.indices));
+    let _ = writeln!(
+        data,
+        "\",\"vertices\":{},\"triangles\":{}}},",
+        d.mesh.stats.vertices, d.mesh.stats.triangles
+    );
     let stride = (gaussians.len() / 150_000).max(1);
-    let mut first = true;
-    let mut colors = String::new();
+    let count = gaussians.len().div_ceil(stride);
+    let mut points = Vec::with_capacity(count);
+    let mut colors = Vec::with_capacity(count);
     for g in gaussians.iter().step_by(stride) {
-        if !first {
-            data.push(',');
-            colors.push(',');
-        }
-        first = false;
-        let _ = write!(data, "{:.5},{:.5},{:.5}", g.mean[0], g.mean[1], g.mean[2]);
-        let _ = write!(
-            colors,
-            "{:.4},{:.4},{:.4}",
-            g.color[0], g.color[1], g.color[2]
-        );
+        points.push(g.mean);
+        colors.push(g.color);
     }
-    data.push_str("],\"colors\":[");
-    data.push_str(&colors);
-    data.push_str("]}\n}");
+    data.push_str("\"points\":{\"pos\":\"");
+    data.push_str(&b64_f32x3(&points));
+    data.push_str("\",\"col\":\"");
+    data.push_str(&b64_f32x3(&colors));
+    let _ = writeln!(data, "\",\"count\":{count}}}");
+    data.push('}');
     let title = html_escape(d.title);
     let subject = html_escape(d.subject);
     let out = template
@@ -104,4 +89,63 @@ fn html_escape(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+fn b64(bytes: &[u8]) -> String {
+    let mut out = Vec::with_capacity(bytes.len().div_ceil(3) * 4);
+    for c in bytes.chunks(3) {
+        let b0 = c[0] as u32;
+        let b1 = c.get(1).copied().unwrap_or(0) as u32;
+        let b2 = c.get(2).copied().unwrap_or(0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(B64[((n >> 18) & 63) as usize]);
+        out.push(B64[((n >> 12) & 63) as usize]);
+        out.push(if c.len() > 1 {
+            B64[((n >> 6) & 63) as usize]
+        } else {
+            b'='
+        });
+        out.push(if c.len() > 2 {
+            B64[(n & 63) as usize]
+        } else {
+            b'='
+        });
+    }
+    String::from_utf8(out).expect("base64 is ASCII")
+}
+
+fn b64_f32x3(values: &[[f32; 3]]) -> String {
+    let mut bytes = Vec::with_capacity(values.len() * 12);
+    for v in values {
+        for c in v {
+            bytes.extend_from_slice(&c.to_le_bytes());
+        }
+    }
+    b64(&bytes)
+}
+
+fn b64_u32(values: &[u32]) -> String {
+    let mut bytes = Vec::with_capacity(values.len() * 4);
+    for v in values {
+        bytes.extend_from_slice(&v.to_le_bytes());
+    }
+    b64(&bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn base64_vectors_and_padding() {
+        assert_eq!(b64(b""), "");
+        assert_eq!(b64(b"f"), "Zg==");
+        assert_eq!(b64(b"fo"), "Zm8=");
+        assert_eq!(b64(b"foo"), "Zm9v");
+        assert_eq!(b64(&[0u8; 3]), "AAAA");
+        assert_eq!(b64_f32x3(&[[0.0; 3]]).len(), 16);
+        assert_eq!(b64_u32(&[1, 2, 3]).len(), 16);
+    }
 }

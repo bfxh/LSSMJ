@@ -95,12 +95,17 @@ function main() {
 
   const progMesh = makeProgram(VS_MESH, FS_MESH);
   const progPoint = makeProgram(VS_POINT, FS_POINT);
-  const mesh = DATA.mesh || { positions: [], normals: [], indices: [] };
-  const pts = DATA.points || { positions: [], colors: [] };
-  const meshVAO = makeVAO(progMesh, mesh.positions, mesh.normals, 'aNrm', mesh.indices);
-  const pointVAO = makeVAO(progPoint, pts.positions, pts.colors, 'aColor', null);
-  const wire = buildWire(mesh.indices);
-  const wireVAO = makeWireVAO(progMesh, mesh.positions, wire);
+  const mesh = DATA.mesh || {};
+  const pts = DATA.points || {};
+  const mPos = mesh.pos ? b64f32(mesh.pos) : f32(mesh.positions);
+  const mNrm = mesh.nrm ? b64f32(mesh.nrm) : f32(mesh.normals);
+  const mIdx = mesh.idx ? b64u32(mesh.idx) : u32(mesh.indices);
+  const pPos = pts.pos ? b64f32(pts.pos) : f32(pts.positions);
+  const pCol = pts.col ? b64f32(pts.col) : f32(pts.colors);
+  const meshVAO = makeVAO(progMesh, mPos, mNrm, 'aNrm', mIdx);
+  const pointVAO = makeVAO(progPoint, pPos, pCol, 'aColor', null);
+  const wire = buildWire(mIdx);
+  const wireVAO = makeWireVAO(progMesh, mPos, wire);
 
   const bounds = DATA.bounds || { min: [-1, -1, -1], max: [1, 1, 1] };
   const center = [
@@ -176,7 +181,7 @@ function main() {
     gl.enable(gl.CULL_FACE);
     gl.cullFace(gl.BACK);
 
-    if (showMesh.checked && mesh.indices.length) {
+    if (showMesh.checked && mIdx.length) {
       gl.useProgram(progMesh);
       gl.uniformMatrix4fv(uMVP, false, mvp);
       gl.uniformMatrix4fv(uMV, false, view);
@@ -186,7 +191,7 @@ function main() {
         gl.polygonOffset(1, 1);
       }
       gl.bindVertexArray(meshVAO);
-      gl.drawElements(gl.TRIANGLES, mesh.indices.length, gl.UNSIGNED_INT, 0);
+      gl.drawElements(gl.TRIANGLES, mIdx.length, gl.UNSIGNED_INT, 0);
       gl.disable(gl.POLYGON_OFFSET_FILL);
       if (wireBox.checked && wire.length) {
         gl.uniform1f(uLine, 1);
@@ -194,7 +199,7 @@ function main() {
         gl.drawArrays(gl.LINES, 0, wire.length);
       }
     }
-    if (showPoints.checked && pts.positions.length) {
+    if (showPoints.checked && pPos.length) {
       gl.useProgram(progPoint);
       gl.uniformMatrix4fv(uPointMVP, false, mvp);
       gl.uniform1f(uDpr, Math.min(window.devicePixelRatio || 1, 2));
@@ -202,7 +207,7 @@ function main() {
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
       gl.depthMask(false);
       gl.bindVertexArray(pointVAO);
-      gl.drawArrays(gl.POINTS, 0, pts.positions.length / 3);
+      gl.drawArrays(gl.POINTS, 0, pPos.length / 3);
       gl.depthMask(true);
       gl.disable(gl.BLEND);
     }
@@ -211,7 +216,7 @@ function main() {
   function frame() { render(); requestAnimationFrame(frame); }
   requestAnimationFrame(frame);
   window.__lssmj = {
-    info: { vertices: mesh.positions.length / 3, triangles: mesh.indices.length / 3, points: pts.positions.length / 3 },
+    info: { vertices: mPos.length / 3, triangles: mIdx.length / 3, points: pPos.length / 3 },
     render,
     pixels() {
       const w = canvas.width, h = canvas.height;
@@ -287,26 +292,43 @@ function makeProgram(vsSrc, fsSrc) {
   return p;
 }
 
+function b64bytes(s) {
+  const bin = atob(s);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+function b64f32(s) {
+  const b = b64bytes(s);
+  return new Float32Array(b.buffer, b.byteOffset, b.byteLength >> 2);
+}
+function b64u32(s) {
+  const b = b64bytes(s);
+  return new Uint32Array(b.buffer, b.byteOffset, b.byteLength >> 2);
+}
+function f32(a) { return a instanceof Float32Array ? a : new Float32Array(a || []); }
+function u32(a) { return a instanceof Uint32Array ? a : new Uint32Array(a || []); }
+
 function makeVAO(prog, pos, aux, auxName, idx) {
   const vao = gl.createVertexArray();
   gl.bindVertexArray(vao);
   gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(pos), gl.STATIC_DRAW);
+  gl.bufferData(gl.ARRAY_BUFFER, f32(pos), gl.STATIC_DRAW);
   const locPos = gl.getAttribLocation(prog, 'aPos');
   gl.enableVertexAttribArray(locPos);
   gl.vertexAttribPointer(locPos, 3, gl.FLOAT, false, 0, 0);
   if (aux && aux.length) {
     gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(aux), gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, f32(aux), gl.STATIC_DRAW);
     const loc = gl.getAttribLocation(prog, auxName);
     if (loc >= 0) {
       gl.enableVertexAttribArray(loc);
       gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
     }
   }
-  if (idx) {
+  if (idx && idx.length) {
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer());
-    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint32Array(idx), gl.STATIC_DRAW);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, u32(idx), gl.STATIC_DRAW);
   }
   gl.bindVertexArray(null);
   return vao;
@@ -316,12 +338,12 @@ function makeWireVAO(prog, positions, wire) {
   const vao = gl.createVertexArray();
   gl.bindVertexArray(vao);
   gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+  gl.bufferData(gl.ARRAY_BUFFER, f32(positions), gl.STATIC_DRAW);
   const locPos = gl.getAttribLocation(prog, 'aPos');
   gl.enableVertexAttribArray(locPos);
   gl.vertexAttribPointer(locPos, 3, gl.FLOAT, false, 0, 0);
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer());
-  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint32Array(wire), gl.STATIC_DRAW);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, u32(wire), gl.STATIC_DRAW);
   gl.bindVertexArray(null);
   return vao;
 }
