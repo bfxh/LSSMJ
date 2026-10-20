@@ -226,6 +226,42 @@ fn parallel_splat_matches_single_thread_bitwise() {
 }
 
 #[test]
+fn bins3d_matches_zslab_bitwise() {
+    let gs = sphere_gaussians(4_000, R, 0.99);
+    let mut base = opts(VoxelMode::Surfel, 48);
+    base.threads = 8;
+    let a = voxelize(&gs, &base).expect("z-slab surfel");
+    let mut b = base.clone();
+    b.bins3d = true;
+    let c = voxelize(&gs, &b).expect("3d tile surfel");
+    assert!(!a.bins3d && c.bins3d);
+    for (x, y) in a.values.iter().zip(&c.values) {
+        assert_eq!(x.to_bits(), y.to_bits(), "surfel 3d tile bitwise");
+    }
+    assert_eq!(
+        field_to_mesh(&a).stats.hash,
+        field_to_mesh(&c).stats.hash,
+        "surfel 3d tile mesh hash"
+    );
+
+    let gs = blob_sphere_gaussians(3_000, R, 0.05, 0.95, 7);
+    let mut base = opts(VoxelMode::Density, 48);
+    base.threads = 8;
+    let a = voxelize(&gs, &base).expect("z-slab density");
+    let mut b = base.clone();
+    b.bins3d = true;
+    let c = voxelize(&gs, &b).expect("3d tile density");
+    for (x, y) in a.values.iter().zip(&c.values) {
+        assert_eq!(x.to_bits(), y.to_bits(), "density 3d tile bitwise");
+    }
+    assert_eq!(
+        field_to_mesh(&a).stats.hash,
+        field_to_mesh(&c).stats.hash,
+        "density 3d tile mesh hash"
+    );
+}
+
+#[test]
 fn eigen_and_flatness() {
     let e = jacobi_eigen([[3.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 2.0]]);
     assert!((e.values[0] - 1.0).abs() < 1e-5);

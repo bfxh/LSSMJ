@@ -7,6 +7,8 @@
 
 use super::{Aabb, Gaussian, bounds_of, dot, normalize_vec};
 
+mod tiles;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VoxelMode {
     Density,
@@ -96,6 +98,8 @@ impl Grid {
 pub struct VoxelizeOptions {
     pub mode: VoxelMode,
     pub backend: Backend,
+    /// CPU splat 的 3D tile 可选档（默认 z-slab；GPU 忽略）。
+    pub bins3d: bool,
     pub n: u32,
     pub padding: u32,
     /// 密度场：阈值 = iso_frac × 正密度的 99.9 分位；0 表示使用 `iso_abs`。
@@ -121,6 +125,7 @@ impl Default for VoxelizeOptions {
         Self {
             mode: VoxelMode::Density,
             backend: Backend::Cpu,
+            bins3d: false,
             n: 64,
             padding: 3,
             iso_frac: 0.65,
@@ -142,6 +147,8 @@ pub struct Field {
     pub grid: Grid,
     pub mode: VoxelMode,
     pub backend: Backend,
+    /// 本次是否走了 CPU 3D tile 可选档。
+    pub bins3d: bool,
     /// 密度模式=实际阈值；面元模式=0。
     pub iso: f32,
     /// 被场覆盖（密度 > iso / TSDF 权重足够）的体素数。
@@ -633,7 +640,11 @@ fn voxelize_density(
     if prepared.is_empty() {
         return Err("没有有效的高斯（NaN/Inf/非正不透明度）".into());
     }
-    let (density, workers) = parallel_splat_density(&prepared, &grid, opts.threads);
+    let (density, workers) = if opts.bins3d {
+        tiles::splat_density_tiles(&prepared, &grid, opts.threads)
+    } else {
+        parallel_splat_density(&prepared, &grid, opts.threads)
+    };
     density_post(density, opts, grid, bounds, workers, Backend::Cpu)
 }
 
@@ -684,6 +695,7 @@ pub(crate) fn density_post(
         grid,
         mode: VoxelMode::Density,
         backend,
+        bins3d: backend == Backend::Cpu && opts.bins3d,
         iso,
         observed,
         sealed_interior,
@@ -702,7 +714,11 @@ fn voxelize_surfel(
     if prepared.is_empty() {
         return Err("没有有效的高斯（NaN/Inf/非正不透明度）".into());
     }
-    let (num, den, workers) = parallel_splat_surfel(&prepared, &grid, clamp_abs, opts.threads);
+    let (num, den, workers) = if opts.bins3d {
+        tiles::splat_surfel_tiles(&prepared, &grid, clamp_abs, opts.threads)
+    } else {
+        parallel_splat_surfel(&prepared, &grid, clamp_abs, opts.threads)
+    };
     surfel_post(num, den, opts, grid, bounds, workers, Backend::Cpu)
 }
 
@@ -742,6 +758,7 @@ pub(crate) fn surfel_post(
         grid,
         mode: VoxelMode::Surfel,
         backend,
+        bins3d: backend == Backend::Cpu && opts.bins3d,
         iso: 0.0,
         observed,
         sealed_interior,

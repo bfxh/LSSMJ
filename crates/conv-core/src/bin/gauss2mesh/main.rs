@@ -387,6 +387,7 @@ fn convert_and_write(
     let gpu_ref = gpu_device;
     let mut voxel_opts = VoxelizeOptions {
         mode,
+        bins3d: cfg.bins3d,
         backend: if gpu_device.is_some() {
             Backend::Gpu
         } else {
@@ -493,7 +494,11 @@ fn convert_and_write(
                     "gpu (cached)".to_string()
                 }
             }
-            Backend::Cpu => format!("cpu/{}t", field.workers),
+            Backend::Cpu => format!(
+                "cpu/{}t{}",
+                field.workers,
+                if field.bins3d { " +3dtile" } else { "" }
+            ),
         };
         stage(
             3,
@@ -536,6 +541,9 @@ fn convert_and_write(
     }
     if let Some(r) = &iso_retry {
         warnings.push(format!("密度阈值自动重试：{r}，已选更闭合的网格"));
+    }
+    if field.backend == Backend::Gpu && cfg.bins3d {
+        warnings.push("--gpu 忽略 --bins3d（GPU 用自己的 job 表）".into());
     }
     if mesh.stats.boundary_touch {
         warnings.push("网格触及域边界（可能被截断）：加大 --grid 或 --padding".into());

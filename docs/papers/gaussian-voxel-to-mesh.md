@@ -131,6 +131,7 @@ f(p)   = num/den  if den ≥ min_weight else 未知
 | `--grid N` | 64 | 体素分辨率；N³。128³ 体素数 ×8，时间约 ×8；薄特征/小孔建议 128 |
 | `--threads N` | 0（自动） | splat 线程数；0=`available_parallelism()`，1=逐位参照。z-slab 分块，无原子/锁 |
 | `--gpu` | 关 | GPU splat（定点整数原子）；失败回退 CPU；忽略 `--threads`；单次转换受设备 init 影响 |
+| `--bins3d` | 关 | CPU splat 走 3D tile 分桶（20k 1.14–1.25×）；默认 z-slab；GPU 忽略 |
 | `--prune-opacity` | 0.05 | 丢低不透明度 floaters；太高会削掉真实薄结构 |
 | `--iso` | auto（0.65×q99.9） | 密度阈值；**低=胖/易闭合，高=紧/易破壳**；surfel 忽略 |
 | `--padding` | 3 | 域边界留白格；覆盖 3h 采样带宽，防止表面被截断 |
@@ -185,7 +186,7 @@ GPU 侧不直接用浮点原子（WGSL 无 `atomicAdd<f32>`，且浮点归约顺
 
 端到端 128³/20k（3 次中位数）：球 166.4→**141.1 ms**、blobs 402.9→**367.5 ms**；
 球/环面/blobs/PLY/GPU 的所有既有哈希不变（`cd8f…`、`ab6d…`、`13af…`、`c66e…`、`865a…`）。
-分桶只按 z；x/y 仍是单高斯全 bbox，3D 分桶/SIMD prep 是下一步。
+分桶只按 z；x/y 仍是单高斯全 bbox。另提供 `--bins3d` 3D tile 可选档（默认关，默认仍 z-slab；见 §6.4）。
 
 ## 4. 关键工程判决（每条都有实测或明确理由）
 
@@ -264,7 +265,7 @@ GPU（`--gpu`；设备 init 单独计入总计）：
 ### 5.4 JSON 报告字段
 
 `mode_requested / mode_used / auto_reason / fallback / gpu_fallback / iso_retry / has_normals / flatness_p50 /
-gaussians{input,kept,dropped_*} / grid{n,h} / field{mode,backend,iso,threads,observed,sealed_interior} /
+gaussians{input,kept,dropped_*} / grid{n,h} / field{mode,backend,bins3d,iso,threads,observed,sealed_interior} /
 mesh{vertices,triangles,components,chi,volume,boundary_touch,hash,bounds} /
 timings_ms{load,prune,voxel,mesh,write,gpu_init} / warnings[]`。
 
@@ -367,6 +368,23 @@ q999/iso/网格哈希不变；128³ density 的排序段不再是瓶颈。密封
 **耗时结构**：多线程后体素化仍是大头（球 42 / 58 ms ≈ 72%；blobs 54 / 67 ms ≈ 80%）；
 1T 参照为 356 / 390 ms。Surface Nets 本身 2–7 ms，不是瓶颈；GPU 化应先做体素化 splat，而不是先换 mesher。
 
+### 6.4 3D tile 分桶（`--bins3d` 可选档，默认关）
+
+8³ tile、每 tile 独占输出、按 prepared 顺序建桶；与现役 z-slab 逐位对拍（128³）：
+
+| 用例 | z-slab | 3D tile | 加速 | 逐位 |
+| --- | --- | --- | --- | --- |
+| 20k density | 94.6 ms | 83.1 ms | 1.14× | ✓ |
+| 20k surfel | 135.3 ms | 108.5 ms | 1.25× | ✓ |
+| 100k density | 102.0 ms | 99.1 ms | 1.03× | ✓ |
+| 100k surfel | 142.6 ms | 135.9 ms | 1.05× | ✓ |
+
+20k 有 14–25% 收益；100k 被 3D 桶构建与更多 bin entries 吃掉，只剩 3–5%，
+所以**不设为默认**，而是作为 `--bins3d` 可选档（默认仍 z-slab）。生产实现
+`src/gauss/voxel/tiles.rs`，对照 bench 在 `src/gauss/voxel/bench_tiles.rs`（`#[ignore]`）。
+端到端 128³/20k（3 次中位数，vox）：球 141.1→**126.9 ms**、blobs 351.4→**308.1 ms**，
+网格哈希不变（`ab6d…` / `c66e…`）。
+
 ## 7. 限制与否证条件（不许当结论）
 
 1. **CPU 多线程，非实时**：64³/20k 高斯总耗时约 0.04–0.07 s（24 线程；1T 参照 0.17–0.5 s）；
@@ -389,9 +407,9 @@ q999/iso/网格哈希不变；128³ density 的排序段不再是瓶颈。密封
     单次转换默认仍 CPU。GPU 当前是批处理/更高分辨率档，不是“一键实时”。
 12. **batch 是顺序的**：不并行多个文件；设备缓存是进程级；每文件默认写 JSON，无聚合报告；
     重名 stem 自动 `_2`；首个文件仍付 init。
-13. **分桶只按 z，prep 的并行加速有上限**：x/y 仍扫单高斯全 bbox。3D tile 分桶已试（20k 1.14–1.25×，
-    100k 1.03–1.05×，逐位一致），收益不足以替换 z-slab，暂未转正。100k 下 prep 只有 1.3–1.6×，
-    eigen 是主要成本；更大 N 需要 AVX/SIMD 或减少特征分解。
+13. **分桶只按 z，prep 的并行加速有上限**：x/y 仍扫单高斯全 bbox。3D tile 已作为
+    `--bins3d` 可选档（默认关；20k 1.14–1.25×，100k 1.03–1.05×，逐位一致）。
+    100k 下 prep 只有 1.3–1.6×，eigen 是主要成本；更大 N 需要 AVX/SIMD 或减少特征分解。
 
 ## 8. 复算命令
 
@@ -451,7 +469,7 @@ CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- convert scene.ply --
 
 1. **自适应 iso**：按每个高斯中心的密度分位/局部块阈值，替代"全局 q99.9 + 失败重试"；
    判据：真实非均匀场景的重试率、体积误差、χ 稳定性。
-2. **3D tile 分桶已试验**（20k 1.14–1.25×，100k 1.03–1.05×，逐位一致），暂不转正；
+2. **3D tile 可选档已落**（`--bins3d`；20k 1.14–1.25×，100k 1.03–1.05×，逐位一致）；
    下一步：AVX/SIMD prep、GPU 侧 iso/密封、更高分辨率/稀疏分块。
    单次转换仍被 ~1s 的 wgpu init 拖慢，不能把 GPU 当默认档。
 3. **稀疏分块**：256³/大场景的 1-voxel halo 无缝契约（T-GC-05）。
