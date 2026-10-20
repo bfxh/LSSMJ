@@ -1,6 +1,6 @@
 //! GPU splat 判据：整数原子累加的逐位确定性 + 与 CPU f32 场的容差对拍 + 拓扑一致。
 
-use conv_core::gauss::mesh::field_to_mesh;
+use conv_core::gauss::mesh::{field_to_mesh, field_to_mesh_gpu};
 use conv_core::gauss::voxel::{Backend, VoxelMode, VoxelizeOptions, voxelize, voxelize_gpu_with};
 use conv_core::gauss::{blob_sphere_gaussians, sphere_gaussians};
 use conv_core::jfa::try_headless_device;
@@ -82,6 +82,32 @@ fn gpu_splat_matches_cpu_within_tolerance() {
         "surfel components"
     );
 
+    let gm1 = field_to_mesh_gpu(&hd, &g1).expect("gpu mesh surfel 1");
+    let gm2 = field_to_mesh_gpu(&hd, &g1).expect("gpu mesh surfel 2");
+    assert_eq!(gm1.stats.hash, gm2.stats.hash, "gpu mesher determinism");
+    let mrel = ((mg.stats.volume - gm1.stats.volume) / mg.stats.volume).abs();
+    println!(
+        "gpu mesher surfel: cpu_vol={:.5} gpu_vol={:.5} rel={mrel:.6} tri={}/{} chi={}/{} verts={}/{}",
+        mg.stats.volume,
+        gm1.stats.volume,
+        mg.stats.triangles,
+        gm1.stats.triangles,
+        mg.stats.chi,
+        gm1.stats.chi,
+        mg.stats.vertices,
+        gm1.stats.vertices
+    );
+    assert!(mrel < 0.01, "gpu mesher surfel volume rel {mrel}");
+    assert_eq!(
+        mg.stats.triangles, gm1.stats.triangles,
+        "gpu mesher triangles"
+    );
+    assert_eq!(mg.stats.chi, gm1.stats.chi, "gpu mesher chi");
+    assert_eq!(
+        mg.stats.components, gm1.stats.components,
+        "gpu mesher components"
+    );
+
     let gs = blob_sphere_gaussians(3_000, 0.75, 0.05, 0.95, 7);
     let cpu_opts = opts(VoxelMode::Density, 48);
     let cpu = voxelize(&gs, &cpu_opts).expect("cpu density");
@@ -117,6 +143,35 @@ fn gpu_splat_matches_cpu_within_tolerance() {
     assert_eq!(
         mc.stats.components, md.stats.components,
         "density components"
+    );
+
+    let dm1 = field_to_mesh_gpu(&hd, &d1).expect("gpu mesh density 1");
+    let dm2 = field_to_mesh_gpu(&hd, &d1).expect("gpu mesh density 2");
+    assert_eq!(
+        dm1.stats.hash, dm2.stats.hash,
+        "gpu mesher density determinism"
+    );
+    let mrel = ((md.stats.volume - dm1.stats.volume) / md.stats.volume).abs();
+    println!(
+        "gpu mesher density: cpu_vol={:.5} gpu_vol={:.5} rel={mrel:.6} tri={}/{} chi={}/{} verts={}/{}",
+        md.stats.volume,
+        dm1.stats.volume,
+        md.stats.triangles,
+        dm1.stats.triangles,
+        md.stats.chi,
+        dm1.stats.chi,
+        md.stats.vertices,
+        dm1.stats.vertices
+    );
+    assert!(mrel < 0.01, "gpu mesher density volume rel {mrel}");
+    assert_eq!(
+        md.stats.triangles, dm1.stats.triangles,
+        "gpu mesher triangles"
+    );
+    assert_eq!(md.stats.chi, dm1.stats.chi, "gpu mesher chi");
+    assert_eq!(
+        md.stats.components, dm1.stats.components,
+        "gpu mesher components"
     );
 
     let mut hollow_opts = cpu_opts.clone();
@@ -177,16 +232,40 @@ fn bench_gpu_scenes() {
             let gpu_hollow = voxelize_gpu_with(&hd, &gs, &hollow_opts).expect("gpu hollow");
             let hollow_ms = t.elapsed().as_secs_f64() * 1e3;
             let mc = field_to_mesh(&cpu);
+            let t = Instant::now();
             let mg = field_to_mesh(&gpu);
+            let mesh_cpu_ms = t.elapsed().as_secs_f64() * 1e3;
             let rel = ((mc.stats.volume - mg.stats.volume) / mc.stats.volume).abs();
             println!(
-                "n={n} {:<7} cpu={cpu_ms:7.1}ms gpu={gpu_ms:7.1}ms (hollow {hollow_ms:.1}) iso={:.4}/{:.4} vol_rel={rel:.5} chi={}/{}",
+                "n={n} {:<7} vox cpu={cpu_ms:7.1}ms gpu={gpu_ms:7.1}ms (hollow {hollow_ms:.1}) iso={:.4}/{:.4} vol_rel={rel:.5} chi={}/{}",
                 mode.name(),
                 cpu.iso,
                 gpu.iso,
                 mc.stats.chi,
                 mg.stats.chi
             );
+            println!("  {:<7} mesh cpu={mesh_cpu_ms:6.1}ms", mode.name());
+            let t = Instant::now();
+            match field_to_mesh_gpu(&hd, &gpu) {
+                Ok(mgg) => {
+                    let mesh_gpu_ms = t.elapsed().as_secs_f64() * 1e3;
+                    let mesh_rel = ((mg.stats.volume - mgg.stats.volume) / mg.stats.volume).abs();
+                    println!(
+                        "  {:<7} mesh gpu={mesh_gpu_ms:6.1}ms rel={mesh_rel:.6} tri={}/{} chi={}/{}",
+                        mode.name(),
+                        mg.stats.triangles,
+                        mgg.stats.triangles,
+                        mg.stats.chi,
+                        mgg.stats.chi
+                    );
+                    assert_eq!(
+                        mg.stats.triangles, mgg.stats.triangles,
+                        "mesh tris at n={n}"
+                    );
+                    assert_eq!(mg.stats.chi, mgg.stats.chi, "mesh chi at n={n}");
+                }
+                Err(e) => println!("  {:<7} mesh gpu=skipped: {e}", mode.name()),
+            }
             // hollow 是开放壳，χ 与实心体不可比；只验"没有内部填充"且仍出网格。
             let mgh = field_to_mesh(&gpu_hollow);
             assert_eq!(gpu_hollow.sealed_interior, 0);

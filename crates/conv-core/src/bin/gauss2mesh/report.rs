@@ -45,6 +45,7 @@ pub(crate) struct ReportData<'a> {
     pub(crate) has_normals: bool,
     pub(crate) flatness: f32,
     pub(crate) hollow: bool,
+    pub(crate) mesher: &'a str,
 }
 
 pub(crate) fn report_json(d: &ReportData<'_>) -> String {
@@ -80,7 +81,7 @@ pub(crate) fn report_json(d: &ReportData<'_>) -> String {
             "  \"gaussians\": {{\"input\": {}, \"kept\": {}, \"dropped_opacity\": {}, \"dropped_radius\": {}, \"dropped_invalid\": {}}},\n",
             "  \"grid\": {{\"n\": {}, \"h\": {:.8}}},\n",
             "  \"field\": {{\"mode\": {}, \"backend\": {}, \"bins3d\": {}, \"simd_prep\": {}, \"iso\": {:.8}, \"threads\": {}, \"observed\": {}, \"sealed_interior\": {}}},\n",
-            "  \"mesh\": {{\"vertices\": {}, \"triangles\": {}, \"components\": {}, \"chi\": {}, \"volume\": {:.8}, \"boundary_touch\": {}, \"hash\": \"{:016x}\", \"bounds\": {}}},\n",
+            "  \"mesh\": {{\"mesher\": {}, \"vertices\": {}, \"triangles\": {}, \"components\": {}, \"chi\": {}, \"volume\": {:.8}, \"boundary_touch\": {}, \"hash\": \"{:016x}\", \"bounds\": {}}},\n",
             "  \"timings_ms\": {{\"load\": {:.3}, \"prune\": {:.3}, \"voxel\": {:.3}, \"mesh\": {:.3}, \"write\": {:.3}, \"gpu_init\": {:.3}}},\n",
             "  \"warnings\": [{}]\n",
             "}}\n"
@@ -112,6 +113,7 @@ pub(crate) fn report_json(d: &ReportData<'_>) -> String {
         d.field.workers,
         d.field.observed,
         d.field.sealed_interior,
+        jstr(d.mesher),
         d.mesh.stats.vertices,
         d.mesh.stats.triangles,
         d.mesh.stats.components,

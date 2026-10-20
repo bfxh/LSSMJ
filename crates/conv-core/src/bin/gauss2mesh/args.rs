@@ -16,6 +16,7 @@ LSSMJ gauss2mesh · 高斯体素 → 网格
   --grid <N>             体素分辨率 8..256（默认 64）
   --threads <N>          splat 线程数（默认 0=自动；1=单线程参照）
   --gpu                  GPU splat（定点整数原子；失败回退 CPU；忽略 --threads）
+  --gpu-mesh             GPU Surface Nets 网格化（实验档：读回开销大，通常慢于 CPU；失败回退）
   --bins3d               CPU splat 走 3D tile 分桶（默认 z-slab；GPU 忽略）
   --simd-prep            可选 SIMD/cyclic eigen prep（默认标量逐位；opt-in 改哈希）
   --mode <auto|density|surfel>（默认 auto）
@@ -64,6 +65,7 @@ pub(crate) struct Config {
     pub(crate) grid: u32,
     pub(crate) threads: usize,
     pub(crate) gpu: bool,
+    pub(crate) gpu_mesh: bool,
     pub(crate) bins3d: bool,
     pub(crate) simd_prep: bool,
     pub(crate) mode: ModeSel,
@@ -90,6 +92,7 @@ impl Default for Config {
             grid: 64,
             threads: 0,
             gpu: false,
+            gpu_mesh: false,
             bins3d: false,
             simd_prep: false,
             mode: ModeSel::Auto,
@@ -122,6 +125,7 @@ pub(crate) fn is_bool_flag(name: &str) -> bool {
             | "quiet"
             | "help"
             | "gpu"
+            | "gpu-mesh"
             | "bins3d"
             | "simd-prep"
     )
@@ -207,6 +211,7 @@ pub(crate) fn parse_config(
     }
     cfg.seal = !bools.contains("hollow");
     cfg.gpu = bools.contains("gpu");
+    cfg.gpu_mesh = bools.contains("gpu-mesh");
     cfg.bins3d = bools.contains("bins3d");
     cfg.simd_prep = bools.contains("simd-prep");
     cfg.raw_scale = bools.contains("raw-scale");

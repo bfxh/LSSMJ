@@ -33,6 +33,102 @@ pub struct Mesh {
     pub stats: MeshStats,
 }
 
+/// GPU Surface Nets（`crate::gsn`）网格化。四边形槽位在 GPU 上按 atomicAdd 写入、顺序不定，
+/// 这里按三角形规范序排序后再算统计/哈希 ⇒ 同输入逐位一致。
+pub fn field_to_mesh_gpu(hd: &crate::jfa::Headless, field: &Field) -> Result<Mesh, String> {
+    // gsn 的索引缓冲按"每 cell 3 个四边形"预留；超过绑定上限时 wgpu 会 panic，
+    // 这里先拒绝，让调用方走显式 CPU 回退。
+    let idx_bytes = (field.grid.n as u64).pow(3) * 3 * 6 * 4;
+    let limit = hd.device.limits().max_storage_buffer_binding_size;
+    if idx_bytes > limit {
+        return Err(format!(
+            "GPU 网格索引缓冲 {:.1} MB 超过设备绑定上限 {:.1} MB",
+            idx_bytes as f64 / (1 << 20) as f64,
+            limit as f64 / (1 << 20) as f64
+        ));
+    }
+    let gsn = crate::gsn::surface_nets_gpu(hd, &field.values, field.grid.n);
+    Ok(mesh_from_gsn(&gsn, &field.grid))
+}
+
+fn mesh_from_gsn(gsn: &crate::gsn::GsnMesh, grid: &Grid) -> Mesh {
+    let mut used = vec![false; gsn.positions.len()];
+    for &slot in &gsn.indices {
+        used[slot as usize] = true;
+    }
+    let mut remap = vec![u32::MAX; gsn.positions.len()];
+    let mut positions = Vec::new();
+    for (slot, is_used) in used.iter().enumerate() {
+        if *is_used {
+            remap[slot] = positions.len() as u32;
+            let p = gsn.positions[slot];
+            positions.push([
+                grid.origin[0] + p[0] * grid.h,
+                grid.origin[1] + p[1] * grid.h,
+                grid.origin[2] + p[2] * grid.h,
+            ]);
+        }
+    }
+    // 压缩顺序 = 槽位升序（与 atomic 写入序无关）。
+    let mut indices: Vec<u32> = gsn
+        .indices
+        .iter()
+        .map(|&slot| remap[slot as usize])
+        .collect();
+    // 绕序保留，只旋转到最小索引开头；再按字典序排三角形。
+    for t in indices.as_chunks_mut::<3>().0 {
+        if t[1] < t[0] && t[1] <= t[2] {
+            t.rotate_left(1);
+        } else if t[2] < t[0] && t[2] < t[1] {
+            t.rotate_left(2);
+        }
+    }
+    indices.as_chunks_mut::<3>().0.sort_unstable();
+
+    let mut vol = signed_volume(&positions, &indices);
+    if vol < 0.0 {
+        for t in indices.as_chunks_mut::<3>().0 {
+            t.swap(1, 2);
+        }
+        vol = -vol;
+    }
+    let mut normals = vec![[0.0f32; 3]; positions.len()];
+    for t in indices.as_chunks::<3>().0 {
+        let n = face_normal(
+            positions[t[0] as usize],
+            positions[t[1] as usize],
+            positions[t[2] as usize],
+        );
+        for &v in t {
+            let acc = &mut normals[v as usize];
+            acc[0] += n[0];
+            acc[1] += n[1];
+            acc[2] += n[2];
+        }
+    }
+    for n in &mut normals {
+        *n = super::normalize_vec(*n);
+    }
+
+    let (components, chi, boundary_touch, bounds) = topo_stats(&positions, &indices, grid);
+    let stats = MeshStats {
+        vertices: positions.len(),
+        triangles: indices.len() / 3,
+        components,
+        chi,
+        volume: vol.abs(),
+        boundary_touch,
+        hash: mesh_hash(&positions, &indices),
+        bounds,
+    };
+    Mesh {
+        positions,
+        normals,
+        indices,
+        stats,
+    }
+}
+
 pub fn field_to_mesh(field: &Field) -> Mesh {
     let n = field.grid.n;
     let shape = RuntimeShape::<u32, 3>::new([n, n, n]);

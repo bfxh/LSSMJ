@@ -8,7 +8,7 @@ mod html;
 mod report;
 
 use args::{Config, HELP, ModeSel, is_bool_flag, parse_config};
-use conv_core::gauss::mesh::{Mesh, field_to_mesh, write_obj};
+use conv_core::gauss::mesh::{Mesh, field_to_mesh, field_to_mesh_gpu, write_obj};
 use conv_core::gauss::ply::{PlyReadOptions, parse_ply_with};
 use conv_core::gauss::voxel::{
     Backend, Field, VoxelMode, VoxelizeOptions, voxelize, voxelize_gpu_with,
@@ -369,7 +369,7 @@ fn convert_and_write(
         cfg.threads
     };
     let mut gpu_fallback = None;
-    let gpu_device = if cfg.gpu {
+    let gpu_device = if cfg.gpu || cfg.gpu_mesh {
         let t = Instant::now();
         match cached_gpu() {
             Ok(hd) => {
@@ -389,7 +389,7 @@ fn convert_and_write(
         mode,
         bins3d: cfg.bins3d,
         simd_prep: cfg.simd_prep,
-        backend: if gpu_device.is_some() {
+        backend: if cfg.gpu && gpu_device.is_some() {
             Backend::Gpu
         } else {
             Backend::Cpu
@@ -409,7 +409,7 @@ fn convert_and_write(
         acc_vox += *v;
         acc_mesh += *m;
     }
-    if gpu_device.is_some() {
+    if cfg.gpu && gpu_device.is_some() {
         let bad = match &result {
             Err(_) => true,
             Ok((_, m, _, _)) => m.stats.triangles == 0 || m.stats.volume <= 0.0,
@@ -486,6 +486,24 @@ fn convert_and_write(
             timings.mesh = acc_mesh;
         }
     }
+    // 只对最终选中的场重做一次网格；重试期间仍用 CPU 网格做质量判据。
+    let mut mesher_gpu = false;
+    let mut mesh_fallback = None;
+    if cfg.gpu_mesh {
+        if let Some(hd) = gpu_ref {
+            let t = Instant::now();
+            match field_to_mesh_gpu(hd, &field) {
+                Ok(m) => {
+                    timings.mesh = t.elapsed().as_secs_f64() * 1e3;
+                    mesh = m;
+                    mesher_gpu = true;
+                }
+                Err(e) => mesh_fallback = Some(format!("GPU 网格失败（{e}）→ CPU Surface Nets")),
+            }
+        } else {
+            mesh_fallback = Some("--gpu-mesh 无可用 GPU → CPU Surface Nets".into());
+        }
+    }
     if !cfg.quiet {
         let mut exec = match field.backend {
             Backend::Gpu => {
@@ -526,7 +544,8 @@ fn convert_and_write(
             5,
             "网格",
             &format!(
-                "Surface Nets · {} 顶点 · {} 三角形 · χ={} · {} 分量 · {:.1} ms",
+                "Surface Nets · {} · {} 顶点 · {} 三角形 · χ={} · {} 分量 · {:.1} ms",
+                if mesher_gpu { "gpu" } else { "cpu" },
                 fmt_int(mesh.stats.vertices),
                 fmt_int(mesh.stats.triangles),
                 mesh.stats.chi,
@@ -545,6 +564,15 @@ fn convert_and_write(
     }
     if let Some(r) = &iso_retry {
         warnings.push(format!("密度阈值自动重试：{r}，已选更闭合的网格"));
+    }
+    if let Some(m) = &mesh_fallback {
+        warnings.push(m.clone());
+    }
+    if mesher_gpu {
+        warnings.push(
+            "GPU 网格为实验档：单次含管线编译，明显慢于 CPU（64³ 热态 24–31 ms vs CPU 4 ms）；默认用 CPU 网格"
+                .into(),
+        );
     }
     if field.backend == Backend::Gpu && cfg.bins3d {
         warnings.push("--gpu 忽略 --bins3d（GPU 用自己的 job 表）".into());
@@ -599,6 +627,7 @@ fn convert_and_write(
         has_normals: loaded.has_normals,
         flatness,
         hollow: !cfg.seal,
+        mesher: if mesher_gpu { "gpu" } else { "cpu" },
     };
     if let Some(path) = html {
         if mesh.stats.vertices > 250_000 {

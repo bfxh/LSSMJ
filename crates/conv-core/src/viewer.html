@@ -66,6 +66,7 @@ function main() {
   const rows = [
     ['模式', S.mode || '—'],
     ['后端', S.backend || '—'],
+    ['网格', S.mesher === 'gpu' ? 'GPU' : 'CPU'],
     ['分桶', S.backend === 'gpu' ? '—' : (S.bins3d ? '3D tile' : 'z-slab')],
     ['Prep', S.simd_prep ? 'SIMD' : 'scalar'],
     ['网格', (S.grid || '—') + '³'],
