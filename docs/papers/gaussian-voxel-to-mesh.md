@@ -459,7 +459,9 @@ q999/iso/网格哈希不变；128³ density 的排序段不再是瓶颈。密封
 | 100k surfel | 142.6 ms | 135.9 ms | 1.05× | ✓ |
 
 20k 有 14–25% 收益；100k 被 3D 桶构建与更多 bin entries 吃掉，只剩 3–5%，
-所以**不设为默认**，而是作为 `--bins3d` 可选档（默认仍 z-slab）。本轮 64³/128³/12–20k 复测：
+所以**不设为默认**，而是作为 `--bins3d` 可选档（默认仍 z-slab）。注意：在 z-slab 改成
+动态取块后，20k 的 3D tile 优势已基本消失（全套基准 0.99×/0.99×，100k 0.96×/1.06×，
+见 §6.13），更确认保持可选档。动态取块前的 64³/128³/12–20k 复测：
 球 64 43.0→33.4 ms、blobs 64 58.6→43.5 ms、球 128 147.9→128.6 ms、blobs 128 371.7→308.9 ms
 （hash 不变）；仍维持可选档决策。生产实现
 `src/gauss/voxel/tiles.rs`，对照 bench 在 `src/gauss/voxel/bench_tiles.rs`（`#[ignore]`）。
@@ -643,6 +645,37 @@ mask/field）、pipelines ~2–3 ms、实际计算 pass + 回读 12–15 ms。�
    GPU post 计算 + 回读 12–15 ms，splat 3–19 ms，buffer/pipeline setup ~5 ms。
 4. **写盘：128³ 22–32 ms**（OBJ 主导；HTML 已 base64 减半）。
 5. 1T→24T 约 9×；要再上台阶必须 SIMD splat 或稀疏/更高分辨率架构，而不是调线程数。
+
+### 6.13 全套基准复跑（2026-10-20，当前构建）
+
+`perf_compare`（3 次中位数；vox+mesh，不含 init/读写；GPU init 433.1 ms）：
+
+| 场景 | CPU 1T | CPU 24T | GPU | GPU+GPU 网格 |
+| --- | --- | --- | --- | --- |
+| 64³ 球 | 358.7 | 40.9 | **15.5** | 24.5 |
+| 64³ blobs | 438.3 | 48.2 | **18.8** | 40.2 |
+| 128³ 球 | 1483.7 | 162.9 | **44.6** | 119.2 |
+| 128³ blobs | 3582.3 | 357.4 | **45.1** | 132.8 |
+
+- GPU 热态比 CPU 24T 快 **2.6–7.9×**；CPU 1T→24T **9.6–10.5×**。
+- GPU mesh 仍比 CPU mesh 慢 3.3–7.6×（128³ 球 98.9 vs 21.7、blobs 110.5 vs 18.1）。
+- GPU vox 分解（`bench_gpu_scenes`）：64³ 10.8/11.9 ms、128³ density 18.9 / surfel 52.9 ms；
+  128³ surfel 的 post（双缓冲 + 密封）仍显著重于 density。
+
+其余基准（同轮）：
+
+| 项 | 读数 |
+| --- | --- |
+| 100k eigen（adaptive vs AVX2 batch） | 6.4 → 5.2 ms（1.22×） |
+| 2M quantile（sort vs select） | 36.7 → 2.5 ms（14.6×） |
+| 100k prep density 1T/24T/SIMD | 9.6 / 6.3 / 6.1 ms |
+| 100k prep surfel 1T/24T/SIMD | 11.4 / 6.5 / 7.6 ms（SIMD 0.85×） |
+| 100k eigen 内部 | covariance 1.5 ms + Jacobi 5.5 ms（78.9%） |
+| 100k bins | 旧逐块全扫 80.0 ms → 建桶 2.8 ms（364,280 entries） |
+| 3D tile vs 动态 z-slab（20k density/surfel） | 0.99× / 0.99×（100k：0.96× / 1.06×），逐位一致 |
+
+**结论**：动态取块后，3D tile 在 20k 已与 z-slab 持平；100k 只有 surfel 快 6%，
+继续维持 `--bins3d` 可选档。GPU 的单次转换仍被 init 433 ms 主导；热态/批处理才是它的场景。
 
 ## 7. 限制与否证条件（不许当结论）
 
