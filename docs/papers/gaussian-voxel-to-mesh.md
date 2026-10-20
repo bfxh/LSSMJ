@@ -4,7 +4,7 @@
 > 范围口径来自用户 2026-10-20："你就只研究研究高斯体素怎么转网格和 UX……而且要做出来"。
 > **实现位置**：`crates/conv-core/src/gauss.rs` + `src/gauss/{ply,voxel,mesh,gpu}.rs` +
 > `src/gauss/{splat_density,splat_surfel}.wgsl` + `src/bin/gauss2mesh/{main,args,report,html}.rs` +
-> `src/viewer.html`；机器判据在 `tests/gauss_leg.rs` + `tests/gauss_gpu.rs`。
+> `src/viewer.html`；机器判据在 `tests/gauss_leg.rs` + `tests/gauss_gpu.rs` + `tests/cli_batch.rs`。
 > **证据纪律**：设计判决只依赖本仓账本锚（`W15A-*`/`W15C-*`）与**本地实测**；
 > 2025–2026 的新论文只作 web 旁证，未入账，不单独支撑设计判决（本仓 `web` 纪律）。
 > 本轮没有新增 ledger 条目；新增的外部链接在 §9 明示"未入账/未复算"。
@@ -200,6 +200,9 @@ cargo run --release --bin gauss2mesh -- demo blobs
 
 # 真实 PLY：默认写 <input>.obj/.html，--json 另写报告
 cargo run --release --bin gauss2mesh -- convert scene.ply --grid 128 --mode auto
+
+# 批处理：同一进程复用一次 GPU 设备
+cargo run --release --bin gauss2mesh -- batch a.ply b.ply --out-dir out/batch --gpu
 ```
 
 ### 5.2 阶段进度（实跑输出）
@@ -252,6 +255,19 @@ timings_ms{load,prune,voxel,mesh,write,gpu_init} / warnings[]`。
 - 预览校验（本机）：WebGL2 画布 960×640，`gl.getError()=0`；同步 `render()` 后 `readPixels` 得到
   78,905 个非背景像素（含点云版本；后续多线程版读数为 77,586），并把画布降采样成 ASCII 轮廓确认球/环面形状。
 
+### 5.6 批处理（batch）
+
+```bash
+gauss2mesh batch a.ply b.ply --out-dir out/batch --gpu
+```
+
+- 同一进程复用 `OnceLock<Headless>`：首个文件付 init，后续 stage 显示 `gpu (cached)`。
+- 每文件写 `<out-dir>/<stem>.obj/.json`（默认另写 HTML）；重名 stem 自动 `_2`；
+  坏文件不阻断后续，最终退出码非零。
+- `--out/--html/--json` 是单文件选项；batch 统一用 `--out-dir`。
+- 实测（两份 PLY）：独立 GPU 进程 1424.0 + 1162.8 = **2586.8 ms**（init 1015 / 889）；
+  一次 batch **1233.0 ms**（init 911 / 0），省 **1353.8 ms**。CPU 两文件 batch 188.1 ms。
+
 ## 6. 本机实测（2026-10-20，release；下表为 1T 参照）
 
 环境：Windows 10.0.28000 x64；`rustc 1.99.0 (b940084d7 2026-09-28)`；
@@ -302,6 +318,8 @@ n=64，3 次中位数；`field.threads=24`。体素化之外的 load/prune/mesh/
 
 - **设备复用**（`voxelize_gpu_with(&Headless, …)`，48³/4k 探针）：surfel 首 6.1 ms、次 3.9 ms；
   density 首 3.3 ms、次 2.8 ms；设备 init 936.6 ms。
+- **batch 设备复用**（两份 PLY）：独立 GPU 进程 1424.0 + 1162.8 = 2586.8 ms（init 1015/889）→
+  一次 batch 1233.0 ms（init 911/0），省 **1353.8 ms**；第二文件 stage 为 `gpu (cached)`。
 - GPU 两次运行哈希逐位一致；CPU 与 GPU 哈希不同（定点量化 + WGSL `exp`）。
   48³ 对拍：surfel 体积差 3e-5、场最大差 0.0197；density 体积差 3.6e-4、iso 同值、χ 同为 -184；
   density 原始场最大差 7.18 是 iso 边界体素在"0 ↔ +outside"之间的密封翻转（见 §3.7）。
@@ -345,6 +363,8 @@ q999/iso/网格哈希不变；128³ density 的排序段不再是瓶颈。密封
 11. **GPU 首片的边界**：定点量化不等于 CPU 逐位；u32/i32 累加在超大重叠/极端尺度下可能溢出；
     job 表在 CPU 建；post（iso/密封/网格）仍在 CPU；2D dispatch 上限 65535；设备 init ~0.9–1.1 s，
     单次转换默认仍 CPU。GPU 当前是批处理/更高分辨率档，不是“一键实时”。
+12. **batch 是顺序的**：不并行多个文件；设备缓存是进程级；每文件默认写 JSON，无聚合报告；
+    重名 stem 自动 `_2`；首个文件仍付 init。
 
 ## 8. 复算命令
 
@@ -404,9 +424,9 @@ CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- convert scene.ply --
 
 1. **自适应 iso**：按每个高斯中心的密度分位/局部块阈值，替代"全局 q99.9 + 失败重试"；
    判据：真实非均匀场景的重试率、体积误差、χ 稳定性。
-2. **GPU splat 首片已落**（`--gpu`，定点整数原子，逐位确定）；下一步：设备/管线服务化或批量入口
-   （`voxelize_gpu_with` 已备）、GPU 侧 iso/密封、更高分辨率/稀疏分块；单次转换在 64³/128³
-   仍被 ~1s 的 wgpu init 拖慢，不能把 GPU 当默认档。
+2. **GPU splat 首片 + batch 设备复用已落**（`--gpu` / `batch`，定点整数原子，逐位确定）；
+   下一步：128³ 的 Gaussian 分桶 + 并行 prep、GPU 侧 iso/密封、更高分辨率/稀疏分块。
+   单次转换仍被 ~1s 的 wgpu init 拖慢，不能把 GPU 当默认档。
 3. **稀疏分块**：256³/大场景的 1-voxel halo 无缝契约（T-GC-05）。
 4. **质量档**：DC/MT 对尖角/薄流的改善；需要薄流/尖特征测试对象（W15A-025 的教训：光滑球堆测不出差异）。
 5. **真实资产**：2DGS/SuGaR 训练产物的法线一致性、尺度分布、SPZ 读入。

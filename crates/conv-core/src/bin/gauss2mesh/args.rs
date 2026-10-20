@@ -9,6 +9,7 @@ LSSMJ gauss2mesh · 高斯体素 → 网格
 用法：
   gauss2mesh demo [sphere|torus|blobs]     合成场景演示（默认 sphere）
   gauss2mesh convert <input.ply>           读 3DGS PLY 并转换
+  gauss2mesh batch <input.ply...>          批量转换（同一进程复用一次 GPU 设备）
   gauss2mesh inspect <input.ply>           只读入并报告统计
 
 常用选项：
@@ -29,13 +30,14 @@ LSSMJ gauss2mesh · 高斯体素 → 网格
   --html <path>          HTML 预览路径（默认与输入同名 .html）
   --no-html              不写 HTML 预览
   --json <path>          机器可读报告
-  --out-dir <dir>        demo 输出目录（默认 out）
+  --out-dir <dir>        demo/batch 输出目录（默认 out）
   --seed <u64>           blobs 场景种子（默认 7）
   --quiet                只打印最终三行
 
 例：
   cargo run --release --bin gauss2mesh -- demo sphere
   cargo run --release --bin gauss2mesh -- convert scene.ply --grid 128 --mode auto
+  cargo run --release --bin gauss2mesh -- batch a.ply b.ply --gpu --out-dir out/batch
 ";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,6 +57,7 @@ impl ModeSel {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct Config {
     pub(crate) grid: u32,
     pub(crate) threads: usize,

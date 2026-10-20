@@ -24,7 +24,19 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
+use std::sync::OnceLock;
 use std::time::Instant;
+
+static GPU_CACHE: OnceLock<Headless> = OnceLock::new();
+
+/// 同进程内复用同一 wgpu 设备；batch 的首个文件付 init，其余复用。
+fn cached_gpu() -> Result<&'static Headless, String> {
+    if let Some(hd) = GPU_CACHE.get() {
+        return Ok(hd);
+    }
+    let hd = try_headless_device()?;
+    Ok(GPU_CACHE.get_or_init(|| hd))
+}
 
 struct Loaded {
     gaussians: Vec<Gaussian>,
@@ -99,6 +111,7 @@ fn run() -> Result<(), String> {
                 .ok_or("convert 需要输入 PLY：gauss2mesh convert <input.ply>")?;
             run_convert(&cfg, Path::new(input))
         }
+        "batch" => run_batch(&cfg, &positional),
         "inspect" => {
             let input = positional
                 .first()
@@ -223,6 +236,66 @@ fn run_convert(cfg: &Config, input: &Path) -> Result<(), String> {
     )
 }
 
+fn run_batch(cfg: &Config, inputs: &[String]) -> Result<(), String> {
+    if inputs.is_empty() {
+        return Err("batch 需要至少一个输入 PLY：gauss2mesh batch <a.ply> [b.ply ...]".into());
+    }
+    if cfg.out.is_some() || cfg.html.is_some() || cfg.json.is_some() {
+        return Err("batch 用 --out-dir；--out/--html/--json 是单文件选项".into());
+    }
+    fs::create_dir_all(&cfg.out_dir)
+        .map_err(|e| format!("建目录 {} 失败：{e}", cfg.out_dir.display()))?;
+    let mut used: HashSet<std::path::PathBuf> = HashSet::new();
+    let mut ok = 0usize;
+    let mut failed = 0usize;
+    let batch_start = Instant::now();
+    for (i, input) in inputs.iter().enumerate() {
+        let input = Path::new(input);
+        let stem = input
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "mesh".to_string());
+        let mut obj = cfg.out_dir.join(format!("{stem}.obj"));
+        let mut n = 2;
+        while used.contains(&obj) {
+            obj = cfg.out_dir.join(format!("{stem}_{n}.obj"));
+            n += 1;
+        }
+        used.insert(obj.clone());
+        let mut c = cfg.clone();
+        c.out = Some(obj.clone());
+        c.html = if cfg.no_html {
+            None
+        } else {
+            Some(obj.with_extension("html"))
+        };
+        c.json = Some(obj.with_extension("json"));
+        println!(
+            "\n===== [{}/{}] {} =====",
+            i + 1,
+            inputs.len(),
+            input.display()
+        );
+        match run_convert(&c, input) {
+            Ok(()) => ok += 1,
+            Err(e) => {
+                failed += 1;
+                eprintln!("✗ {}：{e}", input.display());
+            }
+        }
+    }
+    println!(
+        "\n批处理完成：{ok} 成功 / {failed} 失败 · {:.1} ms",
+        batch_start.elapsed().as_secs_f64() * 1e3
+    );
+    if failed > 0 {
+        Err(format!("{failed} 个输入失败"))
+    } else {
+        Ok(())
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn convert_and_write(
     cfg: &Config,
@@ -298,7 +371,7 @@ fn convert_and_write(
     let mut gpu_fallback = None;
     let gpu_device = if cfg.gpu {
         let t = Instant::now();
-        match try_headless_device() {
+        match cached_gpu() {
             Ok(hd) => {
                 timings.gpu_init = t.elapsed().as_secs_f64() * 1e3;
                 Some(hd)
@@ -311,7 +384,7 @@ fn convert_and_write(
     } else {
         None
     };
-    let gpu_ref = gpu_device.as_ref();
+    let gpu_ref = gpu_device;
     let mut voxel_opts = VoxelizeOptions {
         mode,
         backend: if gpu_device.is_some() {
@@ -413,7 +486,13 @@ fn convert_and_write(
     }
     if !cfg.quiet {
         let exec = match field.backend {
-            Backend::Gpu => format!("gpu (init {:.0} ms)", timings.gpu_init),
+            Backend::Gpu => {
+                if timings.gpu_init >= 0.5 {
+                    format!("gpu (init {:.0} ms)", timings.gpu_init)
+                } else {
+                    "gpu (cached)".to_string()
+                }
+            }
             Backend::Cpu => format!("cpu/{}t", field.workers),
         };
         stage(
