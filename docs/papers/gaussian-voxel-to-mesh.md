@@ -149,7 +149,8 @@ f(p)   = num/den  if den ≥ min_weight else 未知
 ### 3.6 并行口径（多线程 splat）
 
 按 z 层切块（`chunks = min(n, workers×2)`），每块独占自己的输出切片；worker 只写本块，
-**无原子、无锁**。每个体素的 Gaussian 累加顺序与单线程完全相同（外层仍是 prepared 数组顺序），
+体素累加**无原子、无锁**；取块用 `AtomicUsize` 动态领取，避免各 z 块成本不均时的尾部等待。
+每个体素的 Gaussian 累加顺序与单线程完全相同（外层仍是 prepared 数组顺序），
 所以 `threads=N` 与 `threads=1` 的场值与网格哈希**逐位一致**
 （`tests/gauss_leg.rs::parallel_splat_matches_single_thread_bitwise`）。
 `--threads 1` 保留为逐位参照；`--threads 0`（CLI 默认）= `available_parallelism()`。
@@ -512,6 +513,7 @@ eigen 内核确实快了 1.37×，但完整 prep 已被 24T 标量压到 5–6 m
 - **GPU 网格从未胜过“GPU vox + CPU 网格”**：网格段慢 3.5–6.9×，整腿 28 vs 19、42 vs 22、
   135 vs 79、146 vs 66 ms；`--gpu-mesh` 保持实验档（§3.10/§6.6）。
 - CPU 24T 对 1T：7.7× / 7.9× / 8.2× / 8.8×（球 64、blobs 64、球 128、blobs 128）。
+- 表中 CPU 24T 是静态轮转读数；动态取块（§6.10）同轮 A/B 再快 11–31%（64³ 更明显）。
 
 **单次 CLI（含设备 init，1 次代表性读数）**：
 
@@ -553,6 +555,20 @@ CPU 行是默认 z-slab；`--bins3d` 在 12–20k 实测快 15–35%（hash 不�
 | 浏览器 `readPixels` 非背景像素 | 77,586 | 77,591 | 一致（±抗锯齿） |
 
 载荷是平台原生端序的 f32/u32；当前目标全为 little-endian。旧 HTML 的 JSON 数组格式仍能打开。
+
+### 6.10 动态 z 块调度（2026-10-20）
+
+把静态轮转（`for i in (w..len).step_by(workers)`）换成 `AtomicUsize` 动态取块；只改调度，
+不改每体素的 Gaussian 累加顺序。A/B 同轮交替、各 4 次中位数（vox 段，ms）：
+
+| 场景 | 静态 | 动态 | 变化 |
+| --- | --- | --- | --- |
+| 64³ 球 | 52.9 | **36.3** | −31% |
+| 64³ blobs | 77.4 | **54.7** | −29% |
+| 128³ 球 | 176.2 | **156.5** | −11% |
+| 128³ blobs | 468.2 | **403.8** | −14% |
+
+（绝对值受同轮系统负载影响，只看 A/B 比值。）逐位测试 9/9 通过；`--threads 1` 路径不变。
 
 ## 7. 限制与否证条件（不许当结论）
 

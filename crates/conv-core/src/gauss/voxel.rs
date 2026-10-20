@@ -305,13 +305,20 @@ where
             .map(|(i, c)| (i, f(i, c)))
             .collect();
     }
+    // 动态取块：各 z 块成本不均时避免静态轮转的尾部等待；输出按块号回收，顺序不变。
+    let next = std::sync::atomic::AtomicUsize::new(0);
     std::thread::scope(|s| {
         let mut handles = Vec::with_capacity(workers);
-        for w in 0..workers {
+        for _ in 0..workers {
+            let next = &next;
             let f = &f;
             handles.push(s.spawn(move || {
                 let mut out = Vec::new();
-                for i in (w..chunks.len()).step_by(workers) {
+                loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if i >= chunks.len() {
+                        break;
+                    }
                     out.push((i, f(i, &chunks[i])));
                 }
                 out
