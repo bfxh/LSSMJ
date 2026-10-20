@@ -260,7 +260,8 @@ pub(crate) fn post_gpu(
         let (wg_x, wg_y) = dispatch_dims(count as u32)?;
         params.dispatch_x = wg_x;
         queue.write_buffer(&params_buf, 0, bytemuck::bytes_of(&params));
-        let batch = 16u32;
+        // 每批只在批末回读一次；回读（poll）比泛洪趟数贵，批量取 64 封顶。
+        let batch = n.min(64);
         let max_passes = 2 * n;
         let mut passes = 0u32;
         let mut converged = false;
