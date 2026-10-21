@@ -677,12 +677,137 @@ mask/field）、pipelines ~2–3 ms、实际计算 pass + 回读 12–15 ms。�
 **结论**：动态取块后，3D tile 在 20k 已与 z-slab 持平；100k 只有 surfel 快 6%，
 继续维持 `--bins3d` 可选档。GPU 的单次转换仍被 init 433 ms 主导；热态/批处理才是它的场景。
 
+### 6.14 256³ 基线与稀疏可行性（2026-10-20）
+
+稠密 256³ CPU 24T（本机）：
+
+| 场景 | vox | mesh | write | total | 三角形 | 体积 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 球 surfel | 786.5 ms | 133.4 ms | 137.5 ms | **1061.3 ms** | 576,144 | 1.77614 |
+| blobs density | 2690.2 ms | 105.9 ms | 95.6 ms | **2895.1 ms** | 426,468 | 2.04547 |
+
+⇒ 稠密 256³ 在 20k/12k 场景已能跑（1.1–2.9 s），不是“完全上不去”。
+
+稀疏块占用探针（post-seal Field 中**有符号变化**的块）：
+
+| 场景 | 16³ 块 | 32³ 块 |
+| --- | --- | --- |
+| torus surfel | 688 / 4096 = 16.8% | 176 / 512 = 34.4% |
+| blobs density | 188 / 4096 = 4.6% | 48 / 512 = 9.4% |
+
+**注意**：post-seal 会把未知区写成 ±outside，所以“非零块”恒为 100%，不能当原始 splat
+分配率。结论：朴素“按块稀疏存储”不会降低分配率；要获得收益必须先做**粗分辨率表面定位**
+（如 64³ 粗场）再只对表面块 + halo 做细 splat，并实现稀疏密封与分块网格。
+
+### 6.15 粗场定位与表面块探测（`SurfaceBlocks`，2026-10-20）
+
+`gauss::voxel::surface_blocks::SurfaceBlocks::detect(gaussians, opts, fine_grid, block, margin,
+coarse_factor)`：
+
+1. 构造**同域粗格**：`n_c = n / coarse_factor`（≥8），`h_c = (n−1)h/(n_c−1)`，origin 相同；
+   用现有 CPU density/surfel 管线在粗格上求场。
+2. 粗格单元 8 角点有正有负 ⇒ 表面粗块；按 `margin`（粗块单位）做 3D 膨胀。
+3. 细块（边长 `block` 个细体素）的角点范围映射到粗格单元；命中膨胀后的 mask 即候选。
+4. 输出升序块 id（`x + y*per + z*per²`）、`contains/xyz/fraction`，并保留粗场。
+
+256³ 召回判据（dense 256 场的有符号变化块为真值）：
+
+| 场景 | block | margin | truth | active | 漏选 |
+| --- | --- | --- | --- | --- | --- |
+| torus surfel | 16 | 0 | 688 | 888 (21.7%) | **0** |
+| torus surfel | 16 | 1 | 688 | 1,168 (28.5%) | 0 |
+| torus surfel | 32 | 0 | 176 | 208 (40.6%) | 0 |
+| blobs density | 16 | 0 | 188 | 257 (6.3%) | **0** |
+| blobs density | 16 | 1 | 188 | 357 (8.7%) | 0 |
+| blobs density | 32 | 0 | 48 | 60 (11.7%) | 0 |
+
+推荐 `margin=0`（本轮场景零漏选；要更保守用 1，候选约多 30%）。128³ 的
+sphere/torus/blobs 单测同样零漏选。模块只负责定位；下一步才是候选块细 splat + halo 网格。
+默认稠密路径未改。
+
+### 6.16 候选块细 splat + halo 网格（`SparseDensity`，2026-10-20）
+
+`SparseDensity::build(gaussians, opts, fine_grid, blocks, iso, seal)`：
+
+1. 只对 `SurfaceBlocks` 候选块分配 (B+2)³ halo 场；按 Gaussian 的细 splat 范围 + 1 格
+   构建块→Gaussian bin，只 splat 与 halo 相交的高斯。
+2. 每块用 `fast_surface_nets` 生成 local cells 0..B（覆盖 global x0−1..x0+B−1），
+   顶点按全局 cell key 去重、四边形按 4 cell 规范键去重 ⇒ halo 拼接无缝。
+3. `seal=false` 未知角点一律 +outside（hollow 语义）；`seal=true` 走 §6.17 的稀疏密封。
+
+判据（与 dense hollow 对拍）：
+
+| 场景 | dense tri / vol / χ | sparse tri / vol / χ | 候选块 | 结果 |
+| --- | --- | --- | --- | --- |
+| blobs 128³ b=16 | 43,920 / 0.43488 / −6 | 43,920 / 0.43488 / −6 | 64 (12.5%) | **逐项一致** |
+| blobs 256³ b=16 | 184,732 / 0.54887 / 4 | 184,732 / 0.54887 / 4 | 278 (6.8%) | **逐项一致** |
+
+256³ 实测（同日复跑，数值有 ±20% 抖动）：dense hollow 495.4 ms；sparse detect 13.0 +
+build 499.5 + mesh 39.3 = **551.8 ms**，内存从整格 4096 块降到 278 块。
+
+### 6.17 稀疏内部密封与 surfel 稀疏路径（2026-10-20）
+
+`seal_blocks` 对 density / surfel 共用，差别只在“已知”判据：
+
+- density：`value < 0` 为已知；surfel：`den ≥ min_weight && den > 0` 的 known 掩码为已知。
+- 块级分类：活跃块 = 2；非活跃块取块范围内粗场角点全负 ⇒ 1（内部屏障），否则 0（未知）。
+- 从格边界对 class 0 块做 6 邻域泛洪，得到“外部空块”；未被泛洪到的空块视为内部。
+- 细网格：活跃块内未知角点按 6 邻接播种（域外/外部空块 → 外，内部空块 → 内），
+  再在活跃块之间对未知角点做 BFS；已知值是屏障。未知角点最终写 `±outside`
+  （density 的 outside 由 iso 推，surfel 取 `3h`）。
+
+判据：solid 与 dense 密封对拍；surfel hollow 与 dense hollow 逐位对拍：
+
+| 场景 | dense tri / vol / χ / comp | sparse tri / vol / χ / comp | 候选块 | 结果 |
+| --- | --- | --- | --- | --- |
+| density blobs 128³ solid | 24,316 / 1.96549 / 2 / 1 | 24,316 / 1.96548 / 2 / 1 | 64 (12.5%) | 体积相对误差 <1e-5 |
+| surfel sphere 128³ hollow | 255,552 / 0.30904 / 4 / 2 | 255,552 / 0.30904 / 4 / 2 | 376 (73.4%) | **逐项一致** |
+| surfel torus 128³ hollow | 150,768 / 0.20014 / 0 / 2 | 150,768 / 0.20014 / 0 / 2 | 216 (42.2%) | **逐项一致** |
+| surfel sphere 128³ solid | 135,840 / 1.77618 / 2 / 1 | 135,840 / 1.77618 / 2 / 1 | 328 (64.1%) | **逐项一致** |
+
+256³ surfel hollow（60k 球）：dense 894.5 ms；sparse detect 53.6 + build 683.7 +
+mesh 293.1 = **1030.4 ms**，候选 1816 (44.3%)，tri/vol/χ 逐项一致。
+
+**块尺寸扫描（256³，hollow，`tests/sparse_sweep.rs`，24T）**：
+
+| 场景 | dense | B=8 | B=16 | B=32 |
+| --- | --- | --- | --- | --- |
+| density blobs | 525.8 ms | 681.0 ms（1,404 块 / 1.40M 角点） | **516.8 ms**（278 / 1.62M） | 523.2 ms（60 / 2.36M） |
+| surfel sphere | **869.4 ms** | 1,262.7 ms（10,772 / 10.77M） | 988.0 ms（1,816 / 10.59M） | 974.3 ms（352 / 13.84M） |
+
+三条曲线的 tri/χ/分量都与稠密一致（体积相对误差 ≤ 7.8e-5）。结论：
+density 的甜点是 B=16（总耗时与稠密持平、略快 2%）；B=8 虽然角点更少，但块数多 5 倍、
+bin/分配开销把收益吃掉。surfel 的甜点是 B=32，但仍比稠密慢 ~12%；候选带占比随 B
+增大（44%→69%），不存在“靠调块尺寸转加速档”的空间。
+
+**结论**：稀疏路径当前是**内存档**，不是加速档。density 256³ 的 build 已与 dense
+整格持平（块 halo 重复 splat 抵消了少扫的收益），surfel 因候选块占比高（44–69%）
+反而慢 12–15%。要变成加速档，下一步要么降低候选带（更准的粗场/更薄的 halo），
+要么把“候选块 + 细 splat”搬到 GPU 的稀疏 dispatch；在此之前默认路径仍是稠密。
+
+
+### 6.18 三态编码：2-bit 胜基-3（2026-10-21）
+
+密封的 `labels` 是三态临时数组（未定/外/内）。合成 256³ 泛洪（`tests/ternary_probe.rs`，ignored）：
+
+| 编码 | 时间（两次） | 内存 |
+| --- | --- | --- |
+| u8 | 93–111 ms | 16.8 MB |
+| **2-bit** | **60–88 ms（0.64–0.79×）** | **4.2 MB（25%）** |
+| 5-trit/byte（基-3） | 134–142 ms（1.28–1.44×） | 3.4 MB（20%） |
+
+真实稀疏 surfel 密封 256³：u8 285.1 ms vs 2-bit 277.9 ms（噪声内）；labels 16.8→4.2 MB，
+density 密封峰值约 23→11 MB。基-3 相对 2-bit 只再省 0.8 MB 却慢 1.6×，且无 SIMD/位运算支持，
+不采用。结论：三态编码用 2-bit，基-3 不做。
+
 ## 7. 限制与否证条件（不许当结论）
 
 1. **CPU 多线程，非实时**：64³/20k 高斯总耗时约 0.05–0.07 s（24 线程；1T 参照 0.36–0.48 s）；
    128³ 已测（§3.8/§6.2），逐帧实时仍不成立。GPU 路径已落地（整数原子 + GPU iso/密封），
    但默认档仍是 CPU；CPU 多线程版继续作 GPU 的逐位参照。
 2. **稠密 n³**：256³ = 6700 万格，内存与遍历都上不去；量产要走稀疏分块 + 1-voxel halo（T-GC-05，`W15A-034/035`）。
+   稀疏库路径已落地（`SurfaceBlocks` + `SparseDensity`/`SparseSurfel`，§6.15–6.17），但尚未接 CLI，
+   且当前是内存档不是加速档（§6.17 结论）。
 3. **只读标准 3DGS PLY**（ASCII/二进制 little-endian）；SPZ/量化/planar 布局未接（`W15A-040..044` 是参照）。
 4. **density 的 iso 是全局值**：非均匀场景会破壳或局部过胖；自动重试只是启发式，不是自适应阈值。
    否证条件：在 3 个以上真实非均匀 3DGS 场景上，auto 重试率 >30% 或体积误差 >25% ⇒ 需要局部/分块阈值。
@@ -726,6 +851,15 @@ CARGO_INCREMENTAL=0 cargo test --release --test gauss_gpu -- --test-threads=1 --
 CARGO_INCREMENTAL=0 cargo test --release --test gauss_gpu -- --test-threads=1 --ignored bench_gpu_scenes --nocapture
 # 完整性能对比（CPU 1T/24T、GPU、GPU 网格；64³/128³ × density/surfel）
 CARGO_INCREMENTAL=0 cargo test --release --test perf_compare -- --test-threads=1 --ignored --nocapture
+# 稀疏块：定位 / halo 网格 / 密封 / surfel 对拍（含 256³ ignored 计时）
+CARGO_INCREMENTAL=0 cargo test --release --lib sparse_ -- --test-threads=1 --nocapture
+CARGO_INCREMENTAL=0 cargo test --release --lib sparse_ -- --test-threads=1 --ignored --nocapture
+# 三态编码对比（u8 / 2-bit / 5-trit，256³，ignored）
+CARGO_INCREMENTAL=0 cargo test --release --test ternary_probe -- --test-threads=1 --ignored --nocapture
+# 稀疏 surfel 256³ sealed（含 seal 计时，ignored）
+CARGO_INCREMENTAL=0 cargo test --release --lib sparse_surfel_256_seal_bench -- --test-threads=1 --ignored --nocapture
+# 块尺寸扫描 B=8/16/32（256³，density+surfel，ignored）
+CARGO_INCREMENTAL=0 cargo test --release --test sparse_sweep -- --test-threads=1 --ignored --nocapture
 # 自包含 HTML 的 base64 载荷（长度/首顶点/旧格式）
 cargo test --release --test html_embed -- --test-threads=1 --nocapture
 # 全量门（含 GPU，必须串行）
