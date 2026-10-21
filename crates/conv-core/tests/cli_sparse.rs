@@ -103,3 +103,35 @@ fn cli_512_density_auto_iso() {
     assert!((2.0..2.1).contains(&volume), "volume {volume}");
     fs::remove_dir_all(&dir).ok();
 }
+#[test]
+#[ignore = "diagnostic CLI 512 GPU dense surfel (release only)"]
+fn cli_512_gpu_surfel() {
+    let dir = temp_dir("cli512g");
+    let obj = dir.join("sphere.obj");
+    let json = dir.join("sphere.json");
+    let out = run(&[
+        "demo",
+        "sphere",
+        "--grid",
+        "512",
+        "--gpu",
+        "--no-html",
+        "--out",
+        obj.to_str().unwrap(),
+        "--json",
+        json.to_str().unwrap(),
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = fs::read_to_string(&json).unwrap();
+    assert_eq!(json_field(&text, "sparse"), "false");
+    assert_eq!(json_field(&text, "n"), "512");
+    assert_eq!(json_field(&text, "components"), "1");
+    assert_eq!(json_field(&text, "chi"), "2");
+    let volume: f32 = json_field(&text, "volume").parse().unwrap();
+    assert!((volume - 1.767).abs() / 1.767 < 0.01, "volume {volume}");
+    fs::remove_dir_all(&dir).ok();
+}
