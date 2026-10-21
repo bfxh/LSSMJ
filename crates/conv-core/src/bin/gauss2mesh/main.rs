@@ -783,6 +783,8 @@ fn run_sparse_leg(
     let detect_ms = t.elapsed().as_secs_f64() * 1e3;
     let build_ms;
     let mesh_ms;
+    let mut probe_ms = 0.0f64;
+    let mut iso_note = None;
     let (mesh, observed, sealed, iso) = match opts.mode {
         VoxelMode::Surfel => {
             let t = Instant::now();
@@ -794,9 +796,26 @@ fn run_sparse_leg(
             (m, s.observed, s.sealed_interior, 0.0)
         }
         VoxelMode::Density => {
-            let iso = opts
-                .iso_abs
-                .ok_or(">256³ density 需要 --iso <绝对阈值>（或改 --mode surfel）")?;
+            let iso = match opts.iso_abs {
+                Some(v) => v,
+                None => {
+                    let probe_n = (opts.n / 2).clamp(8, 256);
+                    let mut probe = opts.clone();
+                    probe.n = probe_n;
+                    probe.backend = Backend::Cpu;
+                    probe.bins3d = false;
+                    probe.seal = false;
+                    let t = Instant::now();
+                    let iso = voxelize(gaussians, &probe)
+                        .map_err(|e| {
+                            format!(">256³ density 自动 iso 失败（{probe_n}³ 探针）：{e}")
+                        })?
+                        .iso;
+                    probe_ms = t.elapsed().as_secs_f64() * 1e3;
+                    iso_note = Some(format!("auto iso {iso:.4}（{probe_n}³ 探针）"));
+                    iso
+                }
+            };
             let t = Instant::now();
             let s = SparseDensity::build(gaussians, opts, grid, &blocks, iso, opts.seal)?;
             build_ms = t.elapsed().as_secs_f64() * 1e3;
@@ -819,12 +838,21 @@ fn run_sparse_leg(
         workers: opts.threads,
         bounds,
     };
-    let note = format!(
+    let mut note = format!(
         "稀疏分块 {:.1}%（{} 块，B={SPARSE_BLOCK}）",
         blocks.fraction() * 100.0,
         blocks.active_count()
     );
-    Ok((field, mesh, detect_ms + build_ms, mesh_ms, Some(note)))
+    if let Some(iso) = iso_note {
+        note = format!("{iso}；{note}");
+    }
+    Ok((
+        field,
+        mesh,
+        detect_ms + probe_ms + build_ms,
+        mesh_ms,
+        Some(note),
+    ))
 }
 
 fn choose_mode(sel: ModeSel, has_normals: bool, flatness: f32) -> (VoxelMode, String) {

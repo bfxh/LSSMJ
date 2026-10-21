@@ -13,7 +13,7 @@ LSSMJ gauss2mesh · 高斯体素 → 网格
   gauss2mesh inspect <input.ply>           只读入并报告统计
 
 常用选项：
-  --grid <N>             体素分辨率 8..512（默认 64；>256 走稀疏分块，density 需 --iso）
+  --grid <N>             体素分辨率 8..512（默认 64；>256 走稀疏分块，density 自动半分辨率探针求 iso）
   --threads <N>          splat 线程数（默认 0=自动；1=单线程参照）
   --gpu                  GPU splat（定点整数原子；失败回退 CPU；忽略 --threads）
   --gpu-mesh             GPU Surface Nets 网格化（实验档：读回开销大，通常慢于 CPU；失败回退）

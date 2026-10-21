@@ -69,10 +69,11 @@ fn cli_512_sparse_sphere() {
 }
 
 #[test]
-#[ignore = "diagnostic CLI 512 density must provide --iso (release only)"]
-fn cli_512_density_requires_iso() {
+#[ignore = "diagnostic CLI 512 density auto-iso (release only)"]
+fn cli_512_density_auto_iso() {
     let dir = temp_dir("cli512d");
     let obj = dir.join("blobs.obj");
+    let json = dir.join("blobs.json");
     let out = run(&[
         "demo",
         "blobs",
@@ -83,9 +84,22 @@ fn cli_512_density_requires_iso() {
         "--no-html",
         "--out",
         obj.to_str().unwrap(),
+        "--json",
+        json.to_str().unwrap(),
     ]);
-    assert!(!out.status.success(), "density without --iso should fail");
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("需要 --iso"), "stderr: {err}");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = fs::read_to_string(&json).unwrap();
+    assert_eq!(json_field(&text, "sparse"), "true");
+    assert_eq!(json_field(&text, "n"), "512");
+    assert_eq!(json_field(&text, "components"), "1");
+    assert_eq!(json_field(&text, "chi"), "2");
+    let iso: f32 = json_field(&text, "iso").parse().unwrap();
+    assert!(iso > 0.0, "auto iso {iso}");
+    let volume: f32 = json_field(&text, "volume").parse().unwrap();
+    assert!((2.0..2.1).contains(&volume), "volume {volume}");
     fs::remove_dir_all(&dir).ok();
 }
