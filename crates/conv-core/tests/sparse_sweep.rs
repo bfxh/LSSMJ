@@ -10,6 +10,41 @@ use conv_core::gauss::voxel::{
 use conv_core::gauss::{add_floaters, blob_sphere_gaussians, sphere_gaussians};
 use std::time::Instant;
 
+fn truth_blocks(field: &conv_core::gauss::voxel::Field, block: u32) -> usize {
+    let n = field.grid.n;
+    let per = n.div_ceil(block);
+    let mut out = 0usize;
+    for bz in 0..per {
+        for by in 0..per {
+            for bx in 0..per {
+                let x1 = ((bx + 1) * block).min(n);
+                let y1 = ((by + 1) * block).min(n);
+                let z1 = ((bz + 1) * block).min(n);
+                let mut neg = false;
+                let mut pos = false;
+                'scan: for z in bz * block..z1 {
+                    for y in by * block..y1 {
+                        let row = (y + z * n) as usize * n as usize;
+                        for x in bx * block..x1 {
+                            let v = field.values[row + x as usize];
+                            if v < 0.0 {
+                                neg = true;
+                            } else if v > 0.0 {
+                                pos = true;
+                            }
+                            if neg && pos {
+                                out += 1;
+                                break 'scan;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 fn sweep(gs: &[Gaussian], opts: &VoxelizeOptions, label: &str) {
     let t = Instant::now();
     let dense = voxelize(gs, opts).expect("dense");
@@ -23,6 +58,12 @@ fn sweep(gs: &[Gaussian], opts: &VoxelizeOptions, label: &str) {
         let t = Instant::now();
         let blocks = SurfaceBlocks::detect(gs, opts, dense.grid, block, 0, 4).expect("blocks");
         let detect_ms = t.elapsed().as_secs_f64() * 1e3;
+        let truth = truth_blocks(&dense, block);
+        println!(
+            "{label} B={block}: truth={truth} active={} overshoot={:.1}%",
+            blocks.active_count(),
+            (blocks.active_count() as f64 / truth as f64 - 1.0) * 100.0
+        );
         let t = Instant::now();
         let mesh = match opts.mode {
             VoxelMode::Density => {
