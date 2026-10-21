@@ -50,6 +50,8 @@ pub struct SparseDensity {
     per: u32,
     pub iso: f32,
     pub outside: f32,
+    pub observed: usize,
+    pub sealed_interior: usize,
     data: Vec<Option<Vec<f32>>>,
 }
 
@@ -88,29 +90,36 @@ impl SparseDensity {
             splat_block(
                 &prepared, &bins[id], &grid, x0, y0, z0, block, n, l, &mut local,
             );
-            post_block(&mut local, &grid, iso, outside, x0, y0, z0, l);
-            local
+            let observed = post_block(&mut local, &grid, iso, outside, x0, y0, z0, block, l);
+            (local, observed)
         });
         let mut data: Vec<Option<Vec<f32>>> = (0..per * per * per).map(|_| None).collect();
-        for (id, local) in parts {
+        let mut observed = 0usize;
+        for (id, (local, obs)) in parts {
+            observed += obs;
             data[id] = Some(local);
         }
-        if seal {
+        let sealed_interior = if seal {
             let t = std::time::Instant::now();
-            seal_blocks(&mut data, None, &grid, block, per, blocks, outside);
+            let sealed = seal_blocks(&mut data, None, &grid, block, per, blocks, outside);
             if std::env::var_os("LSSMJ_STAGE_DEBUG").is_some() {
                 eprintln!(
                     "[sparse] density seal {:.1} ms",
                     t.elapsed().as_secs_f64() * 1e3
                 );
             }
-        }
+            sealed
+        } else {
+            0
+        };
         Ok(Self {
             grid,
             block,
             per,
             iso,
             outside,
+            observed,
+            sealed_interior,
             data,
         })
     }
@@ -397,9 +406,11 @@ fn post_block(
     x0: u32,
     y0: u32,
     z0: u32,
+    block: u32,
     l: usize,
-) {
+) -> usize {
     let n = grid.n;
+    let mut observed = 0usize;
     for lz in 0..l {
         let gz = z0 as i32 - 1 + lz as i32;
         for ly in 0..l {
@@ -418,12 +429,24 @@ fn post_block(
                     outside
                 } else {
                     let d = local[idx];
-                    if d > iso { iso - d } else { outside }
+                    if d > iso {
+                        // 只统计属于本块的角点，避免块间 halo 重复计数。
+                        if gx as u32 / block == x0 / block
+                            && gy as u32 / block == y0 / block
+                            && gz as u32 / block == z0 / block
+                        {
+                            observed += 1;
+                        }
+                        iso - d
+                    } else {
+                        outside
+                    }
                 };
                 local[idx] = v;
             }
         }
     }
+    observed
 }
 
 /// 稀疏内部密封：块级粗分类 + 活跃块内未知细格的 BFS。
@@ -437,7 +460,7 @@ pub(super) fn seal_blocks(
     per: u32,
     blocks: &SurfaceBlocks,
     outside: f32,
-) {
+) -> usize {
     let is_known = |id: usize, idx: usize, v: f32| -> bool {
         match knowns {
             Some(k) => k[id].as_ref().unwrap()[idx] != 0,
@@ -657,6 +680,7 @@ pub(super) fn seal_blocks(
         }
     }
 
+    let mut inside = 0usize;
     for &id in blocks.active() {
         let id = id as usize;
         let (bx, by, bz) = blocks.xyz(id as u32);
@@ -693,11 +717,20 @@ pub(super) fn seal_blocks(
                     } else {
                         2
                     };
-                    *v = if lab == 1 { outside } else { -outside };
+                    let owned = gx / block == bx && gy / block == by && gz / block == bz;
+                    *v = if lab == 1 {
+                        outside
+                    } else {
+                        if owned {
+                            inside += 1;
+                        }
+                        -outside
+                    };
                 }
             }
         }
     }
+    inside
 }
 
 #[cfg(test)]

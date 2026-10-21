@@ -20,6 +20,7 @@ pub struct SparseSurfel {
     per: u32,
     pub outside: f32,
     pub observed: usize,
+    pub sealed_interior: usize,
     data: Vec<Option<Vec<f32>>>,
     knowns: Vec<Option<Vec<u8>>>,
 }
@@ -55,35 +56,50 @@ impl SparseSurfel {
             splat_surfel_block(
                 &prepared, &bins[id], &grid, x0, y0, z0, block, n, l, clamp_abs, &mut num, &mut den,
             );
-            post_surfel_block(&num, &den, &grid, opts.min_weight, outside, x0, y0, z0, l)
+            post_surfel_block(
+                &num,
+                &den,
+                &grid,
+                opts.min_weight,
+                outside,
+                x0,
+                y0,
+                z0,
+                block,
+                l,
+            )
         });
         let mut data: Vec<Option<Vec<f32>>> = (0..per * per * per).map(|_| None).collect();
         let mut knowns: Vec<Option<Vec<u8>>> = (0..per * per * per).map(|_| None).collect();
         let mut observed = 0usize;
-        for (id, (values, known)) in parts {
-            observed += known.iter().filter(|k| **k != 0).count();
+        for (id, (values, known, obs)) in parts {
+            observed += obs;
             data[id] = Some(values);
             knowns[id] = Some(known);
         }
         if observed == 0 {
             return Err("面元融合没有观测到任何体素（法线不可信或带宽太小）".into());
         }
-        if seal {
+        let sealed_interior = if seal {
             let t = std::time::Instant::now();
-            seal_blocks(&mut data, Some(&knowns), &grid, block, per, blocks, outside);
+            let sealed = seal_blocks(&mut data, Some(&knowns), &grid, block, per, blocks, outside);
             if std::env::var_os("LSSMJ_STAGE_DEBUG").is_some() {
                 eprintln!(
                     "[sparse] surfel seal {:.1} ms",
                     t.elapsed().as_secs_f64() * 1e3
                 );
             }
-        }
+            sealed
+        } else {
+            0
+        };
         Ok(Self {
             grid,
             block,
             per,
             outside,
             observed,
+            sealed_interior,
             data,
             knowns,
         })
@@ -168,9 +184,11 @@ fn post_surfel_block(
     x0: u32,
     y0: u32,
     z0: u32,
+    block: u32,
     l: usize,
-) -> (Vec<f32>, Vec<u8>) {
+) -> (Vec<f32>, Vec<u8>, usize) {
     let n = grid.n;
+    let mut observed = 0usize;
     let mut values = vec![0f32; l * l * l];
     let mut known = vec![0u8; l * l * l];
     for lz in 0..l {
@@ -189,13 +207,19 @@ fn post_surfel_block(
                 if d >= min_weight && d > 0.0 {
                     values[idx] = (num[idx] / d).clamp(-outside, outside);
                     known[idx] = 1;
+                    if gx as u32 / block == x0 / block
+                        && gy as u32 / block == y0 / block
+                        && gz as u32 / block == z0 / block
+                    {
+                        observed += 1;
+                    }
                 } else {
                     values[idx] = outside;
                 }
             }
         }
     }
-    (values, known)
+    (values, known, observed)
 }
 
 #[cfg(test)]
@@ -265,6 +289,38 @@ mod tests {
     fn sparse_surfel_torus_hollow_matches_dense_128() {
         let gs = torus_gaussians(180, 110, 0.55, 0.22, 0.99);
         compare(&gs, 128, false, "torus");
+    }
+
+    #[test]
+    #[ignore = "diagnostic sparse surfel 512 sealed (block 16/32)"]
+    fn sparse_surfel_512_bench() {
+        let gs = sphere_gaussians(60_000, 0.75, 0.99);
+        let opts = surfel_opts(512, true);
+        let (grid, _) = fit_inputs(&gs, &opts).expect("fit");
+        for block in [16u32, 32] {
+            let t = Instant::now();
+            let blocks = SurfaceBlocks::detect(&gs, &opts, grid, block, 0, 4).expect("blocks");
+            let detect_ms = t.elapsed().as_secs_f64() * 1e3;
+            let t = Instant::now();
+            let sparse =
+                SparseSurfel::build(&gs, &opts, grid, &blocks, true).expect("sparse build");
+            let build_ms = t.elapsed().as_secs_f64() * 1e3;
+            let t = Instant::now();
+            let sm = sparse.mesh().expect("sparse mesh");
+            let mesh_ms = t.elapsed().as_secs_f64() * 1e3;
+            println!(
+                "surfel 512 sealed B={block}: detect={detect_ms:.1} build={build_ms:.1} mesh={mesh_ms:.1} ms active={} ({:.1}%) corners={:.1}M tri={} vol={:.5} chi={} comp={} obs={} sealed={}",
+                blocks.active_count(),
+                blocks.fraction() * 100.0,
+                blocks.active_count() as f64 * (block as f64 + 2.0).powi(3) / 1e6,
+                sm.stats.triangles,
+                sm.stats.volume,
+                sm.stats.chi,
+                sm.stats.components,
+                sparse.observed,
+                sparse.sealed_interior
+            );
+        }
     }
 
     #[test]
