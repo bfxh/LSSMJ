@@ -45,6 +45,7 @@ pub(crate) struct ReportData<'a> {
     pub(crate) has_normals: bool,
     pub(crate) flatness: f32,
     pub(crate) hollow: bool,
+    pub(crate) sparse: bool,
     pub(crate) mesher: &'a str,
 }
 
@@ -78,6 +79,7 @@ pub(crate) fn report_json(d: &ReportData<'_>) -> String {
             "  \"has_normals\": {},\n",
             "  \"flatness_p50\": {:.5},\n",
             "  \"hollow\": {},\n",
+            "  \"sparse\": {},\n",
             "  \"gaussians\": {{\"input\": {}, \"kept\": {}, \"dropped_opacity\": {}, \"dropped_radius\": {}, \"dropped_invalid\": {}}},\n",
             "  \"grid\": {{\"n\": {}, \"h\": {:.8}}},\n",
             "  \"field\": {{\"mode\": {}, \"backend\": {}, \"bins3d\": {}, \"simd_prep\": {}, \"iso\": {:.8}, \"threads\": {}, \"observed\": {}, \"sealed_interior\": {}}},\n",
@@ -98,6 +100,7 @@ pub(crate) fn report_json(d: &ReportData<'_>) -> String {
         d.has_normals,
         d.flatness,
         d.hollow,
+        d.sparse,
         d.prune_stats.input,
         d.prune_stats.kept,
         d.prune_stats.dropped_opacity,

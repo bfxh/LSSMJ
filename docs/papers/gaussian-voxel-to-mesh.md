@@ -821,14 +821,31 @@ dense GPU vox + CPU 网格（`bench_gpu_256`，CPU 24T，sealed，GPU 时间不�
 - **CLI 端到端**：`demo sphere --gpu --grid 256` → auto→surfel，χ=2、1 分量、体积 1.77602
   （解析球 1.76715，误差 0.50%）；vox 307.7 ms（init 1476 ms 另计）+ CPU 网格 150.3 ms。
 
+### 6.20 512³ CLI：稀疏分块接入（2026-10-21）
+
+- `--grid` 上限 256→512；`>256` 自动走稀疏分块（候选块 + halo 网格，B=16），
+  `--gpu/--gpu-mesh` 在 512 不适用；density 必须显式 `--iso`（没有廉价的全局 q99.9）。
+- **surfel（demo sphere 20k，sealed）**：detect+build 4127 ms、mesh 784 ms、写 OBJ 3909 ms
+  （磁盘波动大；同轮另一次 1299 ms），总计 **8824 ms**；2,369,808 tri、vol 1.77489
+  （解析 1.76715，0.44%）、χ=2、1 分量；active 5728（17.5%），观测 6,319,045。
+- **density（demo blobs 12k，`--iso 16.979`）**：detect+build 13,245 ms、mesh 452 ms、
+  写 960 ms，总计 **14,660 ms**；1,754,168 tri、vol 2.05608、χ=2、1 分量；active 4245（13.0%），
+  观测 8,658,734。
+- 512³ library 块尺寸：B=16 build 3.75–4.11 s / 33.1M 角点；B=32 4.70–4.79 s / 51.3M ⇒ 取 16。
+- **口径**：稀疏路径的 `observed` / `sealed_interior` 只统计活跃块（含 halo 去重），
+  不是整格内部；不要和稠密 Field 的同名字段直接比较。
+- JSON 新增 `"sparse": true`；默认 HTML 因顶点 >250k 自动跳过。
+- 限制：512 density 的 blobs 要 13 s（体高斯互相重叠，每角点被更多核覆盖）；更薄的资产
+  仍受 §6.17 的候选带/薄壁边界约束。
+
 ## 7. 限制与否证条件（不许当结论）
 
 1. **CPU 多线程，非实时**：64³/20k 高斯总耗时约 0.05–0.07 s（24 线程；1T 参照 0.36–0.48 s）；
    128³ 已测（§3.8/§6.2），逐帧实时仍不成立。GPU 路径已落地（整数原子 + GPU iso/密封），
    但默认档仍是 CPU；CPU 多线程版继续作 GPU 的逐位参照。
 2. **稠密 n³**：256³ = 6700 万格，内存与遍历都上不去；量产要走稀疏分块 + 1-voxel halo（T-GC-05，`W15A-034/035`）。
-   稀疏库路径已落地（`SurfaceBlocks` + `SparseDensity`/`SparseSurfel`，§6.15–6.17），但尚未接 CLI，
-   且当前是内存档不是加速档（§6.17 结论）。
+   稀疏路径已接 CLI：`--grid >256` 自动走稀疏（§6.20）；512³ surfel 约 6 s，density 需 `--iso`
+   且 blobs 约 15 s。稀疏当前是内存档不是加速档（§6.17 结论）。
 3. **只读标准 3DGS PLY**（ASCII/二进制 little-endian）；SPZ/量化/planar 布局未接（`W15A-040..044` 是参照）。
 4. **density 的 iso 是全局值**：非均匀场景会破壳或局部过胖；自动重试只是启发式，不是自适应阈值。
    否证条件：在 3 个以上真实非均匀 3DGS 场景上，auto 重试率 >30% 或体积误差 >25% ⇒ 需要局部/分块阈值。
@@ -900,8 +917,13 @@ CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo torus
 CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo blobs
 # GPU（splat+iso+密封；单次转换 init 主导；批处理用 voxelize_gpu_with）
 CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo sphere --gpu
-# GPU 256³（auto→surfel，sealed；已实测可用，§6.15）
+# GPU 256³（auto→surfel，sealed；已实测可用，§6.19）
 CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo sphere --gpu --grid 256 --no-html
+# 512³ 稀疏 CLI（surfel 自动；density 必须给 --iso，§6.20）
+CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo sphere --grid 512 --no-html
+CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo blobs --grid 512 --mode density --iso 16.979 --no-html
+# 512³ CLI 判据（ignored，release）
+CARGO_INCREMENTAL=0 cargo test --release --test cli_sparse -- --ignored --nocapture --test-threads=1
 # GPU 网格实验档（通常更慢；128³ 会显式回退 CPU）
 CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo sphere --gpu --gpu-mesh
 # CPU 可选档：3D tile / SIMD prep / 只保留最大连通分量
