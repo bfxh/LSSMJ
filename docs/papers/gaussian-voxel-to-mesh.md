@@ -824,8 +824,9 @@ dense GPU vox + CPU 网格（`bench_gpu_256`，CPU 24T，sealed，GPU 时间不�
 ### 6.20 512³ CLI：稀疏分块接入（2026-10-21）
 
 - `--grid` 上限 256→512；`>256` 自动走稀疏分块（候选块 + halo 网格，B=16），
-  `--gpu/--gpu-mesh` 在 512 不适用。density 未给 `--iso` 时，自动用**半分辨率稠密探针**
-  （512→256）求全局 q99.9 阈值；`--iso` 可覆盖并省掉探针。
+  `--gpu` 在 512 对 surfel 走 dense GPU（§6.21）；density 512 会自动退回稀疏 CPU。
+  density 未给 `--iso` 时，自动用**半分辨率稠密探针**（512→256）求全局 q99.9 阈值；
+  `--iso` 可覆盖并省掉探针。
 - **surfel（demo sphere 20k，sealed）**：detect+build 4127 ms、mesh 784 ms、写 OBJ 3909 ms
   （磁盘波动大；同轮另一次 1299 ms），总计 **8824 ms**；2,369,808 tri、vol 1.77489
   （解析 1.76715，0.44%）、χ=2、1 分量；active 5728（17.5%），观测 6,319,045。
@@ -840,6 +841,23 @@ dense GPU vox + CPU 网格（`bench_gpu_256`，CPU 24T，sealed，GPU 时间不�
 - 限制：512 density 的 blobs 要 13 s（体高斯互相重叠，每角点被更多核覆盖），自动 iso 再加
   ~2.6 s 探针；赶时间可显式给 `--iso`。自动探针会临时分配半分辨率稠密场（512→256 约
   67 MB f32），内存极紧时也建议显式 `--iso`。更薄的资产仍受 §6.17 的候选带/薄壁边界约束。
+
+### 6.21 GPU 512³：dense surfel 解锁（2026-10-21）
+
+- 设备初始化改为按 adapter 实际 limits 申请 `max_storage_buffer_binding_size` / `max_buffer_size`
+  （失败回退默认）。512³ 单 f32 场 537 MB；surfel 的 num+den 1.07 GB + 两个 mask 1.07 GB +
+  field 0.54 GB ≈ **2.7 GB 显存**（job/readback 另计）。
+- **surfel 512³（sealed）**：init 0.54–0.72 s；vox **1.39–1.44 s**；CPU 网格 0.78–0.84 s。
+  20k 球：2,369,768 tri、vol 1.77483（0.43%）、χ=2、1 分量；60k 球：2,384,164 tri、
+  vol 1.76962（0.02%）、χ=2、1 分量。CPU 稀疏 512 为 vox 4.1 s + mesh 0.78 s
+  ⇒ GPU vox **~2.9×**，端到端（不计 init）**~1.9×**。
+- known margin 随分辨率线性抬到 **3.0**（256 为 1.5）：512 的孤立壳从 χ=103,945 恢复到 2；
+  hollow（seal=0）不变；更薄的资产仍按 §6.17 的边界处理。
+- **density 512 dense GPU 不支持**：12k 各向同性高斯的 (Gaussian×voxel) job 表约 6.6B 对，
+  超 u32；CLI 在 `--gpu` + density + >256 时自动退回稀疏 CPU（auto-iso）并告警。
+  density GPU 仍在 ≤256 工作（§6.15）。
+- `--gpu` 在 >256 仅对 surfel 走 dense GPU；`--gpu-mesh` 需配合 `--gpu`，512 网格未验证。
+- 单次 init ~0.5–0.7 s；批量摊销后收益更明显。
 
 ## 7. 限制与否证条件（不许当结论）
 
@@ -864,8 +882,9 @@ dense GPU vox + CPU 网格（`bench_gpu_256`，CPU 24T，sealed，GPU 时间不�
     job 表与 Surface Nets 仍在 CPU；iso 用 65536 桶直方图取 q99.9 的**桶下界**（误差 ≤ max/65536），
     密封最多 2n 趟、未收敛显式报错；全格 ping-pong 掩码占 2×n³ u32（128³ 16 MB、256³ 128 MB，两块分开绑定）；
     2D dispatch 上限 65535；设备 init Vulkan-first ~0.44 s（全后端 ~0.87 s），单次转换默认仍 CPU。
-    **GPU voxelize+iso/密封已实测到 256³**（density/surfel sealed，端到端 2.9–3.9×，§6.19）；
-    GPU 网格仍只在 ≤128³（256³ 的 pos/flag 缓冲超限，显式回退）。
+    **GPU voxelize+iso/密封已实测到 512³ surfel**（dense，端到端约 1.9×，§6.21）；
+    density 512 的 GPU job 表超 u32，自动走 CPU 稀疏（§6.21）。设备按 adapter limits 申请，
+    512 约 2.7 GB 显存；GPU 网格仍为实验档（≤128³ 已验证，512 未验证、失败显式回退）。
     surfel 密封的 known 阈值在 GPU 上乘 1.5，抑制 den 在 `min_weight` 附近翻转出的孤立壳；hollow 不变。
     GPU 当前是批处理/更高分辨率档，不是“一键实时”。
 12. **batch 是顺序的**：不并行多个文件；设备缓存是进程级；每文件默认写 JSON，无聚合报告；
@@ -924,11 +943,15 @@ CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo sphere --gpu
 CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo sphere --gpu --grid 256 --no-html
 # 512³ 稀疏 CLI（surfel 自动；density 必须给 --iso，§6.20）
 CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo sphere --grid 512 --no-html
+# 512³ dense GPU（surfel；init ~0.5–0.7 s）
+CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo sphere --grid 512 --gpu --no-html
 CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo blobs --grid 512 --mode density --no-html
 # 显式阈值可省探针（同一网格）
 CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo blobs --grid 512 --mode density --iso 16.979 --no-html
 # 512³ CLI 判据（ignored，release）
 CARGO_INCREMENTAL=0 cargo test --release --test cli_sparse -- --ignored --nocapture --test-threads=1
+# GPU 512 dense 探针（surfel + density 回退；ignored）
+CARGO_INCREMENTAL=0 cargo test --release --test gpu_512_probe -- --ignored --nocapture --test-threads=1
 # GPU 网格实验档（通常更慢；128³ 会显式回退 CPU）
 CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo sphere --gpu --gpu-mesh
 # CPU 可选档：3D tile / SIMD prep / 只保留最大连通分量
