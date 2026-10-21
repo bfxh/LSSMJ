@@ -5,6 +5,11 @@ use crate::gauss::voxel::Backend;
 use crate::jfa::{readback_f32, storage_entry, uniform_entry};
 use wgpu::util::DeviceExt;
 
+/// GPU surfel 的 den 与 CPU f32 累加有微小差异；密封时把 known 阈值抬高 1.5×，
+/// 否则 min_weight 附近的翻转会在 256³ 形成上万个孤立壳（实测 χ 2→15132）。
+/// hollow（seal=0）不受影响。
+const SURFEL_KNOWN_MARGIN: f32 = 1.5;
+
 fn readback_u32_range(hd: &Headless, buf: &wgpu::Buffer, offset: u64, len: usize) -> Vec<u32> {
     let size = (len * 4) as u64;
     let download = hd.device.create_buffer(&wgpu::BufferDescriptor {
@@ -114,7 +119,7 @@ pub(crate) fn post_gpu(
         dens_scale: DENS_SCALE,
         den_scale: DEN_SCALE,
         dist_scale: DIST_SCALE,
-        pad3: 0.0,
+        known_margin: SURFEL_KNOWN_MARGIN,
     };
     let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("post-params"),

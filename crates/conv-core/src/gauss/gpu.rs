@@ -65,7 +65,7 @@ struct PostParams {
     dens_scale: f32,
     den_scale: f32,
     dist_scale: f32,
-    pad3: f32,
+    known_margin: f32,
 }
 
 struct JobTable {

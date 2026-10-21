@@ -799,6 +799,21 @@ bin/分配开销把收益吃掉。surfel 的甜点是 B=32，但仍比稠密慢 
 真实稀疏 surfel 密封 256³：u8 285.1 ms vs 2-bit 277.9 ms（噪声内）；labels 16.8→4.2 MB，
 density 密封峰值约 23→11 MB。基-3 相对 2-bit 只再省 0.8 MB 却慢 1.6×，且无 SIMD/位运算支持，
 不采用。结论：三态编码用 2-bit，基-3 不做。
+### 6.19 GPU 256³：可用性与 surfel 密封修复（2026-10-21）
+
+dense GPU vox + CPU 网格（`bench_gpu_256`，CPU 24T，sealed，GPU 时间不含 init）：
+
+| 场景 | CPU vox+mesh | GPU vox + CPU 网格 | 加速 | 一致性 |
+| --- | --- | --- | --- | --- |
+| density 256³ 12k blobs | 720.5 + 62.2 ms | 185.8 + 80.5 ms | **2.9×** | tri 103,144/103,140；vol rel 1.7e-4；χ 2/2 |
+| surfel 256³ 20k 球 | 911.0 + 147.0 ms | 111.8 + 162.9 ms | **3.9×** | tri 576,144/576,144；vol rel 6.7e-5；χ 2/2；分量 1/1 |
+
+- GPU voxelize + iso + 密封在 256³ 可用；`--gpu-mesh` 在 256³ 仍显式回退（缓冲超限）。
+- **修复**：GPU surfel 的 den 与 CPU f32 在 `min_weight` 附近有微小差异；密封时 known 阈值乘
+  1.5（`SURFEL_KNOWN_MARGIN`），否则 256³ 表面带的孤立 known 壳会让 χ 从 2 涨到
+  15,132 / 7,036 分量。hollow（seal=0）不变；48³/128³ 对拍不变。
+- 单次 CLI 仍付设备 init（本次读数 0.28–2.8 s，含首跑 pipeline 编译；Vulkan-first 中位数
+  ~0.44 s），批量摊销后才是 2.9–3.9×。
 
 ## 7. 限制与否证条件（不许当结论）
 
@@ -821,10 +836,12 @@ density 密封峰值约 23→11 MB。基-3 相对 2-bit 只再省 0.8 MB 却慢 
     对训练产物的法线一致性/尺度分布尚未实测。
 11. **GPU 档的边界**：定点量化不等于 CPU 逐位；u32/i32 累加在超大重叠/极端尺度下可能溢出；
     job 表与 Surface Nets 仍在 CPU；iso 用 65536 桶直方图取 q99.9 的**桶下界**（误差 ≤ max/65536），
-    密封最多 2n 趟、未收敛显式报错；全格 ping-pong 掩码占 2×n³ u32（128³ 16 MB、256³ 128 MB）；
+    密封最多 2n 趟、未收敛显式报错；全格 ping-pong 掩码占 2×n³ u32（128³ 16 MB、256³ 128 MB，两块分开绑定）；
     2D dispatch 上限 65535；设备 init Vulkan-first ~0.44 s（全后端 ~0.87 s），单次转换默认仍 CPU。
-    GPU 当前是批处理/
-    更高分辨率档，不是“一键实时”。
+    **GPU voxelize+iso/密封已实测到 256³**（density/surfel sealed，端到端 2.9–3.9×，§6.19）；
+    GPU 网格仍只在 ≤128³（256³ 的 pos/flag 缓冲超限，显式回退）。
+    surfel 密封的 known 阈值在 GPU 上乘 1.5，抑制 den 在 `min_weight` 附近翻转出的孤立壳；hollow 不变。
+    GPU 当前是批处理/更高分辨率档，不是“一键实时”。
 12. **batch 是顺序的**：不并行多个文件；设备缓存是进程级；每文件默认写 JSON，无聚合报告；
     重名 stem 自动 `_2`；首个文件仍付 init。
 13. **分桶只按 z，prep 的并行加速有上限**：x/y 仍扫单高斯全 bbox。3D tile 已作为
@@ -849,6 +866,8 @@ CARGO_INCREMENTAL=0 cargo test --release --test gauss_leg -- --test-threads=1 --
 CARGO_INCREMENTAL=0 cargo test --release --test gauss_gpu -- --test-threads=1 --nocapture
 # GPU 64³/128³ 计时（含 hollow 对照）
 CARGO_INCREMENTAL=0 cargo test --release --test gauss_gpu -- --test-threads=1 --ignored bench_gpu_scenes --nocapture
+# GPU 256³ sealed 计时（density/surfel；不含 init）
+CARGO_INCREMENTAL=0 cargo test --release --test gauss_gpu -- --test-threads=1 --ignored bench_gpu_256 --nocapture
 # 完整性能对比（CPU 1T/24T、GPU、GPU 网格；64³/128³ × density/surfel）
 CARGO_INCREMENTAL=0 cargo test --release --test perf_compare -- --test-threads=1 --ignored --nocapture
 # 稀疏块：定位 / halo 网格 / 密封 / surfel 对拍（含 256³ ignored 计时）
