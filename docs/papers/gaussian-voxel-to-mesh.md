@@ -818,6 +818,8 @@ dense GPU vox + CPU 网格（`bench_gpu_256`，CPU 24T，sealed，GPU 时间不�
   `minor=0.08/0.22` 的环面逐项一致（tri/χ/分量，vol rel ≤1.6e-4）。
 - 单次 CLI 仍付设备 init（本次读数 0.28–2.8 s，含首跑 pipeline 编译；Vulkan-first 中位数
   ~0.44 s），批量摊销后才是 2.9–3.9×。
+- **CLI 端到端**：`demo sphere --gpu --grid 256` → auto→surfel，χ=2、1 分量、体积 1.77602
+  （解析球 1.76715，误差 0.50%）；vox 307.7 ms（init 1476 ms 另计）+ CPU 网格 150.3 ms。
 
 ## 7. 限制与否证条件（不许当结论）
 
@@ -898,6 +900,8 @@ CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo torus
 CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo blobs
 # GPU（splat+iso+密封；单次转换 init 主导；批处理用 voxelize_gpu_with）
 CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo sphere --gpu
+# GPU 256³（auto→surfel，sealed；已实测可用，§6.15）
+CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo sphere --gpu --grid 256 --no-html
 # GPU 网格实验档（通常更慢；128³ 会显式回退 CPU）
 CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo sphere --gpu --gpu-mesh
 # CPU 可选档：3D tile / SIMD prep / 只保留最大连通分量
