@@ -17,7 +17,7 @@ struct Params {
     dens_scale: f32,
     den_scale: f32,
     dist_scale: f32,
-    pad3: f32,
+    known_margin: f32,  // surfel 密封的 known 阈值乘数
 };
 
 @group(0) @binding(0) var<storage, read> density: array<u32>;
@@ -42,7 +42,7 @@ fn known(i: u32) -> bool {
         return f32(density[i]) / params.dens_scale > params.iso;
     }
     let den = f32(den_buf[i]) / params.den_scale;
-    return den >= params.min_weight && den > 0.0;
+    return den >= params.min_weight * params.known_margin && den > 0.0;
 }
 
 @compute @workgroup_size(64)
@@ -153,7 +153,8 @@ fn field_surfel(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     let den = f32(den_buf[i]) / params.den_scale;
     var v = 0.0;
-    if (den >= params.min_weight && den > 0.0) {
+    let margin = select(1.0, params.known_margin, params.seal != 0u);
+    if (den >= params.min_weight * margin && den > 0.0) {
         let nn = f32(num_buf[i]) / params.dist_scale;
         v = clamp(nn / den, -params.outside, params.outside);
         atomicAdd(&counters_hist[2], 1u);
