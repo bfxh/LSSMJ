@@ -33,15 +33,30 @@ pub fn try_headless_device() -> Result<Headless, String> {
         else {
             continue;
         };
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        let make_desc = |limits: wgpu::Limits| wgpu::DeviceDescriptor {
             label: Some("conv-core-headless"),
             required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
+            required_limits: limits,
             experimental_features: wgpu::ExperimentalFeatures::disabled(),
             memory_hints: wgpu::MemoryHints::MemoryUsage,
             trace: wgpu::Trace::Off,
-        }))
-        .map_err(|e| format!("request_device: {e:?}"))?;
+        };
+        // 512³ 的 f32 场是 537 MB，默认 limits（128 MB 绑定 / 256 MB 缓冲）会拒绝。
+        // 先按 adapter 实际上限申请；失败再退回默认（128³ 及以下不受影响）。
+        let supported = adapter.limits();
+        let elevated = wgpu::Limits {
+            max_storage_buffer_binding_size: supported.max_storage_buffer_binding_size,
+            max_buffer_size: supported.max_buffer_size,
+            ..wgpu::Limits::default()
+        };
+        let (device, queue) = match pollster::block_on(adapter.request_device(&make_desc(elevated)))
+        {
+            Ok(dq) => dq,
+            Err(_) => {
+                pollster::block_on(adapter.request_device(&make_desc(wgpu::Limits::default())))
+                    .map_err(|e| format!("request_device: {e:?}"))?
+            }
+        };
         return Ok(Headless { device, queue });
     }
     Err("no wgpu adapter".into())

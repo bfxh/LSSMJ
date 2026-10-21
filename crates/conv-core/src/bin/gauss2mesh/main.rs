@@ -374,12 +374,22 @@ fn convert_and_write(
     } else {
         cfg.threads
     };
-    let sparse = cfg.grid > 256;
+    let gpu_dense_512 = cfg.grid > 256 && cfg.gpu && mode == VoxelMode::Surfel;
+    let mut sparse = cfg.grid > 256 && !gpu_dense_512;
     let mut gpu_fallback = None;
-    if sparse && (cfg.gpu || cfg.gpu_mesh) {
-        gpu_fallback = Some(">256³ 走 CPU 稀疏分块；--gpu/--gpu-mesh 不适用".into());
-    }
-    let gpu_device = if !sparse && (cfg.gpu || cfg.gpu_mesh) {
+    let want_gpu = if cfg.grid > 256 && !gpu_dense_512 {
+        if cfg.gpu || cfg.gpu_mesh {
+            gpu_fallback = Some(if mode == VoxelMode::Density {
+                "512³ density 的 GPU job 表会溢出 u32；已走稀疏 CPU（auto-iso）".into()
+            } else {
+                ">256³ 的 --gpu-mesh 需要配合 --gpu（dense GPU）；已走稀疏 CPU".into()
+            });
+        }
+        false
+    } else {
+        cfg.gpu || cfg.gpu_mesh
+    };
+    let gpu_device = if want_gpu {
         let t = Instant::now();
         match cached_gpu() {
             Ok(hd) => {
@@ -394,6 +404,10 @@ fn convert_and_write(
     } else {
         None
     };
+    if want_gpu && cfg.grid > 256 && cfg.gpu && gpu_device.is_none() {
+        sparse = true;
+        gpu_fallback = Some("GPU 初始化失败 → 512 走稀疏 CPU".into());
+    }
     let gpu_ref = gpu_device;
     let mut voxel_opts = VoxelizeOptions {
         mode,
@@ -438,6 +452,11 @@ fn convert_and_write(
                     Err(e) => e.clone(),
                     Ok(_) => "GPU 输出空网格".to_string(),
                 };
+                if cfg.grid > 256 && result.is_err() {
+                    return Err(format!(
+                        "512³ GPU 失败（{reason}）；去掉 --gpu 可走稀疏 CPU"
+                    ));
+                }
                 voxel_opts.backend = Backend::Cpu;
                 result = run_leg(&kept, &voxel_opts, gpu_ref);
                 if let Ok((_, _, v, m)) = &result {
