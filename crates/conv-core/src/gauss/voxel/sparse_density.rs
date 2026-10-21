@@ -18,6 +18,32 @@ use fast_surface_nets::{SurfaceNetsBuffer, surface_nets};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+/// 2-bit 三态标签（0 未定 / 1 外 / 2 内）。256³ 下 labels 从 16.8 MB 降到 4.2 MB，
+/// 且 4.2 MB 能留在缓存里（合成探针 256³：u8 110.7 ms → 2-bit 87.6 ms）；
+/// 5-trit/byte 反而 142.1 ms，故不用基-3。
+struct PackedLabels {
+    data: Vec<u8>,
+}
+
+impl PackedLabels {
+    fn new(count: usize) -> Self {
+        Self {
+            data: vec![0u8; count.div_ceil(4)],
+        }
+    }
+
+    #[inline]
+    fn get(&self, i: usize) -> u8 {
+        (self.data[i / 4] >> ((i % 4) * 2)) & 3
+    }
+
+    #[inline]
+    fn set(&mut self, i: usize, v: u8) {
+        let sh = (i % 4) * 2;
+        self.data[i / 4] = (self.data[i / 4] & !(3 << sh)) | ((v & 3) << sh);
+    }
+}
+
 pub struct SparseDensity {
     grid: Grid,
     block: u32,
@@ -70,7 +96,14 @@ impl SparseDensity {
             data[id] = Some(local);
         }
         if seal {
+            let t = std::time::Instant::now();
             seal_blocks(&mut data, None, &grid, block, per, blocks, outside);
+            if std::env::var_os("LSSMJ_STAGE_DEBUG").is_some() {
+                eprintln!(
+                    "[sparse] density seal {:.1} ms",
+                    t.elapsed().as_secs_f64() * 1e3
+                );
+            }
         }
         Ok(Self {
             grid,
@@ -509,7 +542,7 @@ pub(super) fn seal_blocks(
     let bid = |x: u32, y: u32, z: u32| -> usize {
         ((x / block) + (y / block) * per + (z / block) * per * per) as usize
     };
-    let mut labels = vec![0u8; (n * n * n) as usize]; // 0 未定, 1 外, 2 内
+    let mut labels = PackedLabels::new((n * n * n) as usize); // 0 未定, 1 外, 2 内
     let mut queue = VecDeque::new();
     for &id in blocks.active() {
         let id = id as usize;
@@ -533,7 +566,7 @@ pub(super) fn seal_blocks(
                         break;
                     }
                     let g = (gx + gy * n + gz * n * n) as usize;
-                    if labels[g] != 0 {
+                    if labels.get(g) != 0 {
                         continue;
                     }
                     let li = (((dz + 1) as usize * l) + (dy + 1) as usize) * l + (dx + 1) as usize;
@@ -573,7 +606,7 @@ pub(super) fn seal_blocks(
                         lab = 2;
                     }
                     if lab != 0 {
-                        labels[g] = lab;
+                        labels.set(g, lab);
                         queue.push_back(g as u32);
                     }
                 }
@@ -585,7 +618,7 @@ pub(super) fn seal_blocks(
         let gx = (g as u32) % n;
         let gy = ((g as u32) / n) % n;
         let gz = (g as u32) / (n * n);
-        let lab = labels[g];
+        let lab = labels.get(g);
         for (dx, dy, dz) in [
             (-1i32, 0i32, 0i32),
             (1, 0, 0),
@@ -606,7 +639,7 @@ pub(super) fn seal_blocks(
                 continue;
             }
             let ng = (x + y * n + z * n * n) as usize;
-            if labels[ng] != 0 {
+            if labels.get(ng) != 0 {
                 continue;
             }
             let bx = x / block;
@@ -619,7 +652,7 @@ pub(super) fn seal_blocks(
             if is_known(nb, li, data[nb].as_ref().unwrap()[li]) {
                 continue;
             }
-            labels[ng] = lab;
+            labels.set(ng, lab);
             queue.push_back(ng as u32);
         }
     }
@@ -654,7 +687,7 @@ pub(super) fn seal_blocks(
                     let (gx, gy, gz) = (gx as u32, gy as u32, gz as u32);
                     let nb = bid(gx, gy, gz);
                     let lab = if class[nb] == 2 {
-                        labels[(gx + gy * n + gz * n * n) as usize]
+                        labels.get((gx + gy * n + gz * n * n) as usize)
                     } else if out_block[nb] {
                         1
                     } else {

@@ -786,6 +786,20 @@ bin/分配开销把收益吃掉。surfel 的甜点是 B=32，但仍比稠密慢 
 要么把“候选块 + 细 splat”搬到 GPU 的稀疏 dispatch；在此之前默认路径仍是稠密。
 
 
+### 6.18 三态编码：2-bit 胜基-3（2026-10-21）
+
+密封的 `labels` 是三态临时数组（未定/外/内）。合成 256³ 泛洪（`tests/ternary_probe.rs`，ignored）：
+
+| 编码 | 时间（两次） | 内存 |
+| --- | --- | --- |
+| u8 | 93–111 ms | 16.8 MB |
+| **2-bit** | **60–88 ms（0.64–0.79×）** | **4.2 MB（25%）** |
+| 5-trit/byte（基-3） | 134–142 ms（1.28–1.44×） | 3.4 MB（20%） |
+
+真实稀疏 surfel 密封 256³：u8 285.1 ms vs 2-bit 277.9 ms（噪声内）；labels 16.8→4.2 MB，
+density 密封峰值约 23→11 MB。基-3 相对 2-bit 只再省 0.8 MB 却慢 1.6×，且无 SIMD/位运算支持，
+不采用。结论：三态编码用 2-bit，基-3 不做。
+
 ## 7. 限制与否证条件（不许当结论）
 
 1. **CPU 多线程，非实时**：64³/20k 高斯总耗时约 0.05–0.07 s（24 线程；1T 参照 0.36–0.48 s）；
@@ -840,6 +854,10 @@ CARGO_INCREMENTAL=0 cargo test --release --test perf_compare -- --test-threads=1
 # 稀疏块：定位 / halo 网格 / 密封 / surfel 对拍（含 256³ ignored 计时）
 CARGO_INCREMENTAL=0 cargo test --release --lib sparse_ -- --test-threads=1 --nocapture
 CARGO_INCREMENTAL=0 cargo test --release --lib sparse_ -- --test-threads=1 --ignored --nocapture
+# 三态编码对比（u8 / 2-bit / 5-trit，256³，ignored）
+CARGO_INCREMENTAL=0 cargo test --release --test ternary_probe -- --test-threads=1 --ignored --nocapture
+# 稀疏 surfel 256³ sealed（含 seal 计时，ignored）
+CARGO_INCREMENTAL=0 cargo test --release --lib sparse_surfel_256_seal_bench -- --test-threads=1 --ignored --nocapture
 # 块尺寸扫描 B=8/16/32（256³，density+surfel，ignored）
 CARGO_INCREMENTAL=0 cargo test --release --test sparse_sweep -- --test-threads=1 --ignored --nocapture
 # 自包含 HTML 的 base64 载荷（长度/首顶点/旧格式）

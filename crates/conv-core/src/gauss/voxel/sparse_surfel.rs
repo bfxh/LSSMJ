@@ -69,7 +69,14 @@ impl SparseSurfel {
             return Err("面元融合没有观测到任何体素（法线不可信或带宽太小）".into());
         }
         if seal {
+            let t = std::time::Instant::now();
             seal_blocks(&mut data, Some(&knowns), &grid, block, per, blocks, outside);
+            if std::env::var_os("LSSMJ_STAGE_DEBUG").is_some() {
+                eprintln!(
+                    "[sparse] surfel seal {:.1} ms",
+                    t.elapsed().as_secs_f64() * 1e3
+                );
+            }
         }
         Ok(Self {
             grid,
@@ -258,6 +265,33 @@ mod tests {
     fn sparse_surfel_torus_hollow_matches_dense_128() {
         let gs = torus_gaussians(180, 110, 0.55, 0.22, 0.99);
         compare(&gs, 128, false, "torus");
+    }
+
+    #[test]
+    #[ignore = "diagnostic sparse surfel 256 sealed"]
+    fn sparse_surfel_256_seal_bench() {
+        let gs = sphere_gaussians(60_000, 0.75, 0.99);
+        let opts = surfel_opts(256, true);
+        let (grid, _) = fit_inputs(&gs, &opts).expect("fit");
+        let t = Instant::now();
+        let blocks = SurfaceBlocks::detect(&gs, &opts, grid, 16, 0, 4).expect("blocks");
+        let detect_ms = t.elapsed().as_secs_f64() * 1e3;
+        let t = Instant::now();
+        let sparse = SparseSurfel::build(&gs, &opts, grid, &blocks, true).expect("sparse build");
+        let build_ms = t.elapsed().as_secs_f64() * 1e3;
+        let t = Instant::now();
+        let sm = sparse.mesh().expect("sparse mesh");
+        let mesh_ms = t.elapsed().as_secs_f64() * 1e3;
+        println!(
+            "surfel 256 sealed: detect={detect_ms:.1} build={build_ms:.1} mesh={mesh_ms:.1} ms tri={} vol={:.5} chi={} comp={} active={} ({:.1}%) obs={}",
+            sm.stats.triangles,
+            sm.stats.volume,
+            sm.stats.chi,
+            sm.stats.components,
+            blocks.active_count(),
+            blocks.fraction() * 100.0,
+            sparse.observed
+        );
     }
 
     #[test]
