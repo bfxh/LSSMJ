@@ -812,6 +812,10 @@ dense GPU vox + CPU 网格（`bench_gpu_256`，CPU 24T，sealed，GPU 时间不�
 - **修复**：GPU surfel 的 den 与 CPU f32 在 `min_weight` 附近有微小差异；密封时 known 阈值乘
   1.5（`SURFEL_KNOWN_MARGIN`），否则 256³ 表面带的孤立 known 壳会让 χ 从 2 涨到
   15,132 / 7,036 分量。hollow（seal=0）不变；48³/128³ 对拍不变。
+- **已知边界（细管）**：256³ 下 `minor=0.04` 的环面（管径约 13 体素）GPU 密封会残留 16 个
+  孤立小分量（+544 三角形，χ 0→32），体积相对误差 3.6e-4；CPU 干净。`--largest-component`
+  可清成 χ=0 / 1 分量（tri 108,960 vs CPU 108,608，体积误差 3.6e-4）；更细/更薄的资产建议走 CPU。
+  `minor=0.08/0.22` 的环面逐项一致（tri/χ/分量，vol rel ≤1.6e-4）。
 - 单次 CLI 仍付设备 init（本次读数 0.28–2.8 s，含首跑 pipeline 编译；Vulkan-first 中位数
   ~0.44 s），批量摊销后才是 2.9–3.9×。
 
@@ -868,6 +872,8 @@ CARGO_INCREMENTAL=0 cargo test --release --test gauss_gpu -- --test-threads=1 --
 CARGO_INCREMENTAL=0 cargo test --release --test gauss_gpu -- --test-threads=1 --ignored bench_gpu_scenes --nocapture
 # GPU 256³ sealed 计时（density/surfel；不含 init）
 CARGO_INCREMENTAL=0 cargo test --release --test gauss_gpu -- --test-threads=1 --ignored bench_gpu_256 --nocapture
+# GPU 256³ 细管密封压力（minor=0.22/0.08/0.04；薄管边界见 §6.15）
+CARGO_INCREMENTAL=0 cargo test --release --test gauss_gpu -- --test-threads=1 --ignored bench_gpu_256_thin_torus --nocapture
 # 完整性能对比（CPU 1T/24T、GPU、GPU 网格；64³/128³ × density/surfel）
 CARGO_INCREMENTAL=0 cargo test --release --test perf_compare -- --test-threads=1 --ignored --nocapture
 # 稀疏块：定位 / halo 网格 / 密封 / surfel 对拍（含 256³ ignored 计时）

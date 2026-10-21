@@ -1,8 +1,8 @@
 //! GPU splat 判据：整数原子累加的逐位确定性 + 与 CPU f32 场的容差对拍 + 拓扑一致。
 
-use conv_core::gauss::mesh::{field_to_mesh, field_to_mesh_gpu};
+use conv_core::gauss::mesh::{field_to_mesh, field_to_mesh_gpu, keep_largest_component};
 use conv_core::gauss::voxel::{Backend, VoxelMode, VoxelizeOptions, voxelize, voxelize_gpu_with};
-use conv_core::gauss::{add_floaters, blob_sphere_gaussians, sphere_gaussians};
+use conv_core::gauss::{add_floaters, blob_sphere_gaussians, sphere_gaussians, torus_gaussians};
 use conv_core::jfa::try_headless_device;
 use std::sync::Mutex;
 use std::time::Instant;
@@ -229,7 +229,7 @@ fn gpu_surfel_seal_256_matches_cpu() {
     let gm = field_to_mesh(&gpu);
     let rel = ((cm.stats.volume - gm.stats.volume) / cm.stats.volume).abs();
     println!(
-        "gpu surfel seal 256: cpu tri={} vol={:.5} chi={} comp={}; gpu tri={} vol={:.5} chi={} comp={} rel={rel:.6}",
+        "gpu surfel seal 256: cpu tri={} vol={:.5} chi={} comp={}; gpu tri={} vol={:.5} chi={} comp={} rel={rel:.6} observed={} sealed={}",
         cm.stats.triangles,
         cm.stats.volume,
         cm.stats.chi,
@@ -237,7 +237,9 @@ fn gpu_surfel_seal_256_matches_cpu() {
         gm.stats.triangles,
         gm.stats.volume,
         gm.stats.chi,
-        gm.stats.components
+        gm.stats.components,
+        gpu.observed,
+        gpu.sealed_interior
     );
     assert_eq!(gm.stats.chi, 2, "sealed sphere chi");
     assert_eq!(gm.stats.components, 1, "sealed sphere components");
@@ -365,6 +367,87 @@ fn bench_gpu_scenes() {
             let mgh = field_to_mesh(&gpu_hollow);
             assert_eq!(gpu_hollow.sealed_interior, 0);
             assert!(mgh.stats.triangles > 0, "hollow triangles at n={n}");
+        }
+    }
+}
+
+#[test]
+#[ignore = "diagnostic gpu 256 thin torus seal (known margin stress)"]
+fn bench_gpu_256_thin_torus() {
+    let _g = GPU_LOCK.lock().unwrap();
+    let hd = try_headless_device().expect("headless gpu");
+    for minor in [0.22f32, 0.08, 0.04] {
+        let gs = torus_gaussians(300, 200, 0.55, minor, 0.99);
+        let cpu_opts = VoxelizeOptions {
+            mode: VoxelMode::Surfel,
+            n: 256,
+            threads: 24,
+            seal: true,
+            ..VoxelizeOptions::default()
+        };
+        let hollow = VoxelizeOptions {
+            seal: false,
+            ..cpu_opts.clone()
+        };
+        let ch = voxelize(&gs, &hollow).expect("cpu hollow");
+        let chm = field_to_mesh(&ch);
+        let gh_opts = VoxelizeOptions {
+            backend: Backend::Gpu,
+            ..hollow
+        };
+        let gh = voxelize_gpu_with(&hd, &gs, &gh_opts).expect("gpu hollow");
+        let ghm = field_to_mesh(&gh);
+        println!(
+            "torus minor={minor} 256 hollow: cpu tri={} chi={} comp={}; gpu tri={} chi={} comp={}",
+            chm.stats.triangles,
+            chm.stats.chi,
+            chm.stats.components,
+            ghm.stats.triangles,
+            ghm.stats.chi,
+            ghm.stats.components
+        );
+        let cpu = voxelize(&gs, &cpu_opts).expect("cpu");
+        let cm = field_to_mesh(&cpu);
+        let gpu_opts = VoxelizeOptions {
+            backend: Backend::Gpu,
+            ..cpu_opts
+        };
+        let gpu = voxelize_gpu_with(&hd, &gs, &gpu_opts).expect("gpu");
+        let gm = field_to_mesh(&gpu);
+        let rel = ((cm.stats.volume - gm.stats.volume) / cm.stats.volume).abs();
+        println!(
+            "torus minor={minor} 256 sealed: cpu tri={} vol={:.5} chi={} comp={}; gpu tri={} vol={:.5} chi={} comp={} rel={rel:.5}",
+            cm.stats.triangles,
+            cm.stats.volume,
+            cm.stats.chi,
+            cm.stats.components,
+            gm.stats.triangles,
+            gm.stats.volume,
+            gm.stats.chi,
+            gm.stats.components
+        );
+        assert!(rel < 2e-3, "minor {minor} vol rel {rel}");
+        if minor >= 0.08 {
+            assert_eq!(cm.stats.chi, gm.stats.chi, "minor {minor} chi");
+            assert_eq!(
+                cm.stats.components, gm.stats.components,
+                "minor {minor} comp"
+            );
+        } else {
+            let kept = keep_largest_component(&gm, &gpu.grid);
+            let krel = ((cm.stats.volume - kept.stats.volume) / cm.stats.volume).abs();
+            println!(
+                "  minor={minor}: 已知边界——GPU 密封残留小分量（CPU comp={} / GPU comp={}）；最大分量 tri={} vol={:.5} chi={} comp={} rel={krel:.5}",
+                cm.stats.components,
+                gm.stats.components,
+                kept.stats.triangles,
+                kept.stats.volume,
+                kept.stats.chi,
+                kept.stats.components
+            );
+            assert!(krel < 2e-3, "minor {minor} kept vol rel {krel}");
+            assert_eq!(kept.stats.chi, cm.stats.chi, "minor {minor} kept chi");
+            assert_eq!(kept.stats.components, 1, "minor {minor} kept comp");
         }
     }
 }
