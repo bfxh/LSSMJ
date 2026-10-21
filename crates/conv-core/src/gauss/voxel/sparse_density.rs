@@ -2,7 +2,8 @@
 //!
 //! 每个候选块存 (B+2)³ 的 halo 场（细格角点 x0−1..x0+B）；块内细 splat 只处理与 halo
 //! 相交的 Gaussian。未知角点默认写 +outside（hollow 语义）；`seal=true` 时走块级粗分类
-//! + 细 BFS，把被围住的未知区写成 −outside。
+//! 加细 BFS，把被围住的未知区写成 −outside。
+//!
 //! 网格：每块用 fast-surface-nets 对 local cells 0..B（覆盖 global x0−1..x0+B−1），
 //! 顶点按全局 cell key 去重、四边形按 4 cell 规范键去重 ⇒ 跨块无缝。
 

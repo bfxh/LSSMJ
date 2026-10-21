@@ -768,9 +768,21 @@ build 499.5 + mesh 39.3 = **551.8 ms**，内存从整格 4096 块降到 278 块�
 256³ surfel hollow（60k 球）：dense 894.5 ms；sparse detect 53.6 + build 683.7 +
 mesh 293.1 = **1030.4 ms**，候选 1816 (44.3%)，tri/vol/χ 逐项一致。
 
+**块尺寸扫描（256³，hollow，`tests/sparse_sweep.rs`，24T）**：
+
+| 场景 | dense | B=8 | B=16 | B=32 |
+| --- | --- | --- | --- | --- |
+| density blobs | 525.8 ms | 681.0 ms（1,404 块 / 1.40M 角点） | **516.8 ms**（278 / 1.62M） | 523.2 ms（60 / 2.36M） |
+| surfel sphere | **869.4 ms** | 1,262.7 ms（10,772 / 10.77M） | 988.0 ms（1,816 / 10.59M） | 974.3 ms（352 / 13.84M） |
+
+三条曲线的 tri/χ/分量都与稠密一致（体积相对误差 ≤ 7.8e-5）。结论：
+density 的甜点是 B=16（总耗时与稠密持平、略快 2%）；B=8 虽然角点更少，但块数多 5 倍、
+bin/分配开销把收益吃掉。surfel 的甜点是 B=32，但仍比稠密慢 ~12%；候选带占比随 B
+增大（44%→69%），不存在“靠调块尺寸转加速档”的空间。
+
 **结论**：稀疏路径当前是**内存档**，不是加速档。density 256³ 的 build 已与 dense
-整格持平（块 halo 重复 splat 抵消了少扫的收益），surfel 因候选块占比高（44–73%）
-反而慢 ~15%。要变成加速档，下一步要么降低候选带（更准的粗场/更薄的 halo），
+整格持平（块 halo 重复 splat 抵消了少扫的收益），surfel 因候选块占比高（44–69%）
+反而慢 12–15%。要变成加速档，下一步要么降低候选带（更准的粗场/更薄的 halo），
 要么把“候选块 + 细 splat”搬到 GPU 的稀疏 dispatch；在此之前默认路径仍是稠密。
 
 
@@ -828,6 +840,8 @@ CARGO_INCREMENTAL=0 cargo test --release --test perf_compare -- --test-threads=1
 # 稀疏块：定位 / halo 网格 / 密封 / surfel 对拍（含 256³ ignored 计时）
 CARGO_INCREMENTAL=0 cargo test --release --lib sparse_ -- --test-threads=1 --nocapture
 CARGO_INCREMENTAL=0 cargo test --release --lib sparse_ -- --test-threads=1 --ignored --nocapture
+# 块尺寸扫描 B=8/16/32（256³，density+surfel，ignored）
+CARGO_INCREMENTAL=0 cargo test --release --test sparse_sweep -- --test-threads=1 --ignored --nocapture
 # 自包含 HTML 的 base64 载荷（长度/首顶点/旧格式）
 cargo test --release --test html_embed -- --test-threads=1 --nocapture
 # 全量门（含 GPU，必须串行）
