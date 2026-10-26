@@ -116,6 +116,9 @@ pub struct VoxelizeOptions {
     pub iso_abs: Option<f32>,
     /// 密度核在最薄轴上的标准差下限（格）。
     pub kernel_clamp_cells: f32,
+    /// 可选：用**世界单位**给核标准差下限（覆盖 `kernel_clamp_cells × h`）。
+    /// 这样同一 σ 在不同 grid 下含义一致，密度场才可能跨分辨率对齐。
+    pub kernel_clamp_world: Option<f32>,
     /// 面元融合在最薄轴（法线方向）上的标准差下限（格）。
     pub normal_band_cells: f32,
     /// 面元 TSDF 累积的最小权重；低于它的体素视为未观测。
@@ -145,6 +148,7 @@ impl Default for VoxelizeOptions {
             iso_frac: 0.65,
             iso_abs: None,
             kernel_clamp_cells: 0.75,
+            kernel_clamp_world: None,
             normal_band_cells: 1.0,
             min_weight: 0.02,
             seal: true,
@@ -582,7 +586,10 @@ pub(crate) fn prepare_density(
     grid: &Grid,
     opts: &VoxelizeOptions,
 ) -> Vec<Prepared> {
-    let min_var = (opts.kernel_clamp_cells.max(0.001) * grid.h).powi(2);
+    let min_var = match opts.kernel_clamp_world {
+        Some(w) => w.max(1e-6).powi(2),
+        None => (opts.kernel_clamp_cells.max(0.001) * grid.h).powi(2),
+    };
     if opts.simd_prep {
         return prepare_density_simd(gaussians, min_var, opts.threads);
     }
