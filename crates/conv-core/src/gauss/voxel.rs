@@ -11,7 +11,9 @@ use super::{Aabb, Gaussian, bounds_of, dot, normalize_vec};
 mod avx2;
 pub mod sparse_density;
 pub mod sparse_surfel;
+pub mod quant;
 pub mod surface_blocks;
+pub mod ternary;
 mod tiles;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -125,6 +127,10 @@ pub struct VoxelizeOptions {
     pub threads: usize,
     /// 手动取景（世界坐标）；None = 自动按 3σ 包围盒取景。
     pub aabb: Option<Aabb>,
+    /// 仅 `gauss2mesh` 使用：走 u16 定点密度（同面、1.1×、内存 1/2）。库侧 `voxelize` 忽略。
+    pub quant16: bool,
+    /// 显式 u16 scale；None = 由探针标定（多一趟 splat）。
+    pub quant_scale: Option<f32>,
 }
 
 impl Default for VoxelizeOptions {
@@ -144,6 +150,8 @@ impl Default for VoxelizeOptions {
             seal: true,
             threads: 1,
             aabb: None,
+            quant16: false,
+            quant_scale: None,
         }
     }
 }
@@ -179,6 +187,11 @@ fn fit_inputs(gaussians: &[Gaussian], opts: &VoxelizeOptions) -> Result<(Grid, A
     let grid = Grid::fit(bounds, opts.n, opts.padding)?;
     Ok((grid, bounds))
 }
+
+pub use quant::{
+    QuantField, quantize_auto_quantfield, quantize_field_auto, scale_for_iso, voxelize_quant,
+};
+pub use ternary::{TritField, voxelize_ternary, voxelize_ternary_with};
 
 pub fn voxelize(gaussians: &[Gaussian], opts: &VoxelizeOptions) -> Result<Field, String> {
     let (grid, bounds) = fit_inputs(gaussians, opts)?;
@@ -955,7 +968,7 @@ pub(crate) fn surfel_post(
 ///
 /// 这是 TSDF 体融合的符号传播；开放面会让泛洪漏进内部（sealed_interior≈0），
 /// 上层应据此告警而不是静默出一个破面。
-fn seal_unknown(values: &mut [f32], known: &[bool], grid: &Grid, outside: f32) -> usize {
+pub(crate) fn seal_unknown(values: &mut [f32], known: &[bool], grid: &Grid, outside: f32) -> usize {
     let n = grid.n;
     let n_usize = n as usize;
     let count = n_usize * n_usize * n_usize;

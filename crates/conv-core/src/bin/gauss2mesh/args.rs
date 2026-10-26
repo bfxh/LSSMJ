@@ -15,13 +15,16 @@ LSSMJ gauss2mesh · 高斯体素 → 网格
 常用选项：
   --grid <N>             体素分辨率 8..512（默认 64；>256 无 --gpu 走稀疏分块，density 自动半分辨率探针求 iso）
   --threads <N>          splat 线程数（默认 0=自动；1=单线程参照）
-  --gpu                  GPU splat（定点整数原子；512 走 dense GPU，约 3 GB 显存；失败回退 CPU/稀疏）
+  --gpu                  强制 GPU splat（自研 wgpu 内核；512 走 dense GPU，约 3 GB 显存；失败回退 CPU/稀疏）
+  --no-gpu               强制 CPU（默认 auto：批量 ≥2 文件或 grid ≥512 走 GPU，其余 CPU）
   --gpu-mesh             GPU Surface Nets（实验档：通常慢于 CPU；>256 需配合 --gpu；失败回退）
   --bins3d               CPU splat 走 3D tile 分桶（默认 z-slab；GPU 忽略）
   --simd-prep            可选 SIMD/cyclic eigen prep（默认标量逐位；opt-in 改哈希）
   --largest-component    只保留最大连通分量（去 floaters/碎片）
   --mode <auto|density|surfel>（默认 auto）
   --iso <auto|数值>      密度阈值；auto = 0.65 × 正密度 99.9 分位
+  --quant16              走 u16 定点密度 splat（需 --iso）：同面、内存 1/2
+  --quant-scale <S>      指定 u16 定点 scale，跳过标定（批量复用时省一趟 splat）
   --prune-opacity <f>    不透明度下限（默认 0.05）
   --min-radius <f>       3σ 半径下限（默认 0，关）
   --padding <n>          域边界留白格（默认 3；覆盖 3h 采样带宽）
@@ -77,6 +80,10 @@ pub(crate) struct Config {
     pub(crate) padding: u32,
     pub(crate) seal: bool,
     pub(crate) largest_component: bool,
+    pub(crate) quant16: bool,
+    pub(crate) no_gpu: bool,
+    pub(crate) gpu_auto: bool,
+    pub(crate) quant_scale: Option<f32>,
     pub(crate) seed: u64,
     pub(crate) raw_scale: bool,
     pub(crate) raw_opacity: bool,
@@ -105,6 +112,10 @@ impl Default for Config {
             padding: 3,
             seal: true,
             largest_component: false,
+            quant16: false,
+            no_gpu: false,
+            gpu_auto: true,
+            quant_scale: None,
             seed: 7,
             raw_scale: false,
             raw_opacity: false,
@@ -127,6 +138,8 @@ pub(crate) fn is_bool_flag(name: &str) -> bool {
             | "raw-opacity"
             | "quiet"
             | "help"
+            | "quant16"
+            | "no-gpu"
             | "gpu"
             | "gpu-mesh"
             | "bins3d"
@@ -144,6 +157,7 @@ pub(crate) fn parse_config(
         "threads",
         "mode",
         "iso",
+        "quant-scale",
         "prune-opacity",
         "min-radius",
         "max-radius",
@@ -178,6 +192,13 @@ pub(crate) fn parse_config(
             "surfel" => ModeSel::Surfel,
             _ => return Err(format!("--mode 只能是 auto|density|surfel：{v}")),
         };
+    }
+    if let Some(v) = flags.get("quant-scale") {
+        let x: f32 = v.parse().map_err(|_| format!("--quant-scale 不是数值：{v}"))?;
+        if x <= 0.0 || !x.is_finite() {
+            return Err("--quant-scale 必须 > 0".into());
+        }
+        cfg.quant_scale = Some(x);
     }
     if let Some(v) = flags.get("iso").filter(|v| *v != "auto") {
         let x: f32 = v.parse().map_err(|_| format!("--iso 不是数值：{v}"))?;
@@ -215,7 +236,14 @@ pub(crate) fn parse_config(
     }
     cfg.seal = !bools.contains("hollow");
     cfg.largest_component = bools.contains("largest-component");
+    cfg.quant16 = bools.contains("quant16");
+    cfg.no_gpu = bools.contains("no-gpu");
     cfg.gpu = bools.contains("gpu");
+    if cfg.gpu && cfg.no_gpu {
+        return Err("--gpu 与 --no-gpu 不能同时用".into());
+    }
+    // 默认 auto：没显式指定就由规模决定（批量/大网格走自研 GPU 内核）
+    cfg.gpu_auto = !cfg.gpu && !cfg.no_gpu;
     cfg.gpu_mesh = bools.contains("gpu-mesh");
     cfg.bins3d = bools.contains("bins3d");
     cfg.simd_prep = bools.contains("simd-prep");

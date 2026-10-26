@@ -20,7 +20,7 @@ use conv_core::gauss::{
     Gaussian, PruneOptions, add_floaters, blob_sphere_gaussians, bounds_of, median_flatness, prune,
     sphere_gaussians, torus_gaussians,
 };
-use conv_core::jfa::{Headless, try_headless_device};
+use conv_core::jfa::{Headless, try_headless_device_sized};
 use html::write_html;
 use report::{ReportData, Timings, jstr, report_json};
 use std::collections::{HashMap, HashSet};
@@ -36,11 +36,11 @@ static GPU_CACHE: OnceLock<Headless> = OnceLock::new();
 const SPARSE_BLOCK: u32 = 16;
 
 /// 同进程内复用同一 wgpu 设备；batch 的首个文件付 init，其余复用。
-fn cached_gpu() -> Result<&'static Headless, String> {
+fn cached_gpu(need_bytes: u64) -> Result<&'static Headless, String> {
     if let Some(hd) = GPU_CACHE.get() {
         return Ok(hd);
     }
-    let hd = try_headless_device()?;
+    let hd = try_headless_device_sized(need_bytes)?;
     Ok(GPU_CACHE.get_or_init(|| hd))
 }
 
@@ -115,6 +115,12 @@ fn run() -> Result<(), String> {
             let input = positional
                 .first()
                 .ok_or("convert 需要输入 PLY：gauss2mesh convert <input.ply>")?;
+            // auto：单文件只有大网格 + surfel 才走 GPU。
+            // 512³ density 的 GPU job 表会溢出 u32（探针已断言），必须留在稀疏 CPU。
+            let mut cfg = cfg;
+            if cfg.gpu_auto && cfg.grid >= 512 && cfg.mode == ModeSel::Surfel {
+                cfg.gpu = true;
+            }
             run_convert(&cfg, Path::new(input))
         }
         "batch" => run_batch(&cfg, &positional),
@@ -251,6 +257,11 @@ fn run_batch(cfg: &Config, inputs: &[String]) -> Result<(), String> {
     }
     fs::create_dir_all(&cfg.out_dir)
         .map_err(|e| format!("建目录 {} 失败：{e}", cfg.out_dir.display()))?;
+    // auto：批量 ≥2 文件时 GPU 初始化可摊平（实测 4×256³ 为 2810 vs 3344 ms）
+    let auto_gpu = cfg.gpu_auto && inputs.len() >= 2;
+    if auto_gpu {
+        eprintln!("auto: 批量 {} 文件 → 自研 GPU 内核（初始化可摊平）", inputs.len());
+    }
     let mut used: HashSet<std::path::PathBuf> = HashSet::new();
     let mut ok = 0usize;
     let mut failed = 0usize;
@@ -270,6 +281,10 @@ fn run_batch(cfg: &Config, inputs: &[String]) -> Result<(), String> {
         }
         used.insert(obj.clone());
         let mut c = cfg.clone();
+        if auto_gpu {
+            c.gpu = true;
+            c.gpu_auto = false;
+        }
         c.out = Some(obj.clone());
         c.html = if cfg.no_html {
             None
@@ -391,7 +406,9 @@ fn convert_and_write(
     };
     let gpu_device = if want_gpu {
         let t = Instant::now();
-        match cached_gpu() {
+        // 只按本次实际需要的缓冲申请 limits（小网格不要求 512 MB 绑定）
+        let need = (cfg.grid as u64).pow(3) * if mode == VoxelMode::Surfel { 16 } else { 4 };
+        match cached_gpu(need) {
             Ok(hd) => {
                 timings.gpu_init = t.elapsed().as_secs_f64() * 1e3;
                 Some(hd)
@@ -423,6 +440,8 @@ fn convert_and_write(
         iso_frac: 0.65,
         iso_abs: cfg.iso,
         seal: cfg.seal,
+        quant16: cfg.quant16,
+        quant_scale: cfg.quant_scale,
         threads,
         ..VoxelizeOptions::default()
     };
@@ -779,9 +798,15 @@ fn run_leg(
     gpu: Option<&Headless>,
 ) -> Result<(Field, Mesh, f64, f64), String> {
     let t = Instant::now();
-    let field = match (opts.backend, gpu) {
-        (Backend::Gpu, Some(hd)) => voxelize_gpu_with(hd, gaussians, opts)?,
-        _ => voxelize(gaussians, opts)?,
+    let field = if opts.quant16 {
+        // 显式 u16 定点路径：与 f32 同面（IoU 0.996–1.000），1.1×，内存 1/2
+        let (f, _scale) = conv_core::gauss::voxel::quantize_field_auto(gaussians, opts)?;
+        f
+    } else {
+        match (opts.backend, gpu) {
+            (Backend::Gpu, Some(hd)) => voxelize_gpu_with(hd, gaussians, opts)?,
+            _ => voxelize(gaussians, opts)?,
+        }
     };
     let voxel_ms = t.elapsed().as_secs_f64() * 1e3;
     let t = Instant::now();
