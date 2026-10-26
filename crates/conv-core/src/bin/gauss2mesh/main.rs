@@ -433,6 +433,25 @@ fn convert_and_write(
         gpu_fallback = Some("GPU 初始化失败 → 512 走稀疏 CPU".into());
     }
     let gpu_ref = gpu_device;
+    // >256³ 的稀疏 density：数值核宽下限 `0.75×h` 在细网格上远小于数据的作者尺度，
+    // 于是等值面被抽成薄壳，默认 `seal=true` 承诺的「实心体」拿不到（实测 512³
+    // 0.25505 / χ=−39 / 25 分量）。默认把核宽钉在参考 256³ 的世界尺度，512³ 得到
+    // 0.72455 / χ=5 / 5 分量。≤256³ 与 surfel 不受影响；显式 --kernel-clamp-* 优先。
+    let mut clamp_default_note = None;
+    let kernel_clamp_ref = if cfg.kernel_clamp_ref.is_none()
+        && cfg.kernel_clamp_world.is_none()
+        && !cfg.splat_integrate
+        && sparse
+        && mode == VoxelMode::Density
+        && cfg.grid > 256
+    {
+        clamp_default_note = Some(
+            ">256³ density 默认把核宽钉在参考 256³ 世界尺度（否则等值面被抽成薄壳）".to_string(),
+        );
+        Some(256u32)
+    } else {
+        cfg.kernel_clamp_ref
+    };
     let mut voxel_opts = VoxelizeOptions {
         mode,
         bins3d: cfg.bins3d,
@@ -448,8 +467,9 @@ fn convert_and_write(
         iso_abs: cfg.iso,
         seal: cfg.seal,
         kernel_clamp_world: cfg.kernel_clamp_world,
-        kernel_clamp_ref: cfg.kernel_clamp_ref,
+        kernel_clamp_ref,
         density_norm_ref: cfg.density_norm_ref,
+        splat_integrate: cfg.splat_integrate,
         quant16: cfg.quant16,
         quant_scale: cfg.quant_scale,
         threads,
@@ -520,6 +540,10 @@ fn convert_and_write(
     };
     timings.voxel = acc_vox;
     timings.mesh = acc_mesh;
+    if let Some(note) = &clamp_default_note {
+        auto_reason.push('；');
+        auto_reason.push_str(note);
+    }
     if let Some(note) = &sparse_note {
         auto_reason.push('；');
         auto_reason.push_str(note);
@@ -830,6 +854,7 @@ fn iso_pinned(opts: &VoxelizeOptions) -> bool {
     opts.kernel_clamp_ref.is_some()
         || opts.kernel_clamp_world.is_some()
         || opts.density_norm_ref.is_some()
+        || opts.splat_integrate
 }
 
 /// >256³ 的 density iso：显式 `--iso` 直接用；否则跑半分辨率探针。
@@ -854,7 +879,7 @@ fn resolve_sparse_iso(
         .map_err(|e| format!(">256³ density 自动 iso 失败（{probe_n}³ 探针）：{e}"))?
         .iso;
     let probe_ms = t.elapsed().as_secs_f64() * 1e3;
-    let pinned = iso_pinned(opts);
+    let pinned = iso_pinned(opts) || opts.splat_integrate;
     let k = if pinned {
         1.0
     } else {
