@@ -26,8 +26,9 @@ LSSMJ gauss2mesh · 高斯体素 → 网格
   --kernel-clamp-world <σ>  核标准差下限用世界单位（默认按 0.75 格）
   --kernel-clamp-ref <N>    按参考网格 N 折算核下限（= 0.75 × h_N）：跨 grid 复用同一核宽，
                         等价于把核宽冻结在 N³；opt-in，不改默认行为
-  --density-norm <N>    把 splat 权重乘 (h_N/h)²，使密度跨分辨率一致；配合 --iso 固定阈值
-                        即可让不同 --grid 得到同一张面（opt-in，仅 CPU，不改默认行为）
+  --density-norm <N>    把 splat 权重乘 (h_N/h)²，让密度跨分辨率可比（opt-in，仅 CPU）
+                        注意：它只修密度幅度、不修核宽，512³ 拓扑仍不闭合；
+                        要跨分辨率同面请用 --kernel-clamp-ref <N> + 显式 --iso
   --quant16              走 u16 定点密度 splat（需 --iso）：同面、内存 1/2
   --quant-scale <S>      指定 u16 定点 scale，跳过标定（批量复用时省一趟 splat）
   --prune-opacity <f>    不透明度下限（默认 0.05）

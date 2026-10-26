@@ -122,10 +122,11 @@ pub struct VoxelizeOptions {
     /// 可选：按**参考网格**折算核下限（`0.75 × h_ref`）。同一参考值在任何 grid 上
     /// 得到同一世界 σ，等价于「把核宽固定成 N³ 时的样子」，无需按场景手算 σ。
     pub kernel_clamp_ref: Option<u32>,
-    /// 可选（opt-in）：把 splat 权重乘 `(h_ref/h)²`，使密度与分辨率无关。
-    /// 实测密度 ∝ h⁻²（iso 按 n⁻² 漂移），故乘 h² 即可跨 grid 复用同一 `--iso`。
+    /// 可选（opt-in）：把 splat 权重乘 `(h_ref/h)²`，让密度跨分辨率可比。
+    /// 默认核宽随 h 漂移，实测密度 ∝ h⁻²（iso 按 n⁻² 漂移），乘 h² 后同一 `--iso` 才有可比性。
     /// 因子锚定在参考网格上（ref == 当前 grid 时因子恰为 1，默认输出逐位不变）。
-    /// 仅 CPU（dense/sparse）；GPU 内核未实现，显式报错。
+    /// **注意**：只修密度幅度、不修核宽，512³ 拓扑仍不闭合；跨分辨率同面要用
+    /// `kernel_clamp_ref` + 显式 `iso_abs`。仅 CPU（dense/sparse）。
     pub density_norm_ref: Option<u32>,
     /// 面元融合在最薄轴（法线方向）上的标准差下限（格）。
     pub normal_band_cells: f32,
