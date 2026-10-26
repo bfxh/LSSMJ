@@ -8,8 +8,8 @@
 //! 顶点按全局 cell key 去重、四边形按 4 cell 规范键去重 ⇒ 跨块无缝。
 
 use super::{
-    Grid, Prepared, VoxelMode, VoxelizeOptions, max_maha, prepare_density, splat_range,
-    surface_blocks::SurfaceBlocks,
+    Grid, Prepared, VoxelMode, VoxelizeOptions, density_weight_scale, max_maha, prepare_density,
+    splat_range, surface_blocks::SurfaceBlocks,
 };
 use crate::gauss::mesh::{Mesh, mesh_from_parts};
 use crate::gauss::{Gaussian, normalize_vec};
@@ -84,11 +84,12 @@ impl SparseDensity {
             iso * 2.0
         };
         let bins = block_bins(&prepared, &grid, blocks);
+        let w_scale = density_weight_scale(&grid, opts);
         let parts = parallel_blocks(blocks, opts.threads, |id, bx, by, bz| {
             let (x0, y0, z0) = (bx * block, by * block, bz * block);
             let mut local = vec![0f32; l * l * l];
             splat_block(
-                &prepared, &bins[id], &grid, x0, y0, z0, block, n, l, &mut local,
+                &prepared, &bins[id], &grid, x0, y0, z0, block, n, l, w_scale, &mut local,
             );
             let observed = post_block(&mut local, &grid, iso, outside, x0, y0, z0, block, l);
             (local, observed)
@@ -368,6 +369,7 @@ fn splat_block(
     block: u32,
     n: u32,
     l: usize,
+    w_scale: f32,
     local: &mut [f32],
 ) {
     let gx0 = x0 as i32 - 1;
@@ -375,6 +377,7 @@ fn splat_block(
     let gz0 = z0 as i32 - 1;
     for &gi in indices {
         let g = &prepared[gi as usize];
+        let op = g.opacity * w_scale;
         let r = splat_range(grid, g.mean, g.radius);
         if r.empty {
             continue;
@@ -401,7 +404,7 @@ fn splat_block(
                         continue;
                     }
                     let lx = (x as i32 - gx0) as usize;
-                    local[row + lx] += g.opacity * (-0.5 * m).exp();
+                    local[row + lx] += op * (-0.5 * m).exp();
                 }
             }
         }

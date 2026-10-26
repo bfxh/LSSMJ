@@ -404,6 +404,13 @@ fn convert_and_write(
     } else {
         cfg.gpu || cfg.gpu_mesh
     };
+    // --density-norm 只实现了 CPU 内核；显式/自动选 GPU 时降级到 CPU 并说明。
+    let want_gpu = if cfg.density_norm_ref.is_some() && want_gpu {
+        gpu_fallback = Some("--density-norm 仅有 CPU 实现 → CPU".into());
+        false
+    } else {
+        want_gpu
+    };
     let gpu_device = if want_gpu {
         let t = Instant::now();
         // 只按本次实际需要的缓冲申请 limits（小网格不要求 512 MB 绑定）
@@ -442,6 +449,7 @@ fn convert_and_write(
         seal: cfg.seal,
         kernel_clamp_world: cfg.kernel_clamp_world,
         kernel_clamp_ref: cfg.kernel_clamp_ref,
+        density_norm_ref: cfg.density_norm_ref,
         quant16: cfg.quant16,
         quant_scale: cfg.quant_scale,
         threads,
@@ -817,20 +825,81 @@ fn run_leg(
     Ok((field, mesh, voxel_ms, mesh_ms))
 }
 
+/// 核宽/密度是否已钉在世界单位（此时密度近似分辨率无关，探针 iso 不再按 n⁻² 换算）。
+fn iso_pinned(opts: &VoxelizeOptions) -> bool {
+    opts.kernel_clamp_ref.is_some()
+        || opts.kernel_clamp_world.is_some()
+        || opts.density_norm_ref.is_some()
+}
+
+/// >256³ 的 density iso：显式 `--iso` 直接用；否则跑半分辨率探针。
+/// 默认核宽随 h 漂移，实测 iso ∝ n⁻²（scene01：128→117.52、256→29.386、512→7.469，
+/// 比值 4.00 / 3.94），探针 iso 必须按 (probe_n/n)² 换算；但核宽/密度钉住后密度已
+/// 近似分辨率无关，再乘会把 512 的阈值压低 4 倍。
+fn resolve_sparse_iso(
+    gaussians: &[Gaussian],
+    opts: &VoxelizeOptions,
+) -> Result<(f32, f64, Option<String>), String> {
+    if let Some(v) = opts.iso_abs {
+        return Ok((v, 0.0, None));
+    }
+    let probe_n = (opts.n / 2).clamp(8, 256);
+    let mut probe = opts.clone();
+    probe.n = probe_n;
+    probe.backend = Backend::Cpu;
+    probe.bins3d = false;
+    probe.seal = false;
+    let t = Instant::now();
+    let iso = voxelize(gaussians, &probe)
+        .map_err(|e| format!(">256³ density 自动 iso 失败（{probe_n}³ 探针）：{e}"))?
+        .iso;
+    let probe_ms = t.elapsed().as_secs_f64() * 1e3;
+    let pinned = iso_pinned(opts);
+    let k = if pinned {
+        1.0
+    } else {
+        (probe_n as f32 / opts.n as f32).powi(2)
+    };
+    let iso = iso * k;
+    let note = if pinned {
+        format!("auto iso {iso:.8}（{probe_n}³ 探针，核宽/密度已钉在世界单位 ⇒ 不换算分辨率）")
+    } else {
+        format!(
+            "auto iso {iso:.4}（{probe_n}³ 探针 ×{k:.3} 分辨率换算；                         p99.9 本身随分辨率漂移，512³ 体积约为 256³ 的 1/2，需同面请显式 --iso）"
+        )
+    };
+    Ok((iso, probe_ms, Some(note)))
+}
+
 fn run_sparse_leg(
     gaussians: &[Gaussian],
     opts: &VoxelizeOptions,
 ) -> Result<(Field, Mesh, f64, f64, Option<String>), String> {
     let bounds = opts.aabb.unwrap_or_else(|| bounds_of(gaussians));
     let grid = Grid::fit(bounds, opts.n, opts.padding)?;
+    let mut probe_ms = 0.0f64;
+    let mut iso_note = None;
+    let iso_fixed = if opts.mode == VoxelMode::Density {
+        let (iso, ms, note) = resolve_sparse_iso(gaussians, opts)?;
+        probe_ms = ms;
+        iso_note = note;
+        Some(iso)
+    } else {
+        None
+    };
+    // 候选块检测内部会跑一遍粗分辨率 density；若核宽已钉住但 iso 还是 auto，粗场会
+    // 用自己的（随分辨率漂移的）auto-iso，导致 auto 与显式 --iso 选出不同的块集。
+    // 钉住时把已解析的 iso 交给检测，两条路径才一致；默认路径不动。
+    let mut det_opts = opts.clone();
+    if let (Some(iso), true, true) = (iso_fixed, iso_pinned(opts), opts.iso_abs.is_none()) {
+        det_opts.iso_abs = Some(iso);
+    }
     let t = Instant::now();
-    let blocks = SurfaceBlocks::detect(gaussians, opts, grid, SPARSE_BLOCK, 0, 4)
+    let blocks = SurfaceBlocks::detect(gaussians, &det_opts, grid, SPARSE_BLOCK, 0, 4)
         .map_err(|e| format!("稀疏候选块失败：{e}"))?;
     let detect_ms = t.elapsed().as_secs_f64() * 1e3;
     let build_ms;
     let mesh_ms;
-    let mut probe_ms = 0.0f64;
-    let mut iso_note = None;
     let (mesh, observed, sealed, iso) = match opts.mode {
         VoxelMode::Surfel => {
             let t = Instant::now();
@@ -842,32 +911,7 @@ fn run_sparse_leg(
             (m, s.observed, s.sealed_interior, 0.0)
         }
         VoxelMode::Density => {
-            let iso = match opts.iso_abs {
-                Some(v) => v,
-                None => {
-                    let probe_n = (opts.n / 2).clamp(8, 256);
-                    let mut probe = opts.clone();
-                    probe.n = probe_n;
-                    probe.backend = Backend::Cpu;
-                    probe.bins3d = false;
-                    probe.seal = false;
-                    let t = Instant::now();
-                    let iso = voxelize(gaussians, &probe)
-                        .map_err(|e| {
-                            format!(">256³ density 自动 iso 失败（{probe_n}³ 探针）：{e}")
-                        })?
-                        .iso;
-                    probe_ms = t.elapsed().as_secs_f64() * 1e3;
-                    // 密度是「每体素质量」，实测 iso ∝ n⁻²（scene01：128→117.52、256→29.386、
-                    // 512→7.469，比值 4.00 / 3.94）。探针 iso 必须按 (probe_n/n)² 换算。
-                    let k = (probe_n as f32 / opts.n as f32).powi(2);
-                    let iso = iso * k;
-                    iso_note = Some(format!(
-                        "auto iso {iso:.4}（{probe_n}³ 探针 ×{k:.3} 分辨率换算；                         p99.9 本身随分辨率漂移，512³ 体积约为 256³ 的 1/2，需同面请显式 --iso）"
-                    ));
-                    iso
-                }
-            };
+            let iso = iso_fixed.ok_or("density 路径缺少 iso")?;
             let t = Instant::now();
             let s = SparseDensity::build(gaussians, opts, grid, &blocks, iso, opts.seal)?;
             build_ms = t.elapsed().as_secs_f64() * 1e3;
