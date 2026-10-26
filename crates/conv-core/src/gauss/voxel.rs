@@ -987,59 +987,85 @@ pub(crate) fn surfel_post(
 /// 这是 TSDF 体融合的符号传播；开放面会让泛洪漏进内部（sealed_interior≈0），
 /// 上层应据此告警而不是静默出一个破面。
 pub(crate) fn seal_unknown(values: &mut [f32], known: &[bool], grid: &Grid, outside: f32) -> usize {
-    let n = grid.n;
-    let n_usize = n as usize;
-    let count = n_usize * n_usize * n_usize;
-    use std::collections::VecDeque;
-    let mut outside_mask = vec![false; count];
-    let mut queue = VecDeque::new();
-    let push = |idx: usize, mask: &mut [bool], q: &mut VecDeque<usize>| {
-        if !known[idx] && !mask[idx] {
-            mask[idx] = true;
-            q.push_back(idx);
+    let n = grid.n as usize;
+    let n2 = n * n;
+    // 扫描线填充：每个种子沿 x 扩成一段，再把上下左右 4 个邻行里与之重叠的未知段入栈。
+    // 语义与逐体素 BFS 完全相同（同一连通分量），只是入栈次数从 O(体素) 降到 O(段)。
+    let mut outside_mask = vec![false; n * n * n];
+    let mut stack: Vec<(usize, usize, usize)> = Vec::with_capacity(n * 2);
+
+    #[inline]
+    fn push_row(
+        mask: &mut [bool],
+        known: &[bool],
+        stack: &mut Vec<(usize, usize, usize)>,
+        n: usize,
+        y: usize,
+        z: usize,
+        x0: usize,
+        x1: usize,
+    ) {
+        let row = z * n * n + y * n;
+        let mut x = x0;
+        while x <= x1 {
+            while x <= x1 && (known[row + x] || mask[row + x]) {
+                x += 1;
+            }
+            if x > x1 {
+                break;
+            }
+            let start = x;
+            while x <= x1 && !known[row + x] && !mask[row + x] {
+                x += 1;
+            }
+            stack.push((y, z, start));
         }
-    };
-    for z in 0..n_usize {
-        for y in 0..n_usize {
-            for x in 0..n_usize {
-                if x == 0
-                    || y == 0
-                    || z == 0
-                    || x + 1 == n_usize
-                    || y + 1 == n_usize
-                    || z + 1 == n_usize
-                {
-                    let idx = x + y * n_usize + z * n_usize * n_usize;
-                    push(idx, &mut outside_mask, &mut queue);
-                }
+    }
+
+    // 种子：域边界的未知体素
+    for z in 0..n {
+        for y in 0..n {
+            if z == 0 || z + 1 == n || y == 0 || y + 1 == n {
+                push_row(&mut outside_mask, known, &mut stack, n, y, z, 0, n - 1);
+            } else {
+                push_row(&mut outside_mask, known, &mut stack, n, y, z, 0, 0);
+                push_row(&mut outside_mask, known, &mut stack, n, y, z, n - 1, n - 1);
             }
         }
     }
-    while let Some(idx) = queue.pop_front() {
-        let x = idx % n_usize;
-        let y = (idx / n_usize) % n_usize;
-        let z = idx / (n_usize * n_usize);
-        if x > 0 {
-            push(idx - 1, &mut outside_mask, &mut queue);
+
+    while let Some((y, z, sx)) = stack.pop() {
+        let row = z * n2 + y * n;
+        if known[row + sx] || outside_mask[row + sx] {
+            continue;
         }
-        if x + 1 < n_usize {
-            push(idx + 1, &mut outside_mask, &mut queue);
+        let mut x0 = sx;
+        while x0 > 0 && !known[row + x0 - 1] && !outside_mask[row + x0 - 1] {
+            x0 -= 1;
+        }
+        let mut x1 = sx;
+        while x1 + 1 < n && !known[row + x1 + 1] && !outside_mask[row + x1 + 1] {
+            x1 += 1;
+        }
+        for x in x0..=x1 {
+            outside_mask[row + x] = true;
         }
         if y > 0 {
-            push(idx - n_usize, &mut outside_mask, &mut queue);
+            push_row(&mut outside_mask, known, &mut stack, n, y - 1, z, x0, x1);
         }
-        if y + 1 < n_usize {
-            push(idx + n_usize, &mut outside_mask, &mut queue);
+        if y + 1 < n {
+            push_row(&mut outside_mask, known, &mut stack, n, y + 1, z, x0, x1);
         }
         if z > 0 {
-            push(idx - n_usize * n_usize, &mut outside_mask, &mut queue);
+            push_row(&mut outside_mask, known, &mut stack, n, y, z - 1, x0, x1);
         }
-        if z + 1 < n_usize {
-            push(idx + n_usize * n_usize, &mut outside_mask, &mut queue);
+        if z + 1 < n {
+            push_row(&mut outside_mask, known, &mut stack, n, y, z + 1, x0, x1);
         }
     }
+
     let mut interior = 0usize;
-    for i in 0..count {
+    for i in 0..n * n * n {
         if !known[i] {
             if outside_mask[i] {
                 values[i] = outside;
