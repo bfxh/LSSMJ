@@ -26,6 +26,8 @@ LSSMJ gauss2mesh · 高斯体素 → 网格
   --kernel-clamp-world <σ>  核标准差下限用世界单位（默认按 0.75 格）
   --kernel-clamp-ref <N>    按参考网格 N 折算核下限（= 0.75 × h_N）：跨 grid 复用同一核宽，
                         等价于把核宽冻结在 N³；opt-in，不改默认行为
+  --cross-resolution <N> 一键统一跨 grid 口径：核宽钉在 N³ 世界尺度 + iso 取 N³ 的绝对阈值
+                        （= --kernel-clamp-ref N + --iso <N³ 探针值>；opt-in，不改默认）
   --splat-integrate      体素内积分 splat：核方差 +h²/12、权重 ×h³ ⇒ 密度与分辨率无关
                         （跨 grid 复用同一 --iso；与 --kernel-clamp-* 互斥）
   --density-norm <N>    把 splat 权重乘 (h_N/h)²，让密度跨分辨率可比（opt-in，仅 CPU）
@@ -92,6 +94,7 @@ pub(crate) struct Config {
     pub(crate) kernel_clamp_ref: Option<u32>,
     pub(crate) density_norm_ref: Option<u32>,
     pub(crate) splat_integrate: bool,
+    pub(crate) cross_resolution: Option<u32>,
     pub(crate) quant16: bool,
     pub(crate) no_gpu: bool,
     pub(crate) gpu_auto: bool,
@@ -128,6 +131,7 @@ impl Default for Config {
             kernel_clamp_ref: None,
             density_norm_ref: None,
             splat_integrate: false,
+            cross_resolution: None,
             quant16: false,
             no_gpu: false,
             gpu_auto: true,
@@ -178,6 +182,7 @@ pub(crate) fn parse_config(
         "kernel-clamp-world",
         "kernel-clamp-ref",
         "density-norm",
+        "cross-resolution",
         "prune-opacity",
         "min-radius",
         "max-radius",
@@ -221,6 +226,15 @@ pub(crate) fn parse_config(
             return Err("--kernel-clamp-ref 必须 ≥ 8".into());
         }
         cfg.kernel_clamp_ref = Some(x);
+    }
+    if let Some(v) = flags.get("cross-resolution") {
+        let x: u32 = v
+            .parse()
+            .map_err(|_| format!("--cross-resolution 不是整数：{v}"))?;
+        if !(8..=512).contains(&x) {
+            return Err("--cross-resolution 必须在 8..=512".into());
+        }
+        cfg.cross_resolution = Some(x);
     }
     if let Some(v) = flags.get("density-norm") {
         let x: u32 = v
