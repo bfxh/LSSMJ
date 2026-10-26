@@ -129,7 +129,18 @@ impl SparseDensity {
     }
 
     pub fn mesh(&self) -> Result<Mesh, String> {
-        mesh_blocks(&self.data, &self.grid, self.block, self.per)
+        mesh_blocks(&self.data, &self.grid, self.block, self.per).map_err(|e| {
+            if e.contains("没有生成三角形") {
+                // 已知缺陷：>256³ 的 auto iso 取自半分辨率探针；密度是「每体素质量」，
+                // 换分辨率后阈值不等价（scene01：256³ iso=29.39，512³ 等效约 6）。
+                format!(
+                    "{e}（iso={:.4}，观测 {} 体素）。>256³ 的 auto iso 来自半分辨率探针、未按分辨率换算，请显式传 --iso",
+                    self.iso, self.observed
+                )
+            } else {
+                e
+            }
+        })
     }
 }
 

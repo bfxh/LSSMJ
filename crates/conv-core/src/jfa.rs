@@ -22,6 +22,12 @@ pub fn headless_device() -> Headless {
 
 /// 可失败的设备创建：供 `--gpu` 在无适配器/驱动异常时显式回退 CPU。
 pub fn try_headless_device() -> Result<Headless, String> {
+    // 保持旧行为：直接要 adapter 上限（512³ 需要 >128 MB 绑定）
+    try_headless_device_sized(u64::MAX)
+}
+
+/// 按所需缓冲字节数分级申请 limits：小网格不要求 512 MB 绑定（部分驱动会因此多花几百 ms 协商）。
+pub fn try_headless_device_sized(need_bytes: u64) -> Result<Headless, String> {
     // 先只探 Vulkan，失败再回退全后端（macOS/无 Vulkan 平台）。
     // 本机 A/B：Vulkan-only init 中位数 ~436 ms vs 全后端 ~870 ms，转换耗时不变。
     for backends in [wgpu::Backends::VULKAN, wgpu::Backends::all()] {
@@ -44,17 +50,27 @@ pub fn try_headless_device() -> Result<Headless, String> {
         // 512³ 的 f32 场是 537 MB，默认 limits（128 MB 绑定 / 256 MB 缓冲）会拒绝。
         // 先按 adapter 实际上限申请；失败再退回默认（128³ 及以下不受影响）。
         let supported = adapter.limits();
+        let dflt = wgpu::Limits::default();
+        let fits_default = need_bytes <= dflt.max_storage_buffer_binding_size as u64
+            && need_bytes <= dflt.max_buffer_size as u64;
         let elevated = wgpu::Limits {
             max_storage_buffer_binding_size: supported.max_storage_buffer_binding_size,
             max_buffer_size: supported.max_buffer_size,
             ..wgpu::Limits::default()
         };
-        let (device, queue) = match pollster::block_on(adapter.request_device(&make_desc(elevated)))
-        {
-            Ok(dq) => dq,
-            Err(_) => {
-                pollster::block_on(adapter.request_device(&make_desc(wgpu::Limits::default())))
-                    .map_err(|e| format!("request_device: {e:?}"))?
+        let (device, queue) = if fits_default {
+            match pollster::block_on(adapter.request_device(&make_desc(wgpu::Limits::default()))) {
+                Ok(dq) => dq,
+                Err(_) => pollster::block_on(adapter.request_device(&make_desc(elevated)))
+                    .map_err(|e| format!("request_device: {e:?}"))?,
+            }
+        } else {
+            match pollster::block_on(adapter.request_device(&make_desc(elevated))) {
+                Ok(dq) => dq,
+                Err(_) => {
+                    pollster::block_on(adapter.request_device(&make_desc(wgpu::Limits::default())))
+                        .map_err(|e| format!("request_device: {e:?}"))?
+                }
             }
         };
         return Ok(Headless { device, queue });
