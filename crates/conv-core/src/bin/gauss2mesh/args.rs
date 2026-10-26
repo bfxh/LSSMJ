@@ -26,6 +26,8 @@ LSSMJ gauss2mesh · 高斯体素 → 网格
   --kernel-clamp-world <σ>  核标准差下限用世界单位（默认按 0.75 格）
   --kernel-clamp-ref <N>    按参考网格 N 折算核下限（= 0.75 × h_N）：跨 grid 复用同一核宽，
                         等价于把核宽冻结在 N³；opt-in，不改默认行为
+  --density-norm <N>    把 splat 权重乘 (h_N/h)²，使密度跨分辨率一致；配合 --iso 固定阈值
+                        即可让不同 --grid 得到同一张面（opt-in，仅 CPU，不改默认行为）
   --quant16              走 u16 定点密度 splat（需 --iso）：同面、内存 1/2
   --quant-scale <S>      指定 u16 定点 scale，跳过标定（批量复用时省一趟 splat）
   --prune-opacity <f>    不透明度下限（默认 0.05）
@@ -85,6 +87,7 @@ pub(crate) struct Config {
     pub(crate) largest_component: bool,
     pub(crate) kernel_clamp_world: Option<f32>,
     pub(crate) kernel_clamp_ref: Option<u32>,
+    pub(crate) density_norm_ref: Option<u32>,
     pub(crate) quant16: bool,
     pub(crate) no_gpu: bool,
     pub(crate) gpu_auto: bool,
@@ -119,6 +122,7 @@ impl Default for Config {
             largest_component: false,
             kernel_clamp_world: None,
             kernel_clamp_ref: None,
+            density_norm_ref: None,
             quant16: false,
             no_gpu: false,
             gpu_auto: true,
@@ -167,6 +171,7 @@ pub(crate) fn parse_config(
         "quant-scale",
         "kernel-clamp-world",
         "kernel-clamp-ref",
+        "density-norm",
         "prune-opacity",
         "min-radius",
         "max-radius",
@@ -210,6 +215,15 @@ pub(crate) fn parse_config(
             return Err("--kernel-clamp-ref 必须 ≥ 8".into());
         }
         cfg.kernel_clamp_ref = Some(x);
+    }
+    if let Some(v) = flags.get("density-norm") {
+        let x: u32 = v
+            .parse()
+            .map_err(|_| format!("--density-norm 不是整数：{v}"))?;
+        if x < 8 {
+            return Err("--density-norm 必须 ≥ 8".into());
+        }
+        cfg.density_norm_ref = Some(x);
     }
     if let Some(v) = flags.get("kernel-clamp-world") {
         let x: f32 = v

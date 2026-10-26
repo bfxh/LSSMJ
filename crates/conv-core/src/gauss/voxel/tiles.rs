@@ -93,7 +93,7 @@ fn splat_density_tile(
                 #[cfg(target_arch = "x86_64")]
                 if simd {
                     unsafe {
-                        super::avx2::density_row(g, grid, y, z, x0, xa, tile.x0, out, row);
+                        super::avx2::density_row(g, grid, y, z, x0, xa, tile.x0, g.opacity, out, row);
                     }
                     continue;
                 }

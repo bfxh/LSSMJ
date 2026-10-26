@@ -41,6 +41,7 @@ pub(super) unsafe fn density_row(
     x0: u32,
     x1: u32,
     x_base: u32,
+    op: f32,
     out: &mut [f32],
     row: usize,
 ) {
@@ -71,7 +72,7 @@ pub(super) unsafe fn density_row(
                 continue;
             }
             let idx = row + (x - x_base) as usize + l;
-            out[idx] += g.opacity * (-0.5 * m).exp();
+            out[idx] += op * (-0.5 * m).exp();
         }
         x += 8;
     }
@@ -80,7 +81,7 @@ pub(super) unsafe fn density_row(
         let d = [p[0] - g.mean[0], p[1] - g.mean[1], p[2] - g.mean[2]];
         let m = max_maha(&g.eigen, g.lam, d);
         if m <= 18.0 {
-            out[row + (x - x_base) as usize] += g.opacity * (-0.5 * m).exp();
+            out[row + (x - x_base) as usize] += op * (-0.5 * m).exp();
         }
         x += 1;
     }
@@ -208,7 +209,7 @@ mod tests {
                 for y in 0..n {
                     let row = (y * n + z * n * n) as usize;
                     unsafe {
-                        density_row(&p, &grid, y, z, 0, n - 1, 0, &mut b, row);
+                        density_row(&p, &grid, y, z, 0, n - 1, 0, p.opacity, &mut b, row);
                     }
                 }
             }
