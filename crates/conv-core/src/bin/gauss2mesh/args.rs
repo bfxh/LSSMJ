@@ -26,6 +26,8 @@ LSSMJ gauss2mesh · 高斯体素 → 网格
   --kernel-clamp-world <σ>  核标准差下限用世界单位（默认按 0.75 格）
   --kernel-clamp-ref <N>    按参考网格 N 折算核下限（= 0.75 × h_N）：跨 grid 复用同一核宽，
                         等价于把核宽冻结在 N³；opt-in，不改默认行为
+  --splat-integrate      体素内积分 splat：核方差 +h²/12、权重 ×h³ ⇒ 密度与分辨率无关
+                        （跨 grid 复用同一 --iso；与 --kernel-clamp-* 互斥）
   --density-norm <N>    把 splat 权重乘 (h_N/h)²，让密度跨分辨率可比（opt-in，仅 CPU）
                         注意：它只修密度幅度、不修核宽，512³ 拓扑仍不闭合；
                         要跨分辨率同面请用 --kernel-clamp-ref <N> + 显式 --iso
@@ -89,6 +91,7 @@ pub(crate) struct Config {
     pub(crate) kernel_clamp_world: Option<f32>,
     pub(crate) kernel_clamp_ref: Option<u32>,
     pub(crate) density_norm_ref: Option<u32>,
+    pub(crate) splat_integrate: bool,
     pub(crate) quant16: bool,
     pub(crate) no_gpu: bool,
     pub(crate) gpu_auto: bool,
@@ -124,6 +127,7 @@ impl Default for Config {
             kernel_clamp_world: None,
             kernel_clamp_ref: None,
             density_norm_ref: None,
+            splat_integrate: false,
             quant16: false,
             no_gpu: false,
             gpu_auto: true,
@@ -157,6 +161,7 @@ pub(crate) fn is_bool_flag(name: &str) -> bool {
             | "bins3d"
             | "simd-prep"
             | "largest-component"
+            | "splat-integrate"
     )
 }
 
@@ -279,6 +284,7 @@ pub(crate) fn parse_config(
     cfg.seal = !bools.contains("hollow");
     cfg.largest_component = bools.contains("largest-component");
     cfg.quant16 = bools.contains("quant16");
+    cfg.splat_integrate = bools.contains("splat-integrate");
     cfg.no_gpu = bools.contains("no-gpu");
     cfg.gpu = bools.contains("gpu");
     if cfg.gpu && cfg.no_gpu {

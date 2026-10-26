@@ -122,6 +122,11 @@ pub struct VoxelizeOptions {
     /// 可选：按**参考网格**折算核下限（`0.75 × h_ref`）。同一参考值在任何 grid 上
     /// 得到同一世界 σ，等价于「把核宽固定成 N³ 时的样子」，无需按场景手算 σ。
     pub kernel_clamp_ref: Option<u32>,
+    /// 可选：**体素内积分** splat（opt-in）。把每个高斯看成在体素上积分：
+    /// `w = α·h³·N(p; μ, Σ + h²/12)`。两处效果：
+    /// ① `+h²/12` 让核天然不薄于体素（粗网格不会采样成空场）；
+    /// ② 乘 `h³` 使全域求和 ≈ α，**密度与分辨率无关**，同一 iso 可跨 grid 复用。
+    pub splat_integrate: bool,
     /// 可选（opt-in）：把 splat 权重乘 `(h_ref/h)²`，让密度跨分辨率可比。
     /// 默认核宽随 h 漂移，实测密度 ∝ h⁻²（iso 按 n⁻² 漂移），乘 h² 后同一 `--iso` 才有可比性。
     /// 因子锚定在参考网格上（ref == 当前 grid 时因子恰为 1，默认输出逐位不变）。
@@ -159,6 +164,7 @@ impl Default for VoxelizeOptions {
             kernel_clamp_cells: 0.75,
             kernel_clamp_world: None,
             kernel_clamp_ref: None,
+            splat_integrate: false,
             density_norm_ref: None,
             normal_band_cells: 1.0,
             min_weight: 0.02,
@@ -383,6 +389,33 @@ fn prepare_density_one(g: &Gaussian, min_var: f32) -> Prepared {
     Prepared {
         mean: g.mean,
         opacity: g.opacity.clamp(0.0, 1.0),
+        eigen,
+        lam,
+        radius,
+        normal: [0.0; 3],
+    }
+}
+
+/// 体素内积分版：`w = α·N(p; μ, Σ+h²/12)`（正态化，不乘 h³）。
+/// `+h²/12` 是体素盒的二阶矩：既让核不薄于体素（粗网格不会采空），
+/// 又让采样值逼近**连续密度**，于是 p99.9/iso 与分辨率无关。
+fn prepare_density_integrated_one(g: &Gaussian, cell_var: f32) -> Prepared {
+    let eigen = g.eigen();
+    let lam = [
+        eigen.values[0] + cell_var,
+        eigen.values[1] + cell_var,
+        eigen.values[2] + cell_var,
+    ];
+    let det = (lam[0] * lam[1] * lam[2]).max(1e-30);
+    let norm = 1.0 / ((2.0 * std::f32::consts::PI).powf(1.5) * det.sqrt());
+    let radius = [
+        world_sigma(&eigen, lam, 0),
+        world_sigma(&eigen, lam, 1),
+        world_sigma(&eigen, lam, 2),
+    ];
+    Prepared {
+        mean: g.mean,
+        opacity: g.opacity.clamp(0.0, 1.0) * norm,
         eigen,
         lam,
         radius,
@@ -620,6 +653,14 @@ pub(crate) fn prepare_density(
     } else {
         (opts.kernel_clamp_cells.max(0.001) * grid.h).powi(2)
     };
+    if opts.splat_integrate {
+        // 体素内积分：核方差加 h²/12（体素盒的二阶矩），权重乘 h³ 做体积归一。
+        // 这条路径不需要 min_var 下限（+h²/12 已保证不薄于体素），也不走 SIMD prep。
+        let cell_var = grid.h * grid.h / 12.0;
+        return parallel_prepare(gaussians, opts.threads, |g| {
+            prepare_density_integrated_one(g, cell_var)
+        });
+    }
     if opts.simd_prep {
         return prepare_density_simd(gaussians, min_var, opts.threads);
     }

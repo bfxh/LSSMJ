@@ -71,8 +71,9 @@
 
 | 配置 | 128³ | 256³ | 512³ | 512/128 |
 |---|---:|---:|---:|---:|
-| 默认（auto-iso，核宽随 h） | 1.05566 | 0.50864 | 0.25505（χ=−39，25 分量） | 0.24 |
-| 默认（scene03） | 2.00791 | 0.70657 | 0.35819 | 0.18 |
+| 默认（2026-10-26 迁移前） | 1.05566 | 0.50864 | 0.25505（χ=−39，25 分量） | 0.24 |
+| **默认（迁移后：>256³ 钉核宽）** | 1.05566 | 0.50864 | **0.72455（χ=5，5 分量）** | 0.69 |
+| 迁移后（scene03） | 2.00791 | 0.70657 | **1.17873（χ=17，10 分量）** | 0.59 |
 | **pinned**（`--kernel-clamp-ref 256` + 显式 iso） | 0.29814 | 0.50864 | **0.72455**（χ=5，5 分量） | 2.43 |
 | **pinned**（scene03） | 0.38344 | 0.70657 | 1.17873 | 3.08 |
 
@@ -107,6 +108,7 @@
 | 6 | 「修 512³ 稀疏封洞」 | `seal` 与 `--hollow` 输出**完全相同**，封洞是空操作 | notes §4.13 |
 | 7 | 加大候选块 margin（0→2/4/8） | 块数 128→936，体积与 χ 不变 | notes §4.13 |
 | 8 | 只做密度归一化（`--density-norm`）不钉核宽 | 固定 iso 下 512 仍 χ=−27/28 分量（还是壳） | 本文 §3.2 |
+| 9 | 体素内积分 splat（`--splat-integrate`，Σ+h²/12） | iso 反随分辨率升 1.6×/档；固定 iso 切 128³ 只剩 0.00493。尖峰场没有尺度不变的点值 | notes §4.15 |
 
 **共同教训**：不一致在「场」本身（核宽口径 + 几何信息量），不在封洞、不在块覆盖、不在 iso 换算公式。
 
@@ -115,8 +117,9 @@
 ## 5. 推荐配方
 
 ```bash
-# 默认（不动语义）：单文件 256³
+# 默认：单文件 256³（>256³ 的 density 会自动把核宽钉在参考 256³ 世界尺度）
 gauss2mesh convert scene.ply --grid 256 --largest-component
+gauss2mesh convert scene.ply --grid 512 --largest-component   # 默认已是实心体，无需额外开关
 
 # 跨分辨率对齐（opt-in）：核宽与阈值都钉在 256³
 gauss2mesh convert scene.ply --grid 128 --kernel-clamp-ref 256 --iso 29.38631
@@ -138,7 +141,8 @@ gauss2mesh convert a.ply b.ply c.ply d.ply --grid 256 --out-dir out/
 
 | 项 | 判据 |
 |---|---|
-| 默认哈希 | `gauss2mesh convert scene01 --grid 256 --largest-component` ⇒ `b72fbdaae0aa6e88` |
+| 默认哈希（256³） | `gauss2mesh convert scene01 --grid 256 --largest-component` ⇒ `b72fbdaae0aa6e88` |
+| 默认哈希（512³） | 同场景 `--grid 512` ⇒ `3ec168510cdf6a9a`（2026-10-26 迁移后基线） |
 | 单测 | `gauss_leg` 9、`gauss_gpu` 2、`gsn_gpu` 2、`quant_parity` 1、`ternary_parity` 2、lib 12 |
 | 构建 | `CARGO_TARGET_DIR=D:/KF/.yanagent/cargo-target/conv cargo build --release`（在 `crates/conv-core`） |
 | 封洞改动 | 四场景体积 0.26242 / 0.04521 / 0.44814 / 0.11293 逐位不变 |
@@ -156,3 +160,6 @@ gauss2mesh convert a.ply b.ply c.ply d.ply --grid 256 --out-dir out/
    不作为推荐路径。
 4. **`--bins3d` 与 `--density-norm` 不兼容**（tile 路径未归一化，显式报错）。
 5. **GPU 内核未实现 density-norm**：显式选 GPU 时会降级到 CPU 并在日志说明。
+6. **`--splat-integrate` 是实验开关**：物理更正确但分辨率相关，**不要用于生产**（见 §4 第 9 条）。
+7. **128/256 之间仍有 2.08×**：默认口径下 128 的核宽下限按格算会撑胖；要跨档一致请显式
+   `--kernel-clamp-ref 256 --iso <256³ 的 iso>`（得到 0.298 / 0.509 / 0.725）。
