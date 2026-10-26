@@ -856,7 +856,13 @@ fn run_sparse_leg(
                         })?
                         .iso;
                     probe_ms = t.elapsed().as_secs_f64() * 1e3;
-                    iso_note = Some(format!("auto iso {iso:.4}（{probe_n}³ 探针）"));
+                    // 密度是「每体素质量」，实测 iso ∝ n⁻²（scene01：128→117.52、256→29.386、
+                    // 512→7.469，比值 4.00 / 3.94）。探针 iso 必须按 (probe_n/n)² 换算。
+                    let k = (probe_n as f32 / opts.n as f32).powi(2);
+                    let iso = iso * k;
+                    iso_note = Some(format!(
+                        "auto iso {iso:.4}（{probe_n}³ 探针 ×{k:.3} 分辨率换算；                         p99.9 本身随分辨率漂移，512³ 体积约为 256³ 的 1/2，需同面请显式 --iso）"
+                    ));
                     iso
                 }
             };
