@@ -23,8 +23,9 @@ LSSMJ gauss2mesh · 高斯体素 → 网格
   --largest-component    只保留最大连通分量（去 floaters/碎片）
   --mode <auto|density|surfel>（默认 auto）
   --iso <auto|数值>      密度阈值；auto = 0.65 × 正密度 99.9 分位
-  --kernel-clamp-world <σ>  核标准差下限用世界单位（默认按 0.75 格）：
-                        同一 σ 跨 grid 含义一致，opt-in，不改默认行为
+  --kernel-clamp-world <σ>  核标准差下限用世界单位（默认按 0.75 格）
+  --kernel-clamp-ref <N>    按参考网格 N 折算核下限（= 0.75 × h_N）：跨 grid 复用同一核宽，
+                        等价于把核宽冻结在 N³；opt-in，不改默认行为
   --quant16              走 u16 定点密度 splat（需 --iso）：同面、内存 1/2
   --quant-scale <S>      指定 u16 定点 scale，跳过标定（批量复用时省一趟 splat）
   --prune-opacity <f>    不透明度下限（默认 0.05）
@@ -83,6 +84,7 @@ pub(crate) struct Config {
     pub(crate) seal: bool,
     pub(crate) largest_component: bool,
     pub(crate) kernel_clamp_world: Option<f32>,
+    pub(crate) kernel_clamp_ref: Option<u32>,
     pub(crate) quant16: bool,
     pub(crate) no_gpu: bool,
     pub(crate) gpu_auto: bool,
@@ -116,6 +118,7 @@ impl Default for Config {
             seal: true,
             largest_component: false,
             kernel_clamp_world: None,
+            kernel_clamp_ref: None,
             quant16: false,
             no_gpu: false,
             gpu_auto: true,
@@ -163,6 +166,7 @@ pub(crate) fn parse_config(
         "iso",
         "quant-scale",
         "kernel-clamp-world",
+        "kernel-clamp-ref",
         "prune-opacity",
         "min-radius",
         "max-radius",
@@ -197,6 +201,15 @@ pub(crate) fn parse_config(
             "surfel" => ModeSel::Surfel,
             _ => return Err(format!("--mode 只能是 auto|density|surfel：{v}")),
         };
+    }
+    if let Some(v) = flags.get("kernel-clamp-ref") {
+        let x: u32 = v
+            .parse()
+            .map_err(|_| format!("--kernel-clamp-ref 不是整数：{v}"))?;
+        if x < 8 {
+            return Err("--kernel-clamp-ref 必须 ≥ 8".into());
+        }
+        cfg.kernel_clamp_ref = Some(x);
     }
     if let Some(v) = flags.get("kernel-clamp-world") {
         let x: f32 = v
