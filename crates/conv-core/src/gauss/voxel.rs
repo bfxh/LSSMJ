@@ -119,6 +119,9 @@ pub struct VoxelizeOptions {
     /// 可选：用**世界单位**给核标准差下限（覆盖 `kernel_clamp_cells × h`）。
     /// 这样同一 σ 在不同 grid 下含义一致，密度场才可能跨分辨率对齐。
     pub kernel_clamp_world: Option<f32>,
+    /// 可选：按**参考网格**折算核下限（`0.75 × h_ref`）。同一参考值在任何 grid 上
+    /// 得到同一世界 σ，等价于「把核宽固定成 N³ 时的样子」，无需按场景手算 σ。
+    pub kernel_clamp_ref: Option<u32>,
     /// 面元融合在最薄轴（法线方向）上的标准差下限（格）。
     pub normal_band_cells: f32,
     /// 面元 TSDF 累积的最小权重；低于它的体素视为未观测。
@@ -149,6 +152,7 @@ impl Default for VoxelizeOptions {
             iso_abs: None,
             kernel_clamp_cells: 0.75,
             kernel_clamp_world: None,
+            kernel_clamp_ref: None,
             normal_band_cells: 1.0,
             min_weight: 0.02,
             seal: true,
@@ -586,9 +590,16 @@ pub(crate) fn prepare_density(
     grid: &Grid,
     opts: &VoxelizeOptions,
 ) -> Vec<Prepared> {
-    let min_var = match opts.kernel_clamp_world {
-        Some(w) => w.max(1e-6).powi(2),
-        None => (opts.kernel_clamp_cells.max(0.001) * grid.h).powi(2),
+    let min_var = if let Some(w) = opts.kernel_clamp_world {
+        w.max(1e-6).powi(2)
+    } else if let Some(r) = opts.kernel_clamp_ref {
+        // 由当前 grid 反推参考网格的 h：h = h_cur × (n−1−2p) / (ref−1−2p)
+        let inner_cur = (grid.n as f32 - 1.0 - 2.0 * opts.padding as f32).max(1.0);
+        let inner_ref = (r as f32 - 1.0 - 2.0 * opts.padding as f32).max(1.0);
+        let h_ref = grid.h * inner_cur / inner_ref;
+        (opts.kernel_clamp_cells.max(0.001) * h_ref).powi(2)
+    } else {
+        (opts.kernel_clamp_cells.max(0.001) * grid.h).powi(2)
     };
     if opts.simd_prep {
         return prepare_density_simd(gaussians, min_var, opts.threads);
