@@ -13,7 +13,7 @@ LSSMJ gauss2mesh · 高斯体素 → 网格
   gauss2mesh inspect <input.ply>           只读入并报告统计
 
 常用选项：
-  --grid <N>             体素分辨率 8..512（默认 64；>256 无 --gpu 走稀疏分块，density 自动半分辨率探针求 iso）
+  --grid <N>             体素分辨率 8..1024（默认 64；>256 无 --gpu 走稀疏分块，density 自动半分辨率探针求 iso）
   --threads <N>          splat 线程数（默认 0=自动；1=单线程参照）
   --gpu                  强制 GPU splat（自研 wgpu 内核；512 走 dense GPU，约 3 GB 显存；失败回退 CPU/稀疏）
   --no-gpu               强制 CPU（默认 auto：批量 ≥2 文件或 grid ≥512 走 GPU，其余 CPU）
@@ -200,8 +200,8 @@ pub(crate) fn parse_config(
     let mut cfg = Config::default();
     if let Some(v) = flags.get("grid") {
         cfg.grid = v.parse().map_err(|_| format!("--grid 不是整数：{v}"))?;
-        if !(8..=512).contains(&cfg.grid) {
-            return Err("--grid 必须在 8..=512".into());
+        if !(8..=1024).contains(&cfg.grid) {
+            return Err("--grid 必须在 8..=1024".into());
         }
     }
     if let Some(v) = flags.get("threads") {
@@ -231,8 +231,8 @@ pub(crate) fn parse_config(
         let x: u32 = v
             .parse()
             .map_err(|_| format!("--cross-resolution 不是整数：{v}"))?;
-        if !(8..=512).contains(&x) {
-            return Err("--cross-resolution 必须在 8..=512".into());
+        if !(8..=1024).contains(&x) {
+            return Err("--cross-resolution 必须在 8..=1024".into());
         }
         cfg.cross_resolution = Some(x);
     }
