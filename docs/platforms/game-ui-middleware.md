@@ -27,7 +27,7 @@
    WebGL/WebRTC/HTML5 音视频（`W2G-042`）。**能力边界写成文档是行业做法**。
 5. **文本栈两支**：Gameface 默认 FreeType + 单通道 SDF、GPOS 表走 HarfBuzz（`W2G-020`/`W2G-021`/
    `W2G-022`）；Rive 用解析式抗锯齿声称任意字号清晰（`W2G-085`）。**SDF 与「覆盖率位图」是两条路线，
-   与我们「候选窗不用 SDF」（青简评估）不冲突但适用面不同**。
+   与我们「候选窗不用 SDF」（本项目评估）不冲突但适用面不同**。
 6. **IME 是商业件的必备能力**：Gameface 有完整 IME 章节与三态 API（`IMESetComposition/
    IMEConfirmComposition/IMECancelComposition`，`W2G-024`/`W2G-025`），并承认「IME 是 OS 特性但库
    必须提供方法」（`W2G-026`）。**候选窗/输入类 UI 的 IME 契约不能被推给平台壳**。
@@ -161,7 +161,7 @@ GFxExport.exe 双版本（SF3/SF4 各一套，`W2G-063`）；MSDF 字体用 msdf
    （`W2G-064`/`W2G-065`）；本批实测 `CRYTEK/CRYENGINE` 已 404。→ 依赖半公开栈 = 可复算性风险，
    快照必须自留。
 6. **版本×版本兼容矩阵**：Scaleform 3 需配 CRYENGINE 5.0–5.6.7 + Flash CS6，Scaleform 4 配 5.7 LTS
-   （`W2G-067`）。→ 我们的渲染器/壳/青简版本兼容表也要显式化。
+   （`W2G-067`）。→ 我们的渲染器/壳/本项目版本兼容表也要显式化。
 7. **免费档不给商业游戏**：Ultralight 免费档为「Indie devs only (< $100K)、Application use only」
    （`W2G-052`），Pro 档 $3,000/年/应用（`W2G-051`）。→ 引用其技术可以，集成须付费且仍不满足 GPL。
 8. **每标题每平台授权**：Coherent 授权形态将成本与发行规模绑定（`W2G-035`），源码另计

@@ -16,19 +16,19 @@
 7. UI Toolkit 的布局就是 **Yoga**（`visualTree.yogaNode.CalculateLayout()`），USS 属性语义对齐 Yoga/Flexbox；但 Yoga 不允许布局期改树（UI Toolkit 直接抛异常）（`W2E-048`/`W2E-001`/`W2E-050`）。
 8. UI Toolkit 用 **usage hints** 把优化决策显式化：`style.translate` 不重算布局；`DynamicTransform` 把变换更新推给 GPU；`GroupTransform` 明确写「强制单独 draw batch」的代价（`W2E-009`/`W2E-010`/`W2E-052`）。
 9. 纹理图集被官方定义为**合批破坏的第一来源**（"batches broken by texture changes"），UI Toolkit 有运行期 dynamic atlas 子系统（`W2E-008`/`W2E-004`）。
-10. **许可红线**：UI Toolkit 包源码是 Unity Companion License（仅限 Unity 相关项目），不能移植进 GPL 的青简；只能作阅读参考（`W2E-057`）。
+10. **许可红线**：UI Toolkit 包源码是 Unity Companion License（仅限 Unity 相关项目），不能移植进 GPL 的本项目；只能作阅读参考（`W2E-057`）。
 
 ## 可吸收 / 不可吸收（对「候选窗/自绘渲染器 + 高帧率 UI」）
 
 | 项 | 锚 | 判定 |
 | --- | --- | --- |
-| 脏标记 + 帧末统一重建（两段循环：先布局后图形） | `W2E-032`/`W2E-033`/`W2E-034`/`W2E-035` | 吸收：与青简「不做同步重排」的纪律同向，阶段划分可直接照搬为渲染器内的 rebuild 阶段。 |
+| 脏标记 + 帧末统一重建（两段循环：先布局后图形） | `W2E-032`/`W2E-033`/`W2E-034`/`W2E-035` | 吸收：与本项目「不做同步重排」的纪律同向，阶段划分可直接照搬为渲染器内的 rebuild 阶段。 |
 | 失效域切分（多 Canvas / 嵌套子画布 = island） | `W2E-012`/`W2E-013`/`W2E-018` | 吸收：候选窗的「静态皮肤 + 高频变化列表」应做同样的域切分。 |
-| 合批键 = 材质 + 纹理 + Z（Layer ID） | `W2E-014` | 吸收：作为青简批键设计的对照清单。 |
+| 合批键 = 材质 + 纹理 + Z（Layer ID） | `W2E-014` | 吸收：作为本项目批键设计的对照清单。 |
 | 保留几何的隐藏路径（禁用 Canvas 不丢顶点缓冲） | `W2E-015`/`W2E-016` | 吸收：候选窗隐藏/显示切换不应销毁几何缓存。 |
 | 缩放策略集中（CanvasScaler 三模式 / PanelSettings Scale Mode） | `W2E-019`/`W2E-020`/`W2E-021`/`W2E-003` | 有界吸收：语义可参考；但候选窗只有单一窗口语义，不需要三套模式。 |
 | usage hints（translate 免布局 / DynamicTransform 走 GPU） | `W2E-009`/`W2E-010`/`W2E-051` | 吸收：把「哪条通道更新」显式化，避免布局属性参与每帧动画。 |
-| 动态图集（自动增删纹理）+ 显式提交点 Commit | `W2E-004`/`W2E-053` | 有界吸收：图集思想吸收；Unity 的实现不可复用（许可），青简需自建（与 cosmic-text/swash 图集合流）。 |
+| 动态图集（自动增删纹理）+ 显式提交点 Commit | `W2E-004`/`W2E-053` | 有界吸收：图集思想吸收；Unity 的实现不可复用（许可），本项目需自建（与 cosmic-text/swash 图集合流）。 |
 | SDF 字形图集 + 动态字符累积与清理策略 | `W2E-027`/`W2E-028`/`W2E-026` | 有界吸收：SDF 结论可用；TMP 的 FontAsset 资产化流程是 Unity 特有产物，不照搬。 |
 | 布局四遍 pass / 对象池 / 裁剪差分更新 | `W2E-040`/`W2E-041`/`W2E-043`/`W2E-047` | 吸收：热路径零分配与「不变不下发」是通用工程手段。 |
 | 批断裂可观测（Batch Breaking Reason / 图集可视化） | `W2E-024`/`W2E-070` | 吸收：性能工程需要「批次为何断」的归因字段，不是只看数字。 |

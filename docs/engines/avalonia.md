@@ -120,23 +120,23 @@
 
 1. **帧率/延迟实测**：本任务只读，不含任何基准运行；文档页也无带机器口径的数字。
 2. **macOS 行为**：`activate` 的原生实现（不抢焦点是否真生效、以及是否真需要「进程外渲染」）在 `libAvaloniaNative` 二进制里，本仓不可验（W4F-062）。
-3. **NativeAOT 产物体积**（青简评估的「几十 MB」）：本仓无部署产物证据，必须实测。
+3. **NativeAOT 产物体积**（本项目评估的「几十 MB」）：本仓无部署产物证据，必须实测。
 4. **X11 `_NET_WM_USER_TIME` 在各 WM 下的实际效果**：机制在源码（W4F-060），但 WM 是否遵守未验；issue #17186 已 closed、PR #20958 已合并（W4F-079/080），仍建议按目标 WM 复测。
 5. **tile/像素级 damage**：全库未见（本报告结论之一），但未穷举 wayland/browser 后端。
-6. **移动端键盘扩展**：本仓无 iOS 键盘扩展支持证据（属 Avalonia.iOS 之外的产品化问题）——青简评估的「手机键盘进不去」未做源码级核实。
+6. **移动端键盘扩展**：本仓无 iOS 键盘扩展支持证据（属 Avalonia.iOS 之外的产品化问题）——本项目评估的「手机键盘进不去」未做源码级核实。
 
-## 9. 对青简 rendering.md 六条评估的逐条复核（`scratch/src/qingjian/docs/design/rendering.md:29–31`）
+## 9. 对本项目 rendering.md 六条评估的逐条复核（`scratch/src/本项目/docs/design/rendering.md:29–31`）
 
 原文（逐字）：「**Avalonia（C#，Skia 自绘）**：`ShowActivated=false` + `Topmost` + `TransparencyLevelHint` 是一等属性，Windows / macOS 能做不抢焦点的置顶窗（讨论 #15805）；Linux 上 `ShowActivated` 失效（#17186）。是排除 WebView 之后最顺的现成框架，但要常驻 .NET 进程（NativeAOT 后仍几十 MB）、macOS 要改成进程外渲染、手机键盘进不去。」
 
-| # | 青简主张 | 复核结论（@17350180 / 2026-10-01） | 锚 |
+| # | 本项目主张 | 复核结论（@17350180 / 2026-10-01） | 锚 |
 | --- | --- | --- | --- |
 | ① | 三属性「是一等属性」 | **成立**。三者都在框架属性系统里（`Window.ShowActivated`、`WindowBase.Topmost`、`TopLevel.TransparencyLevelHint`），并有到平台 impl 的直接绑定/传参。 | W4F-052/053/054/055 |
 | ② | Windows/macOS 能做不抢焦点的置顶窗 | **Windows 成立（源码级）**：`SW_SHOWNOACTIVATE` + 不调用 `SetFocus/SetForegroundWindow`；置顶用 `SWP_NOACTIVATE`。**macOS 半成立**：activate 经 IDL 下传，原生实现不在本仓，未验。 | W4F-056/057；W4F-062 |
-| ③ | Linux 上 `ShowActivated` 失效（#17186） | **已过时**。本 commit 的 X11 壳在 `DefaultWindowMode.Show` 里实现 `_NET_WM_USER_TIME=0`（即 activate=false 的 EWMH 表达）；issue #17186 已 closed（2026-03-25）、实现 PR #20958 已合并（2026-03-20）。qingjian 文档（2026-09-13）引用时该状态已变——应按目标 WM 复测取代此句。 | W4F-060/079/080 |
+| ③ | Linux 上 `ShowActivated` 失效（#17186） | **已过时**。本 commit 的 X11 壳在 `DefaultWindowMode.Show` 里实现 `_NET_WM_USER_TIME=0`（即 activate=false 的 EWMH 表达）；issue #17186 已 closed（2026-03-25）、实现 PR #20958 已合并（2026-03-20）。本项目 文档（2026-09-13）引用时该状态已变——应按目标 WM 复测取代此句。 | W4F-060/079/080 |
 | ④ | 「排除 WebView 之后最顺的现成框架」 | **可核部分成立，但这是价值判断**：源码层面确实具备「不激活/置顶/透明」的一等契约与六端后端（W4F-063/064/078）；「最顺」取决于项目目标，本报告只提供事实锚，不作总评。 | W4F-063/064/078 |
 | ⑤ | 要常驻 .NET 进程（NativeAOT 后仍几十 MB） | **本仓无法核实**（需部署实测）。可核的相邻事实：Avalonia 是 .NET 库，桌面入口 `UsePlatformDetect` 无条件加载 HarfBuzz/Skia 等子系统；体积/常驻内存无源码级数字。 | 未验证（§8.3） |
-| ⑥ | macOS 要改成进程外渲染 | **源码不支持该表述**。macOS 壳在本进程创建 Compositor 并绑定平台图形；全库代码搜索 "out of process" 命中 0。若此句指青简自身架构约束（IME 进程模型），应改写归属，否则属误述。 | W4F-061 |
+| ⑥ | macOS 要改成进程外渲染 | **源码不支持该表述**。macOS 壳在本进程创建 Compositor 并绑定平台图形；全库代码搜索 "out of process" 命中 0。若此句指本项目自身架构约束（IME 进程模型），应改写归属，否则属误述。 | W4F-061 |
 | 附 | 手机键盘进不去 | **未验证**（本仓无 iOS 键盘扩展支持/不支持的源码证据；属部署与平台规则问题）。 | §8.6 |
 
 **一句话复核**：六条里 ① 成立、② 在 Windows 面成立（macOS 待真机）、③ 已过时（X11 已实现）、④ 属价值判断（事实部分成立）、⑤ 无本仓证据、⑥ 本仓源码不支持该说法；两条「代价」应当拆开各自记账，不能整体照抄进设计文档。
