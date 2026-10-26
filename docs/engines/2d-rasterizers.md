@@ -5,7 +5,7 @@
 
 | 目标 | 上游 | commit（全） | 本地克隆 |
 | --- | --- | --- | --- |
-| tiny-skia（青简直接依赖） | https://github.com/linebender/tiny-skia | `5d4754777746eef0828be166896eaf482c49f8f2` | `scratch/src/tiny-skia` |
+| tiny-skia（本项目直接依赖） | https://github.com/linebender/tiny-skia | `5d4754777746eef0828be166896eaf482c49f8f2` | `scratch/src/tiny-skia` |
 | lyon | https://github.com/nical/lyon | `d036e421cb39f4ef5fd18b4d211b9abfb191d0aa` | `scratch/src/lyon` |
 | femtovg | https://github.com/femtovg/femtovg | `f57a2c39e9836c146556c58c98d80c5bf7899029` | `scratch/src/femtovg` |
 | vello | https://github.com/linebender/vello | `c7269fba54aa68a84470dc64b1f297dbadf4da94` | `scratch/src/vello`（sparse） |
@@ -34,25 +34,25 @@
 | 强度削减：SourceOver+不透明→Source、Source+纯色→memset | W1D-021/022 | 吸收（背板/分隔线/选中条的最小成本路径） |
 | AA 矩形专用快路径（不走路径光栅） | W1D-043 | 吸收（圆角/边框尽量拆成矩形图元以命中） |
 | 细线用"降 alpha 的粗线"近似 | W1D-070 | 吸收（亚像素线的通用近似） |
-| lyon 的闭式单步步长曲线展平 | W1D-058/059 | 有界吸收（若青简自研展平器，可借"步长与迭代分离"的结构） |
-| 定点数硬边界（8191 画布 / 32767 裁剪） | W1D-009/014/015 | 有界吸收（青简画布远小于此 ⇒ 常规不触发；大坐标场景需自测） |
+| lyon 的闭式单步步长曲线展平 | W1D-058/059 | 有界吸收（若本项目自研展平器，可借"步长与迭代分离"的结构） |
+| 定点数硬边界（8191 画布 / 32767 裁剪） | W1D-009/014/015 | 有界吸收（本项目画布远小于此 ⇒ 常规不触发；大坐标场景需自测） |
 | 静默降级（退非 AA / 曲线打回直线） | W1D-017/018/108 | 有界吸收（必须补日志/计数，不能静默丢质量） |
 | femtovg 的 fringe 边带 AA + 凸/凹分流 | W1D-064/068/069 | 有界吸收（思路可借；GL 后端不能直接移植） |
 | vello 的 4x4 tile + Sparse Strips（满覆盖区紧凑表示） | W1D-074/085 | 有界吸收（表示法可借；工程量另算） |
 | vello 解析 AA（像素覆盖 = winding 积分，非超采样） | W1D-076/077 | 有界吸收（质量上限更高；需重写覆盖率生成，可作二期） |
-| vello CPU 侧深度缓冲（不透明段前→后 + 深度剔除） | W1D-079/080 | 有界吸收（依赖"大量重叠不透明层"，青简候选窗重叠少） |
+| vello CPU 侧深度缓冲（不透明段前→后 + 深度剔除） | W1D-079/080 | 有界吸收（依赖"大量重叠不透明层"，本项目候选窗重叠少） |
 | pathfinder 面积 LUT 解析覆盖（自述等效 256xAA） | W1D-091/098 | 有界吸收（GPU/LUT 路线；CPU 需自建面积表） |
-| pathfinder 16x16 tile + 实色瓦片遮挡剔除 | W1D-089/096 | 有界吸收（16x16 vs vello 4x4 是粒度取舍；青简窗口小、收益有限） |
+| pathfinder 16x16 tile + 实色瓦片遮挡剔除 | W1D-089/096 | 有界吸收（16x16 vs vello 4x4 是粒度取舍；本项目窗口小、收益有限） |
 
 ## 不可吸收
 
 | 项 | 锚 | 判定 |
 | --- | --- | --- |
-| 8bit 全画布 alpha mask 裁剪栈 | W1D-027/028/045 | 不吸收（青简裁剪应以矩形为主、按需生成 mask） |
-| 不做任何资源缓存（字形/路径都要上层自管） | W1D-047/048 | 不吸收（缓存必须青简自己做；文本须外部栅格化后以 Mask/Pattern 喂入） |
+| 8bit 全画布 alpha mask 裁剪栈 | W1D-027/028/045 | 不吸收（本项目裁剪应以矩形为主、按需生成 mask） |
+| 不做任何资源缓存（字形/路径都要上层自管） | W1D-047/048 | 不吸收（缓存必须本项目自己做；文本须外部栅格化后以 Mask/Pattern 喂入） |
 | 无全局 alpha | W1D-052 | 不吸收（整窗淡入淡出需逐层改色或走 Pattern） |
 | lyon 默认 EvenOdd / 实际容差取一半 | W1D-054/060 | 不可作为默认（须显式传 NonZero；引用容差须用实现值 0.05） |
-| raqote 的整形状 alpha mask | W1D-104 | 不吸收（作者本人打算改成 RLE；青简无理由复刻） |
+| raqote 的整形状 alpha mask | W1D-104 | 不吸收（作者本人打算改成 RLE；本项目无理由复刻） |
 | raqote 描边重叠不去重 | W1D-105 | 不吸收（半透明自交处会叠加，可见正确性坑） |
 
 
@@ -243,17 +243,17 @@ src/
     而 `vello_cpu`/`vello_gpu` 在根目录。按旧路径（`crates/`、`shaders/`）克隆会失败（本任务实测：
     按 `shaders/`+`crates/` sparse 后目录为空，须改用 `vello_common` 等名字）。（W1D-086）
 12. **CJK / 文本全是外部责任**：tiny-skia 完全没有文本（W1D-048），femtovg 依赖外部字形栅格化
-    （其 atlas 只缓存已栅格化结果，W1D-071）。→ 青简的文本成本完全落在 cosmic-text/swash 一侧。
+    （其 atlas 只缓存已栅格化结果，W1D-071）。→ 本项目的文本成本完全落在 cosmic-text/swash 一侧。
 
 ## 5. 未验证项（写明缺什么证据）
 
 1. **没有跑任何 benchmark**：纪律禁止 `cargo build/test/bench`。本报告所有"成本"表述都是**结构性的**
    （代码结构决定的必然成本）或**转述原作者口径**，没有一条是本机实测。→ 需要本机可复现的基准才能把
-   "青简渲染器该不该用 tiny-skia 的哪条路径"落成数字。
+   "本项目渲染器该不该用 tiny-skia 的哪条路径"落成数字。
 2. **tiny-skia 的 bench 结果页未取**（`https://linebender.github.io/tiny-skia/x86_64.html`）：本机 curl 需
    `--ssl-no-revoke`，HTML 结果表未抓取 → 各子项（fill/stroke/gradients/blend/clip）具体倍数未记录。
-3. **青简 × tiny-skia 的实际调用面未核**：本任务只读光栅器一侧，未读 `crates/qingjian-render`（属 A0/A1），
-   → "青简画每帧用了哪些 tiny-skia 入口、命中哪些快路径"仍是推断，未验证。
+3. **本项目 × tiny-skia 的实际调用面未核**：本任务只读光栅器一侧，未读 `crates/自绘渲染器`（属 A0/A1），
+   → "本项目画每帧用了哪些 tiny-skia 入口、命中哪些快路径"仍是推断，未验证。
 4. **femtovg 的 fringe 三角带宽度与顶点数的关系未量**（只有 `fringe_width` 常量与 DPI 缩放规则；
    `path_cache.expand_fill(fringe_width, ...)` 的顶点增长曲线没读）。
 5. **vello 的性能读数未取**：vello 侧只有结构文档，无任何 vello_cpu/vello_gpu 的公开 ms 数字被抓到。

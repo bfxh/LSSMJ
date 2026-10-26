@@ -1,28 +1,28 @@
-# 12 · 工程方法学参照对照（qingjian-gates / unified-rx-mcp / BSHSQ → LSSMJ）
+# 12 · 工程方法学参照对照（本项目-gates / unified-rx-mcp / BSHSQ → LSSMJ）
 
-> 任务 N5（第三轮·补缺 C6），日期 2026-10-01。**三个被参照仓全部只读**（一个字节未改；qingjian-gates 的悬空 .git 指针也保持原样）。
+> 任务 N5（第三轮·补缺 C6），日期 2026-10-01。**三个被参照仓全部只读**（一个字节未改；本项目-gates 的悬空 .git 指针也保持原样）。
 > 对照账本：`docs/analysis/ledger/w3h.jsonl`（**94 条，全部 source**；`verify` rejected=0）。本文每条模式都能指到账本 id 与本地文件行。
-> 快照：unified-rx-mcp @ `0c206e7`（2026-10-01）；BSHSQ @ `6688b5b`（2026-10-01）；qingjian-gates 的 commit **本地不可得**——其 `.git` 是 worktree 指针，指向 `D:/开发/qingjian/.git/worktrees/qingjian-gates`，该路径已不存在（W3H-090 逐字留档，不拿别的 commit 冒充）。
+> 快照：unified-rx-mcp @ `0c206e7`（2026-10-01）；BSHSQ @ `6688b5b`（2026-10-01）；本项目-gates 的 commit **本地不可得**——其 `.git` 是 worktree 指针，指向 `D:/开发/本项目/.git/worktrees/本项目-gates`，该路径已不存在（W3H-090 逐字留档，不拿别的 commit 冒充）。
 > 方法：先用脚本在源文件里机械定位逐字引文行、再落账本（拒绝手写行号，见 W3H-081/082）；读取入口清单见文末。
 
 ## TL;DR（10 条，每条带账本锚）
 
-1. **棘轮与硬阈是两个档位开关**：棘轮=超基线即红、只准减；硬阈=存量超阈也红（"不接受基线祖父化"），且硬阈开启被自检锁成单向 false→true（W3H-002/003/005，`qingjian-gates/docs/GATES.md:32-35`）。
+1. **棘轮与硬阈是两个档位开关**：棘轮=超基线即红、只准减；硬阈=存量超阈也红（"不接受基线祖父化"），且硬阈开启被自检锁成单向 false→true（W3H-002/003/005，`本项目-gates/docs/GATES.md:32-35`）。
 2. **正确的重构要有"合法交换"通道**：拆长函数必然让文件变长——判据按"最长函数严格下降 + 涨幅≤10%"或"函数降幅≥文件涨幅（净账为负）"放行，净效果仍是只准变好（W3H-004/018）。
-3. **"门在不在"与"门是不是空的"两种失败、两套检查**：qingjian 的 gate_selftest（同源/阈值/基线）+ gate_probe（逐门注入最小违规、断言它红）；BSHSQ 同名双元门；LSSMJ 对应物是 selftest 引文金丝雀（W3H-006/007/066/075，三级独立实现）。
+3. **"门在不在"与"门是不是空的"两种失败、两套检查**：本项目 的 gate_selftest（同源/阈值/基线）+ gate_probe（逐门注入最小违规、断言它红）；BSHSQ 同名双元门；LSSMJ 对应物是 selftest 引文金丝雀（W3H-006/007/066/075，三级独立实现）。
 4. **冻结值/阈值换代必须记账**：BSHSQ 金样基线换代要记旧值/新值/理由并同步 `frozen_baseline`；unified 的 CLI 金标准冻结 per-command sha、工具面软帽"抬帽=记账动作，不许悄悄"（W3H-047/042/091）。
 5. **多智能体并发=文件认领+交集判红**：一智能体一个 JSON（文件名互异⇒无写冲突），scope 交集按"模式级+实际文件级"双层判红；不设身份时降级也要逐条写明哪几条判据仍跑（W3H-012/013/014/015/016）。
 6. **性能判定要三态，不是二元**：点估计与区间下界双双超限才 fail、跨阈=inconclusive（噪声带不算真回归）；拿不到独占锁=exit 8"未能判定"，不冒充通过（W3H-031/032/050/051）。
 7. **测量口径已有两仓实证**：本机单跑同码漂移 ±5%、并发构建下 ±25%；端点读数会让门随机红/绿⇒判据取窗口均值；交错 A/B 报比值不报绝对值（W3H-044/045/054/055/084/086）。
 8. **主张必须可复算，并且防"量空气"**：unified claim_gate 要求登记表每条主张与真值源逐位一致、"账没了与账错了同罪"；bench_anchor_gate 专防真值消失后"跑成功但产无意义数字"（W3H-035/036/037）。
 9. **SKIP 不算绿是三仓共识**：显式 SKIP 不静默判绿、也不算双绿；"门里出现跳过就是失败"；本地门必须进强制面否则"门是装饰"（W3H-022/033/048/067/082）。
-10. **负面留档与"碰了就得减"**：BSHSQ 把已否证路线做成"勿重做"护栏（每条带 commit/读数）；qingjian 对已超阈文件收接触税（改了就必须变小）；LSSMJ"反例也算一条"同款（W3H-060/061/025/079）。
+10. **负面留档与"碰了就得减"**：BSHSQ 把已否证路线做成"勿重做"护栏（每条带 commit/读数）；本项目 对已超阈文件收接触税（改了就必须变小）；LSSMJ"反例也算一条"同款（W3H-060/061/025/079）。
 
 ## 1. 模式对照表（三仓 × 18 模式）
 
 > 单元格 = 账本 id（"—"=该仓 w3h 未入账）。逐字引文与行号在账本里；机制一栏为本文提炼。
 
-| # | 模式（机制一句话） | qingjian-gates | unified-rx-mcp | BSHSQ | LSSMJ 现状 |
+| # | 模式（机制一句话） | 本项目-gates | unified-rx-mcp | BSHSQ | LSSMJ 现状 |
 | --- | --- | --- | --- | --- | --- |
 | M1 | 棘轮：基线只准减，超基线即红 | W3H-002 | W3H-040 | W3H-065 | 已用（W3H-083，文档级） |
 | M2 | 硬阈/硬判：存量超阈（或须为 0）也红 | W3H-003 | — | W3H-065 | 未用 |
@@ -63,7 +63,7 @@
 ## 3. 未验证（缺什么证据）
 
 1. **三仓脚本均未实际执行**（只读纪律）：所有"门会红/会绿"的描述来自其文档与源码注释（如 W3H-007 的"≈24 秒"、W3H-029 的"35 步/快档 28 步"），本机未复跑，计数未经运行复核。
-2. **qingjian-gates commit 不可得**（W3H-090）：其快照无法锚到具体提交，本报告只能锚到文件内容（2026-10-01 读取时点）。
+2. **本项目-gates commit 不可得**（W3H-090）：其快照无法锚到具体提交，本报告只能锚到文件内容（2026-10-01 读取时点）。
 3. **BSHSQ 的安静机数字**（±5%/±25%、≥5% 收益律的分辨力）未在本机复现；且该仓另有 `gate_scale.sh`、`gate_probe.py` 等未细读，M11/M12 的机制总结只覆盖已读文件。
 4. **unified-rx-mcp 未细读**：`toolface_budget.py` 只读前 40 行；`mcp_surface_gate.py`、`guard_gate.py` 等未读——M4/M13 的结论只覆盖已读脚本。
 5. **LSSMJ 侧**：`docs/reports/09` 的落地检查单 1–6 **全部未执行**（文内自述，W3H-089）；P1–P10 为**提案**，尚未实现，无实测代价数据（代价列为经验估计）。
@@ -73,7 +73,7 @@
 
 | 仓 | 读取的文件 |
 | --- | --- |
-| qingjian-gates | `docs/GATES.md`、`docs/contributing.md`、`.agents/CLAIMS.md`、`.git`（悬空指针）、`scripts/gates/{gate.py, gate_selftest.py, god_gate.py, god.gate.json, god_touch.py, gates_common.py, dupe_gate.py, agent_gate.py}` |
+| 本项目-gates | `docs/GATES.md`、`docs/contributing.md`、`.agents/CLAIMS.md`、`.git`（悬空指针）、`scripts/gates/{gate.py, gate_selftest.py, god_gate.py, god.gate.json, god_touch.py, gates_common.py, dupe_gate.py, agent_gate.py}` |
 | unified-rx-mcp | `README.md`、`LEGACY_FREEZE.md`、`docs/STRESS-AND-PR-GATES.md`、`spec/cli-golden.json`、`scripts/{local_gate.py, stat_judge.py, claim_gate.py, bench_anchor_gate.py, quality_pact_gate.py, toolface_budget.py（前 40 行）}` |
 | BSHSQ | `scripts/{local_gate.py, gate_all.sh, gate_gold.sh, ab_perf.sh, gate_selftest.py}`、`docs/{M0-GATES.md, PERF-REVIEW-2026-09-27.md, KNOWLEDGE.md, EXPERIMENTS.md, M1-EXIT.md, SPEC.md}` |
 | LSSMJ 对照面 | `tools/ledger.py`、`docs/analysis/METHOD.md`、`docs/analysis/AGENT-BRIEF.md`、`docs/reports/09-performance-methodology.md`、工作区 `AGENTS.md`（perf_lock） |

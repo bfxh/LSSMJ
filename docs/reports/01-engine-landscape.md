@@ -7,8 +7,8 @@
 
 | 目标 | 报告/账本 | 一票之见 | 最值得迁移的一条 |
 | --- | --- | --- | --- |
-| **qingjian-render**（交付主体） | `../renderer-qingjian/` + `w5a` 125 | CPU 位图候选窗：契约干净、字体/对齐工程扎实；**无脏区、measure/draw 双整形** | 位图契约 + 对齐三件套 + 字体清单加载 |
-| qingjian（引擎全仓） | `../engines/qingjian.md` + `w1a` 176 | 输入法引擎：mmap 容器、增量缓存、"先打点再改"复盘 | "预算一句话挂在热路径"（每键 10ms）与缓存失效口径 |
+| **自绘渲染器**（交付主体） |  +  125 | CPU 位图候选窗：契约干净、字体/对齐工程扎实；**无脏区、measure/draw 双整形** | 位图契约 + 对齐三件套 + 字体清单加载 |
+| 本项目（引擎全仓） | `../engines/本项目.md` + `w1a` 176 | 输入法引擎：mmap 容器、增量缓存、"先打点再改"复盘 | "预算一句话挂在热路径"（每键 10ms）与缓存失效口径 |
 | tiny-skia | `../engines/2d-rasterizers.md` + `w1d` | 光栅管线编译式 + 2-bit AA + RLE；**两处静默降级是反面教材** | 覆盖率三分支分发；降级必须记账 |
 | lyon / femtovg / vello / pathfinder / raqote | 同上（`w1d`） | 细分/GL/计算光栅/GPU 填充/极简光栅，各占一格 | vello 已重组为 cpu/gpu 双档（参考其"按设备分档"） |
 | cosmic-text / swash / harfrust / rustybuzz | `../engines/text-stack.md` + `w1b` 115 | 整形栈换代到 harfrust；**亚像素是明确缺口**（Format::Alpha 固定） | 缓存键设计 + opsz 补丁的教训（要按字号分键） |
@@ -26,7 +26,7 @@
 | Qt Quick / GTK4 GSK | `../engines/qt-gtk.md` + `w2d` 188 | Qt 批对象/线程；GSK 树 diff damage/无深度缓冲 | 批键下沉到材质 compare()；4×4 子像素字形缓存；"先挤进"不适用但 damage 适用 |
 | Unity（UGUI/UITK） | `../platforms/unity.md` + `w2e` | 帧末统一重建 5 阶段；许可红线 | 失效域切分（多 Canvas=island） |
 | Unreal（Slate/UMG） | `../platforms/unreal-slate.md` + `w2e` | 三段缓存 + Invalidation Box/Volatile/Retainer 排序 | Volatile 逃生阀与"默认不开昂贵特性" |
-| **GN SDK（闭源）** | `../renderer-gn/` + `w4a` 62 | GB2312 字体图时代：SetText/Show 分离、显示列表带字符索引 | "排一次、每帧只显示"的接口形态 |
+| **GN SDK（闭源）** |  + `w4a` 62 | GB2312 字体图时代：SetText/Show 分离、显示列表带字符索引 | "排一次、每帧只显示"的接口形态 |
 | **Mineradio（Electron）** | `../targets/mineradio-electron.md` + `w4b` 26 | 把帧预算写成 194 行纪律文档的真实产品 | 预算条目化 + 回收限流 + 去重/可取消 |
 
 ## 论文/长文（`w3f` 60 条）

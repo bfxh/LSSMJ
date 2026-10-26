@@ -1,218 +1,202 @@
 [
- {
-  "target": "qingjian",
-  "url": "https://github.com/qingjian-team/qingjian",
-  "commit": "c08ae57cb88b6a4a46f4a5e9c1d6d11c5e69222e",
-  "local_path": "D:/KF/LSSMJ/scratch/src/qingjian",
-  "fetched_at": "2026-10-01",
-  "method": "git clone --depth 1"
- },
- {
-  "target": "cosmic-text-qj",
-  "url": "https://github.com/qingjian-team/cosmic-text",
-  "commit": "daae9c75d52322f8fb3af6168d76561540914e1f",
-  "local_path": "D:/KF/LSSMJ/scratch/src/cosmic-text-qj",
-  "fetched_at": "2026-10-01",
-  "method": "git clone --depth 1"
- },
- {
-  "target": "mineradio",
-  "url": "https://github.com/XxHuberrr/Mineradio",
-  "commit": null,
-  "local_path": "D:/KF/LSSMJ/scratch/src/Mineradio-paused-2.2.0",
-  "fetched_at": "2026-10-01",
-  "method": "tar.gz v2.2.0 快照（用户提供）"
- },
- {
-  "target": "gn-sdk",
-  "url": null,
-  "commit": null,
-  "local_path": "D:/KF/GN_SDK1e/GN_SDK1e",
-  "fetched_at": "2026-10-01",
-  "method": "用户提供 zip（闭源 SDK 分发包）"
- },
- {
-  "target": "zed-gpui",
-  "url": "https://github.com/zed-industries/zed",
-  "commit": "06afd454ec3f23b7c97ce7527e9be9e1478564a4",
-  "local_path": "D:/KF/LSSMJ/scratch/src/zed",
-  "fetched_at": "2026-10-01",
-  "method": "git clone --depth 1 --filter=blob:none --sparse (crates/gpui,gpui_apple,gpui_macos,gpui_linux,gpui_platform,gpui_macros)"
- },
- {
-  "target": "webrender",
-  "url": "https://github.com/servo/webrender",
-  "commit": "e1c924ebad9ffdfe8c8c606aba77eb3f888c396a",
-  "local_path": "D:/KF/LSSMJ/scratch/src/webrender",
-  "fetched_at": "2026-10-01",
-  "method": "git clone --depth 1（注：该仓自述为 mozilla-central gfx/wr 的 downstream mirror；另 clone webrender.wiki 无 commit 锚）"
- },
- {
-  "target": "skia",
-  "url": "https://github.com/google/skia",
-  "commit": "af9d144331802b134cd67e21521b10cd1d430315",
-  "local_path": "D:/KF/LSSMJ/scratch/src/skia",
-  "fetched_at": "2026-10-01",
-  "method": "git clone --depth 1 --filter=blob:none --sparse (docs,src/core,src/text,src/gpu)"
- },
- {
-  "target": "godot",
-  "url": "https://github.com/godotengine/godot",
-  "commit": "084a2caa05119b625a99b6b51d44b459a26362de",
-  "local_path": "D:/KF/LSSMJ/scratch/src/godot",
-  "fetched_at": "2026-10-01",
-  "method": "git clone --depth 1 --filter=blob:none --sparse（scene/gui, scene/theme, scene/resources, scene/main, servers/rendering, servers/text, drivers/gles3, drivers/vulkan, modules/{text_server_adv,msdfgen,harfbuzz,freetype,icu}, core/{math,object,os,io}, doc/classes；version.py=4.8.0-dev）"
- },
- {
-  "target": "imgui",
-  "url": "https://github.com/ocornut/imgui",
-  "commit": "3f00c0d0f414d45af2a0979b925ebf2e8f09936b",
-  "local_path": "D:/KF/LSSMJ/scratch/src/imgui",
-  "fetched_at": "2026-10-01",
-  "method": "git clone --depth 1 --filter=blob:none"
- },
- {
-  "target": "nuklear",
-  "url": "https://github.com/Immediate-Mode-UI/Nuklear",
-  "commit": "9f7750296f176e506c2b24ff55bc24495e2db750",
-  "local_path": "D:/KF/LSSMJ/scratch/src/nuklear",
-  "fetched_at": "2026-10-01",
-  "method": "git clone --depth 1 --filter=blob:none"
- },
- {
-  "target": "microui",
-  "url": "https://github.com/rxi/microui",
-  "commit": "0850aba860959c3e75fb3e97120ca92957f9d057",
-  "local_path": "D:/KF/LSSMJ/scratch/src/microui",
-  "fetched_at": "2026-10-01",
-  "method": "git clone --depth 1 --filter=blob:none"
- },
- {
-  "target": "rmlui",
-  "url": "https://github.com/mikke89/RmlUi",
-  "commit": "3045e6e3510425ef2870f7647b3f59d3ae9970f5",
-  "local_path": "D:/KF/LSSMJ/scratch/src/rmlui",
-  "fetched_at": "2026-10-01",
-  "method": "git clone --depth 1 --filter=blob:none"
- },
- {
-  "target": "fyrox",
-  "url": "https://github.com/FyroxEngine/Fyrox",
-  "commit": "a445c62352682747be85f17e2cda8331a544ad44",
-  "local_path": "D:/KF/LSSMJ/scratch/src/fyrox",
-  "fetched_at": "2026-10-01",
-  "method": "git clone --depth 1 --filter=blob:none --sparse (fyrox-ui, +fyrox-impl/src/renderer/ui)"
- },
- {
-  "target": "o3de-lyshine",
-  "url": "https://github.com/o3de/o3de",
-  "commit": "28872cbb42b4a140f92bf42d75850065135267ff",
-  "local_path": "D:/KF/LSSMJ/scratch/src/o3de",
-  "fetched_at": "2026-10-01",
-  "method": "git clone --depth 1 --filter=blob:none --sparse (Gems/LyShine)"
- },
- {
-  "target": "cocos2d-x",
-  "url": "https://github.com/cocos2d/cocos2d-x",
-  "commit": "7a5282a301a13e467bdcc3466d3cd3883862aadf",
-  "local_path": "D:/KF/LSSMJ/scratch/src/cocos2d-x",
-  "fetched_at": "2026-10-01",
-  "method": "git clone --depth 1 --filter=blob:none --sparse (cocos/ui,cocos/2d,cocos/renderer,cocos/platform)"
- },
- {
-  "target": "egui",
-  "url": "https://github.com/emilk/egui",
-  "commit": "6b420bc1b11cd4f37d5db6b5e0a2e369f259dd35",
-  "local_path": "D:/KF/LSSMJ/scratch/src/egui",
-  "fetched_at": "2026-10-01",
-  "method": "git clone --depth 1 --filter=blob:none"
- },
- {
-  "target": "iced",
-  "url": "https://github.com/iced-rs/iced",
-  "commit": "84f785b06ac02a49901e4113451fedd31c9c3326",
-  "local_path": "D:/KF/LSSMJ/scratch/src/iced",
-  "fetched_at": "2026-10-01",
-  "method": "git clone --depth 1 --filter=blob:none"
- },
- {
-  "target": "slint",
-  "url": "https://github.com/slint-ui/slint",
-  "commit": "ca41829ba5daed4328a30ebdaeddc6923ff72300",
-  "local_path": "D:/KF/LSSMJ/scratch/src/slint",
-  "fetched_at": "2026-10-01",
-  "method": "git clone --depth 1 --filter=blob:none --sparse（api/rs, docs, internal）"
- },
- {
-  "target": "makepad",
-  "url": "https://github.com/makepad/makepad",
-  "commit": "8e82a8e695af39c582fde30e37e888f375b31d1a",
-  "local_path": "D:/KF/LSSMJ/scratch/src/makepad-mp-snap",
-  "fetched_at": "2026-10-01",
-  "method": "git clone --depth 1 --filter=blob:none --sparse（sparse 检出两次遇 HTTP 502；draw/ 源以 git show <sha>:<path> 导出 17 文件快照为准）"
- },
- {
-  "target": "dioxus",
-  "url": "https://github.com/DioxusLabs/dioxus",
-  "commit": "b2ed8c328bff51ea5d4e42225a3d1ef7675bad2c",
-  "local_path": "D:/KF/LSSMJ/scratch/src/dioxus",
-  "fetched_at": "2026-10-01",
-  "method": "git clone --depth 1 --filter=blob:none"
- },
- {
-  "target": "blitz",
-  "url": "https://github.com/DioxusLabs/blitz",
-  "commit": "ff623a8c39714076d77f2ac3c748b9515c7acaed",
-  "local_path": "D:/KF/LSSMJ/scratch/src/blitz",
-  "fetched_at": "2026-10-01",
-  "method": "git clone --depth 1 --filter=blob:none"
- },
- {
-  "target": "fast-surface-nets",
-  "url": "https://github.com/bonsairobo/fast-surface-nets-rs",
-  "commit": "2216ac27ad36068b9342dff02231d26c27b3d3df",
-  "local_path": "D:/KF/LSSMJ/scratch/src/fast-surface-nets",
-  "fetched_at": "2026-10-07",
-  "method": "git clone --depth 1 --filter=blob:none"
- },
- {
-  "target": "fidget",
-  "url": "https://github.com/mkeeter/fidget",
-  "commit": "e2fda4771ee133dfdec4f249442d017f9cf609af",
-  "local_path": "D:/KF/LSSMJ/scratch/src/fidget",
-  "fetched_at": "2026-10-07",
-  "method": "git clone --depth 1 --filter=blob:none"
- },
- {
-  "target": "bevy_gaussian_splatting",
-  "url": "https://github.com/mosure/bevy_gaussian_splatting",
-  "commit": "22c6444af0828d25d06da1624ce5db4547d75003",
-  "local_path": "D:/KF/LSSMJ/scratch/src/fetched-bevy_gaussian_splatting",
-  "fetched_at": "2026-10-07",
-  "method": "gh api contents (README + 2 src snapshots)"
- },
- {
-  "target": "wgpu-3dgs-core",
-  "url": "https://github.com/LioQing/wgpu-3dgs-core",
-  "commit": "f64a247a8fef4ba93322b94b21423470c1534335",
-  "local_path": "D:/KF/LSSMJ/scratch/src/fetched-wgpu-3dgs-core",
-  "fetched_at": "2026-10-07",
-  "method": "gh api contents (README)"
- },
- {
-  "target": "meshopt-rs",
-  "url": "https://github.com/gwihlidal/meshopt-rs",
-  "commit": "3c8c9126cd98e70f34c6d9c54d02f41af6749406",
-  "local_path": "D:/KF/LSSMJ/scratch/src/fetched-meshopt-rs",
-  "fetched_at": "2026-10-07",
-  "method": "gh api contents (README)"
- },
- {
-  "target": "nanovdb-rs",
-  "url": "https://github.com/ototoi/nanovdb-rs",
-  "commit": "3d869c1faea9c1f8d1fadc43a1f0505e4d74faea",
-  "local_path": "D:/KF/LSSMJ/scratch/src/fetched-nanovdb-rs",
-  "fetched_at": "2026-10-07",
-  "method": "gh api contents (README)"
- }
+  {
+    "target": "mineradio",
+    "url": "https://github.com/XxHuberrr/Mineradio",
+    "commit": null,
+    "local_path": "D:/KF/LSSMJ/scratch/src/Mineradio-paused-2.2.0",
+    "fetched_at": "2026-10-01",
+    "method": "tar.gz v2.2.0 快照（用户提供）"
+  },
+  {
+    "target": "gn-sdk",
+    "url": null,
+    "commit": null,
+    "local_path": "D:/KF/GN_SDK1e/GN_SDK1e",
+    "fetched_at": "2026-10-01",
+    "method": "用户提供 zip（闭源 SDK 分发包）"
+  },
+  {
+    "target": "zed-gpui",
+    "url": "https://github.com/zed-industries/zed",
+    "commit": "06afd454ec3f23b7c97ce7527e9be9e1478564a4",
+    "local_path": "D:/KF/LSSMJ/scratch/src/zed",
+    "fetched_at": "2026-10-01",
+    "method": "git clone --depth 1 --filter=blob:none --sparse (crates/gpui,gpui_apple,gpui_macos,gpui_linux,gpui_platform,gpui_macros)"
+  },
+  {
+    "target": "webrender",
+    "url": "https://github.com/servo/webrender",
+    "commit": "e1c924ebad9ffdfe8c8c606aba77eb3f888c396a",
+    "local_path": "D:/KF/LSSMJ/scratch/src/webrender",
+    "fetched_at": "2026-10-01",
+    "method": "git clone --depth 1（注：该仓自述为 mozilla-central gfx/wr 的 downstream mirror；另 clone webrender.wiki 无 commit 锚）"
+  },
+  {
+    "target": "skia",
+    "url": "https://github.com/google/skia",
+    "commit": "af9d144331802b134cd67e21521b10cd1d430315",
+    "local_path": "D:/KF/LSSMJ/scratch/src/skia",
+    "fetched_at": "2026-10-01",
+    "method": "git clone --depth 1 --filter=blob:none --sparse (docs,src/core,src/text,src/gpu)"
+  },
+  {
+    "target": "godot",
+    "url": "https://github.com/godotengine/godot",
+    "commit": "084a2caa05119b625a99b6b51d44b459a26362de",
+    "local_path": "D:/KF/LSSMJ/scratch/src/godot",
+    "fetched_at": "2026-10-01",
+    "method": "git clone --depth 1 --filter=blob:none --sparse（scene/gui, scene/theme, scene/resources, scene/main, servers/rendering, servers/text, drivers/gles3, drivers/vulkan, modules/{text_server_adv,msdfgen,harfbuzz,freetype,icu}, core/{math,object,os,io}, doc/classes；version.py=4.8.0-dev）"
+  },
+  {
+    "target": "imgui",
+    "url": "https://github.com/ocornut/imgui",
+    "commit": "3f00c0d0f414d45af2a0979b925ebf2e8f09936b",
+    "local_path": "D:/KF/LSSMJ/scratch/src/imgui",
+    "fetched_at": "2026-10-01",
+    "method": "git clone --depth 1 --filter=blob:none"
+  },
+  {
+    "target": "nuklear",
+    "url": "https://github.com/Immediate-Mode-UI/Nuklear",
+    "commit": "9f7750296f176e506c2b24ff55bc24495e2db750",
+    "local_path": "D:/KF/LSSMJ/scratch/src/nuklear",
+    "fetched_at": "2026-10-01",
+    "method": "git clone --depth 1 --filter=blob:none"
+  },
+  {
+    "target": "microui",
+    "url": "https://github.com/rxi/microui",
+    "commit": "0850aba860959c3e75fb3e97120ca92957f9d057",
+    "local_path": "D:/KF/LSSMJ/scratch/src/microui",
+    "fetched_at": "2026-10-01",
+    "method": "git clone --depth 1 --filter=blob:none"
+  },
+  {
+    "target": "rmlui",
+    "url": "https://github.com/mikke89/RmlUi",
+    "commit": "3045e6e3510425ef2870f7647b3f59d3ae9970f5",
+    "local_path": "D:/KF/LSSMJ/scratch/src/rmlui",
+    "fetched_at": "2026-10-01",
+    "method": "git clone --depth 1 --filter=blob:none"
+  },
+  {
+    "target": "fyrox",
+    "url": "https://github.com/FyroxEngine/Fyrox",
+    "commit": "a445c62352682747be85f17e2cda8331a544ad44",
+    "local_path": "D:/KF/LSSMJ/scratch/src/fyrox",
+    "fetched_at": "2026-10-01",
+    "method": "git clone --depth 1 --filter=blob:none --sparse (fyrox-ui, +fyrox-impl/src/renderer/ui)"
+  },
+  {
+    "target": "o3de-lyshine",
+    "url": "https://github.com/o3de/o3de",
+    "commit": "28872cbb42b4a140f92bf42d75850065135267ff",
+    "local_path": "D:/KF/LSSMJ/scratch/src/o3de",
+    "fetched_at": "2026-10-01",
+    "method": "git clone --depth 1 --filter=blob:none --sparse (Gems/LyShine)"
+  },
+  {
+    "target": "cocos2d-x",
+    "url": "https://github.com/cocos2d/cocos2d-x",
+    "commit": "7a5282a301a13e467bdcc3466d3cd3883862aadf",
+    "local_path": "D:/KF/LSSMJ/scratch/src/cocos2d-x",
+    "fetched_at": "2026-10-01",
+    "method": "git clone --depth 1 --filter=blob:none --sparse (cocos/ui,cocos/2d,cocos/renderer,cocos/platform)"
+  },
+  {
+    "target": "egui",
+    "url": "https://github.com/emilk/egui",
+    "commit": "6b420bc1b11cd4f37d5db6b5e0a2e369f259dd35",
+    "local_path": "D:/KF/LSSMJ/scratch/src/egui",
+    "fetched_at": "2026-10-01",
+    "method": "git clone --depth 1 --filter=blob:none"
+  },
+  {
+    "target": "iced",
+    "url": "https://github.com/iced-rs/iced",
+    "commit": "84f785b06ac02a49901e4113451fedd31c9c3326",
+    "local_path": "D:/KF/LSSMJ/scratch/src/iced",
+    "fetched_at": "2026-10-01",
+    "method": "git clone --depth 1 --filter=blob:none"
+  },
+  {
+    "target": "slint",
+    "url": "https://github.com/slint-ui/slint",
+    "commit": "ca41829ba5daed4328a30ebdaeddc6923ff72300",
+    "local_path": "D:/KF/LSSMJ/scratch/src/slint",
+    "fetched_at": "2026-10-01",
+    "method": "git clone --depth 1 --filter=blob:none --sparse（api/rs, docs, internal）"
+  },
+  {
+    "target": "makepad",
+    "url": "https://github.com/makepad/makepad",
+    "commit": "8e82a8e695af39c582fde30e37e888f375b31d1a",
+    "local_path": "D:/KF/LSSMJ/scratch/src/makepad-mp-snap",
+    "fetched_at": "2026-10-01",
+    "method": "git clone --depth 1 --filter=blob:none --sparse（sparse 检出两次遇 HTTP 502；draw/ 源以 git show <sha>:<path> 导出 17 文件快照为准）"
+  },
+  {
+    "target": "dioxus",
+    "url": "https://github.com/DioxusLabs/dioxus",
+    "commit": "b2ed8c328bff51ea5d4e42225a3d1ef7675bad2c",
+    "local_path": "D:/KF/LSSMJ/scratch/src/dioxus",
+    "fetched_at": "2026-10-01",
+    "method": "git clone --depth 1 --filter=blob:none"
+  },
+  {
+    "target": "blitz",
+    "url": "https://github.com/DioxusLabs/blitz",
+    "commit": "ff623a8c39714076d77f2ac3c748b9515c7acaed",
+    "local_path": "D:/KF/LSSMJ/scratch/src/blitz",
+    "fetched_at": "2026-10-01",
+    "method": "git clone --depth 1 --filter=blob:none"
+  },
+  {
+    "target": "fast-surface-nets",
+    "url": "https://github.com/bonsairobo/fast-surface-nets-rs",
+    "commit": "2216ac27ad36068b9342dff02231d26c27b3d3df",
+    "local_path": "D:/KF/LSSMJ/scratch/src/fast-surface-nets",
+    "fetched_at": "2026-10-07",
+    "method": "git clone --depth 1 --filter=blob:none"
+  },
+  {
+    "target": "fidget",
+    "url": "https://github.com/mkeeter/fidget",
+    "commit": "e2fda4771ee133dfdec4f249442d017f9cf609af",
+    "local_path": "D:/KF/LSSMJ/scratch/src/fidget",
+    "fetched_at": "2026-10-07",
+    "method": "git clone --depth 1 --filter=blob:none"
+  },
+  {
+    "target": "bevy_gaussian_splatting",
+    "url": "https://github.com/mosure/bevy_gaussian_splatting",
+    "commit": "22c6444af0828d25d06da1624ce5db4547d75003",
+    "local_path": "D:/KF/LSSMJ/scratch/src/fetched-bevy_gaussian_splatting",
+    "fetched_at": "2026-10-07",
+    "method": "gh api contents (README + 2 src snapshots)"
+  },
+  {
+    "target": "wgpu-3dgs-core",
+    "url": "https://github.com/LioQing/wgpu-3dgs-core",
+    "commit": "f64a247a8fef4ba93322b94b21423470c1534335",
+    "local_path": "D:/KF/LSSMJ/scratch/src/fetched-wgpu-3dgs-core",
+    "fetched_at": "2026-10-07",
+    "method": "gh api contents (README)"
+  },
+  {
+    "target": "meshopt-rs",
+    "url": "https://github.com/gwihlidal/meshopt-rs",
+    "commit": "3c8c9126cd98e70f34c6d9c54d02f41af6749406",
+    "local_path": "D:/KF/LSSMJ/scratch/src/fetched-meshopt-rs",
+    "fetched_at": "2026-10-07",
+    "method": "gh api contents (README)"
+  },
+  {
+    "target": "nanovdb-rs",
+    "url": "https://github.com/ototoi/nanovdb-rs",
+    "commit": "3d869c1faea9c1f8d1fadc43a1f0505e4d74faea",
+    "local_path": "D:/KF/LSSMJ/scratch/src/fetched-nanovdb-rs",
+    "fetched_at": "2026-10-07",
+    "method": "gh api contents (README)"
+  }
 ]

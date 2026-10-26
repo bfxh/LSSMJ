@@ -4,7 +4,7 @@
 > `w1b`（A2 文本栈）读**消费侧源码**（cosmic-text/swash/fontdb/glyphon…）；`w1f`（A6）读**文本渲染论文**
 > （SDF/亚像素/gamma/断行/UAX）；本批只补**上游规范与权威实现文档**：OpenType 表定义、变体字体机制、
 > 彩色字体四格式、字体匹配/回退算法、FreeType 实现结构、TT 指令（IUP）、设备度量与提示。
-> 即回答一个问题：“青简文本栈（cosmic-text + harfrust + swash/skrifa + fontdb）背后，规范上有什么、没有什么”。
+> 即回答一个问题：“本项目文本栈（cosmic-text + harfrust + swash/skrifa + fontdb）背后，规范上有什么、没有什么”。
 >
 > **上游 commit**：无（纯 doc/paper 轨道，无可钉源码）。每条锚 = `URL` + **逐字引文**；引文取自快照
 > `D:/KF/LSSMJ/scratch/w7d/flat/<slug>.txt`（HTML 空白折叠；fontconfig 的 sgml 另去标签），
@@ -21,7 +21,7 @@
 ## TL;DR（10 条，每条带锚）
 
 1. **sfnt 只是“表容器”**：一轮 4 字节 tag 的目录装载任意表，扩展性来自目录而非版本号（`W7D-001`）；
-   目录里的**表长度不含 4 字节对齐 padding**（`W7D-002`）——自解析表（如青简的 trak）唯一的位移真相。
+   目录里的**表长度不含 4 字节对齐 padding**（`W7D-002`）——自解析表（如本项目的 trak）唯一的位移真相。
 2. **cmap format 14 是变体序列（VS）的唯一通道**，且与 (Platform 0, Encoding 5) 强绑定（`W7D-003`/`W7D-004`）；
    而 VS 的语义来自 UTS#51：VS15=文本呈现、VS16=emoji 呈现、无 VS 默认按 `Emoji_Presentation` 走彩色（`W7D-048`/`W7D-049`）。
    → **emoji 的“黑白/彩色”切换在规范上是 cmap 查询问题，不是渲染问题**。
@@ -33,7 +33,7 @@
    → 这是 TT 指令面与我们项目**直接相关**的少数机制之一（指令级金丝雀/快照判据）。
 5. **变体字体是 Apple GX 的遗产**（`W7D-018`）：默认实例可完全忽略变体表（`W7D-020`）；
    用户坐标→归一化坐标默认分段线性（min→-1/default→0/max→+1，`W7D-023`），`avar` 在此之上再做**第二层弯曲映射**（`W7D-024`）；
-   形状随轴连续插值、不是离散档位（`W7D-033`）。**青简 opsz 补丁的规范底座就是这三条**。
+   形状随轴连续插值、不是离散档位（`W7D-033`）。**本项目 opsz 补丁的规范底座就是这三条**。
 6. **度量变体按轮廓类型分岔**：TrueType 可走 `gvar` 的 phantom 增量，**CFF2 没有 phantom 点、必须靠 HVAR**
    （`W7D-028`）；HVAR 同时给 advance 与 LSB/RSB 增量（`W7D-027`）；MVAR 用 4 字节 tag（如 `hasc`）索引字体级度量（`W7D-029`）。
 7. **彩色字体四格式并存且各有平台归属**（SBIX/COLR/CBDT/SVG，`W7D-045`；OT-SVG 出自 Mozilla+Adobe，`W7D-046`）：
@@ -119,7 +119,7 @@
 ### 2.1 容器与编码（sfnt / cmap）
 
 - **容器**：表目录 = `sfntVersion(0x00010000|'OTTO') + numTables + 每条 TableRecord(tag/checksum/offset/length)`；
-  **length 不含 padding**（`W7D-002`）。→ 对青简：trak 自解析（w5a 已实现）必须按 record.length 切段；
+  **length 不含 padding**（`W7D-002`）。→ 对本项目：trak 自解析（ 已实现）必须按 record.length 切段；
   未来若做 COLR/COLRv1 读取同理。
 - **cmap**：多子表共存、除 format 14 外**只应选一个使用**（`W7D-005`）；format 14 是 VS 唯一通道且必须
   (0,5)（`W7D-003`/`W7D-004`）。→ 与 UTS#51 三元语义（`W7D-048`/`W7D-049`）合看：**“emoji 彩色/文本”
@@ -151,8 +151,8 @@
 | `MVAR` | 字体级度量 | tag（hasc…）→ 别表字段（`W7D-029`） |
 | `STAT` | 实例命名 | elidedFallbackNameID 兜底（`W7D-030`）；命名实例可任意取值（`W7D-019`） |
 
-**对青简的最短路径**：opsz 已由 cosmic-text fork 的 `normalized_coords(settings)` 交给 skrifa/swash 处理
-（w1b/w5a 已读源码）；本批补的是**规范侧边界**——① 默认实例可无变体表（`W7D-020`）；
+**对本项目的最短路径**：opsz 已由 cosmic-text fork 的 `normalized_coords(settings)` 交给 skrifa/swash 处理
+（w1b/ 已读源码）；本批补的是**规范侧边界**——① 默认实例可无变体表（`W7D-020`）；
 ② avar 参与了归一化（`W7D-024`），因此“opsz=17.0 的归一化值”不能手算线性比例；
 ③ 若将来让候选窗按 opsz 精确插值宽度/行高，来源分别是 gvar-phantom（TT）或 HVAR（CFF2）与 MVAR（`W7D-027`~`W7D-029`）。
 
@@ -242,7 +242,7 @@
 ## 5. 未验证项
 
 1. **无任何本机渲染实测**：本批全部为文档/规范读数（含 3 条源码行锚），**没有跑任何渲染/栅格实验**；
-   “对观感/宽度的影响”类陈述均为规范含义的推断，未在青简上复算。
+   “对观感/宽度的影响”类陈述均为规范含义的推断，未在本项目上复算。
 2. **COLRv1 在 swash/skrifa 的支持面未核**：swash 的源优先级（w1b）证明能走“彩色轮廓”分支，
    但**v0/v1、Paint 图哪些格式**被覆盖未逐行读 swash/skrifa（不属本批预算），`W7D-034`~`W7D-036` 的
    “现状已覆盖”是**未验证推断**。
@@ -261,7 +261,7 @@
    `EBDT/EBLC`（旧位图表）、`DSIG`、TTC 头细节、`cvar` ——均在候选清单外，未入账；若后续做
    “元数据/站姿/竖排”主题需另起一批。
 
-## 6. 对青简文本栈的 10 条可吸收（末节）
+## 6. 对本项目文本栈的 10 条可吸收（末节）
 
 1. **自解析表的位移纪律**（`W7D-001`/`W7D-002`）：trak（已实现）与未来任何自解析表统一按
    “tag→TableRecord→record.length”取段，禁用“相邻偏移差”算长度；加一条“长度模 4 的 padding 不读入”的断言。

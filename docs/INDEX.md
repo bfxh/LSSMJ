@@ -12,17 +12,6 @@
 
 | 文件 | 内容 | 状态 |
 | --- | --- | --- |
-| `renderer-qingjian/README.md` | 青简自绘渲染器文档：导读与阅读顺序 | ✅ |
-| `renderer-qingjian/01-overview.md` | 定位与总体数据流（为什么自绘 / 一帧怎么走） | ✅ |
-| `renderer-qingjian/02-architecture.md` | 模块地图（38 文件逐个职责 + 依赖方向） | ✅ |
-| `renderer-qingjian/03-text-pipeline.md` | 文本管线（cosmic-text/swash + 平台字体后端） | ✅ |
-| `renderer-qingjian/04-layout-and-frames.md` | 帧模型与布局（行/横竖排/状态行/顶行/预编辑） | ✅ |
-| `renderer-qingjian/05-raster-canvas.md` | 光栅与画布（tiny-skia / 色彩 / 阴影 / 云雾 / 齿轮） | ✅ |
-| `renderer-qingjian/06-theme.md` | 主题与配色（字体规格 / 调色板） | ✅ |
-| `renderer-qingjian/07-platform-backends.md` | 平台后端（Windows DirectWrite + 分层窗；macOS 位图；Linux） | ✅ |
-| `renderer-qingjian/08-performance.md` | 一帧成本结构与测量方法 | ✅ |
-| `renderer-qingjian/09-assessment.md` | 对标评估（可吸收清单随波次补全） | 🟡 骨架已就绪，待大分析回填 |
-| `renderer-qingjian/10-glossary.md` | 术语表 | ✅ |
 
 ## 分析工程
 
@@ -61,7 +50,7 @@
 | `reports/14-graphics-apis.md` | 图形 API（D3D11/12+Work Graphs、Vulkan、GL、Metal、WebGPU/wgpu；选型结论） |
 | `reports/15-video-pipeline.md` | 视频管线（DXVA/NVDEC/Chromium/GN cVIDEO 契约；边界三层 + 平台解码 API 附表） |
 | `reports/16-gpu-tooling.md` | GPU 测量与工具链（抓帧≠计时/HAGS 精度/时间戳链/呈现模式；判据不押停更工具） |
-| `reports/17-font-engineering.md` | 字形工程（OpenType 表/Variations/彩色字体四格式/回退算法；对青简文本栈 10 条可吸收） |
+| `reports/17-font-engineering.md` | 字形工程（OpenType 表/Variations/彩色字体四格式/回退算法） |
 | `reports/18-render-compression.md` | 渲染压缩（48 行判定表：可用/有界/不可用；Rust 工具链逐条；神经压缩判死有硬证据） |
 | `reports/19-frontend-migration.md` | 前端语言迁移引导（DSL/CSS/JS 引擎/Electron 映射；选型=中档） |
 | `reports/20-ui-component-core.md` | UI 组件体系核心（事件/焦点/无障碍/令牌/失效边界；轨 9 锚，w9b 74 条） |
@@ -78,4 +67,4 @@
 | `platforms/game-ui-middleware.md` | 游戏/应用商业 UI 中间件谱系（Noesis/Coherent/Ultralight/Scaleform 遗产/CEF 路线；许可红线） |
 | `platforms/compositors-and-system-ui.md` | 平台合成器与闭源系统 UI（DWM/UI.Composition/SurfaceFlinger/render server/SwiftUI/WinUI3） |
 | `engines/cpp-2d-rasterizers.md` | C++ 光栅器第二组（Blend2D/ThorVG/NanoVG/Cairo；ThorVG 脏区范式） |
-| `engines/avalonia.md` | Avalonia 源码级复核（对青简六条评估的逐条回执） |
+| `engines/avalonia.md` | Avalonia 源码级复核（框架选型六条评估的逐条回执） |

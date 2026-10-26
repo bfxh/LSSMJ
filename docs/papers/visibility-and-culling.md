@@ -14,7 +14,7 @@
 7. **GPU 侧早退机制**：ExecuteIndirect（W6E-015）与 VK_EXT_conditional_rendering（"按缓冲值条件执行"→"条件丢弃降延迟"，W6E-016/017）。
 8. **可见性缓冲**：以 ID 缓冲替代 GBuffer 的延迟着色路线（JCGT，W6E-006）。
 9. **实例化/GPU 常驻**是当代默认优化面（Unity BRG/GPU Resident Drawer，W6E-018）。
-10. **对 UI 档映射（不硬扯）**：候选窗的"哪些格子进帧"已有等效物（Core `Grid` 视口 + `Frame::columns`，`w5a`/`candidate-ui.md:21`）——UI 档**不需要**本篇机制；场景档按本清单立项。
+10. **对 UI 档映射（不硬扯）**：候选窗的"哪些格子进帧"已有等效物——UI 档**不需要**本篇机制；场景档按本清单立项。
 
 ## 可吸收 / 不可吸收
 

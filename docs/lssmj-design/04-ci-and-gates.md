@@ -2,7 +2,7 @@
 
 > 口径：本文件描述 **LSSMJ 的 CI 设计**。分两层：**A. 本仓现在就能跑的门**（文档/账本仓，已在用）；
 > **B. 引擎代码仓的目标态**（crate 化之后的门集与流水线——把 `../reports/12-engineering-method-crossref.md`
-> 的 P1–P12 与三仓既有实践（qingjian-gates / unified-rx / BSHSQ）落成规格）。
+> 的 P1–P12 与三仓既有实践（参考实现-gates / unified-rx / BSHSQ）落成规格）。
 > 原则继承用户既有纪律：**绿=SKIP 不算绿**；**门结果必须在提交前被读到**；**先验红（金丝雀）**；
 > **棘轮只准减，`--write-baseline` 需理由登记**；**PR 默认一功能一 PR，不自行合并**。
 
@@ -40,7 +40,7 @@ jobs:
 ```
 
 - **提交纪律**：门在**提交之前**跑完并被读到（三仓血泪：门禁与提交压成一条命令 ⇒ 没读门就推了）。
-- **代理并发**：多代理并行改本仓时沿用 qingjian-gates 的**认领协议**（`.agents/claims/<id>.json`，
+- **代理并发**：多代理并行改本仓时沿用 参考实现-gates 的**认领协议**（`.agents/claims/<id>.json`，
   scope 交集判红；`AGENT-BRIEF.md` 已有的文件边界规则升级为机器门——见 §B.6）。
 
 ## B. 引擎代码仓（目标态）
@@ -54,7 +54,7 @@ jobs:
 | 测量 | perf 门（P95 棘轮）、金丝雀（先验红）、冻结哈希（默认档） | 窗口均值 + 交错 A/B；禁在挂测态采数 | reports/09、reports/16（抓帧≠计时/HAGS 口径） |
 | 一致性 | 宽度对表（C2）、逐位金丝雀（C4）、假阴性金丝雀（C7） | 与原生/期望对拍 | 判据 C1–C10 |
 | 供应链 | deny/license/锁步 | cargo-deny + 移动标签钉死 | BSHSQ 经验 |
-| 并发 | agent 认领门（scope 判红） | 认领文件即状态 | qingjian-gates A1–A5 |
+| 并发 | agent 认领门（scope 判红） | 认领文件即状态 | 参考实现-gates A1–A5 |
 
 ### B.2 阶段划分（流水线分层，对应"快/全"两档）
 
@@ -77,7 +77,7 @@ L3 发布档（tag）：L2 + 冻结哈希登记 + 金样全量 + 变更披露清
 
 | 平台 | 层 | 备注 |
 | --- | --- | --- |
-| Windows x64 | CPU 路径必测；GPU 档（wgpu/Vulkan·D3D12） | 分层窗贴图回归（`w5a`） |
+| Windows x64 | CPU 路径必测；GPU 档（wgpu/Vulkan·D3D12） | 分层窗贴图回归 |
 | macOS arm64 | CPU 路径必测；Metal 后端 | 系统阴影/Retina 口径 |
 | Linux | 编译 + 无窗冒烟（显示面归 Fcitx/GTK，`rendering.md:33`） | 不承诺显示面 |
 

@@ -10,9 +10,9 @@
 1. **布局内核 = taffy 0.14（特性裁剪：std/block_layout/flexbox/grid/content_size/taffy_tree，default-features=false）**；为绕开 taffy `calc` 的线程不安全，Bevy 显式不用 calc 并做 `unsafe impl Send/Sync` 断言（`bevy_ui/Cargo.toml:40`，`bevy_ui/src/layout/ui_surface.rs:46`；W4C-006/014）。
 2. **增量只做一半**：样式同步是节点级变更检测驱动（`node.is_changed()` 等五路闸门，`layout/mod.rs:151`）且已有节点只 `set_style` 不重建（`ui_surface.rs:116`）；但**每个 UI 根每帧无条件调 `compute_layout`**（`layout/mod.rs:272`），且 `ui_layout_system` 注册时无 run 条件（`bevy_ui/src/lib.rs:206`；W4C-017/026/029/033）。
 3. **实体树↔taffy 树映射收在 `UiSurface` 资源**：`entity_to_taffy` + `root_entity_to_viewport_node`；每个根配一个隐式 viewport 节点（Grid、100%×100%）（`ui_surface.rs:67-75`、`:204-219`；W4C-015/016/019/020）。
-4. **文本栈已从 cosmic-text 换成 parley 0.11**（官方 0.19 发布说明："we've chosen to migrate to parley during this cycle"；依赖见 `bevy_text/Cargo.toml:44`），字形光栅仍是 **swash 0.2.6**（`:45`；W4C-004/010/011）——与青简（cosmic-text+swash）在整形/排版层分叉。
+4. **文本栈已从 cosmic-text 换成 parley 0.11**（官方 0.19 发布说明："we've chosen to migrate to parley during this cycle"；依赖见 `bevy_text/Cargo.toml:44`），字形光栅仍是 **swash 0.2.6**（`:45`；W4C-004/010/011）——与本项目（cosmic-text+swash）在整形/排版层分叉。
 5. **图集键 = (字体 id, index, 字号 f32 位模式, 变体哈希, hinting, smoothing) 六元组**（`font_atlas_set.rs:12`、`pipeline.rs:379-386`），字号不取整（`pipeline.rs:382`）——每个 (字体,字号) 组合都新建图集，官方文档自认"强性能影响"（`text.rs:718`；W4C-052/053/069/070）。
-6. **字形缓存键只有 `glyph_id`（无子像素偏移档）**，但同一文件文档还写着"子像素偏移分组进 bin"——文档/代码漂移；亚像素 AA 有明确 TODO 未实现（`font_atlas.rs:15`、`:26-30`、`text.rs:1547`、`:1565`；W4C-057/058/071/072）——与青简/GTK 的 4×4 子像素格路线相反。
+6. **字形缓存键只有 `glyph_id`（无子像素偏移档）**，但同一文件文档还写着"子像素偏移分组进 bin"——文档/代码漂移；亚像素 AA 有明确 TODO 未实现（`font_atlas.rs:15`、`:26-30`、`text.rs:1547`、`:1565`；W4C-057/058/071/072）——与本项目/GTK 的 4×4 子像素格路线相反。
 7. **UI 渲染只有一种阶段：已排序的 `TransparentUi`，排序键 = 栈号 + 部件偏移（f32）**，偏移表 `stack_z_offsets`（阴影 -0.1 / 背景 0 / 边框 0.01 / 图 0.04 / 材质 0.05 / 文字 0.06 / 光标 0.08），用**稳定排序**（`render_pass.rs:78/134`、`lib.rs:117-130`；W4C-078/079/080/081）。
 8. **UI 批 = 相邻同图合并，批结构仅 (顶点区间, image)**；顶点/索引每帧重写、批每帧重建（`lib.rs:2180-2184`、`:2322-2400`、`:2589`；W4C-089/091/093）。3D 侧的二元桶键/多绘在 UI 不适用。
 9. **UI 是独立子视图（subview=1）**：正交投影原点在左上、far=1000、相机 z=999.9；画进**未采样颜色附件**、无深度；位置在 Core2d/Core3d 的 `PostProcess` 之后、`upscaling` 之前（`lib.rs:1364-1375`、`:1446-1470`、`render_pass.rs:56-63`、`lib.rs:296-303`；W4C-083/086/087/126）。
@@ -30,10 +30,10 @@
 | 危险参数显式告警（字号>1000px） | `pipeline.rs:148`（W4C-047） | **吸收**：不许静默降级（tiny-skia 反面教材的反面） |
 | 字图集分层 `HashMap<Key, Vec<FontAtlas>>` + 键 `to_bits` 浮点写法 | `font_atlas_set.rs:12/29`（W4C-062/063） | **吸收**（键的粒度要改，见下） |
 | 字体双注册（内嵌族名 + asset_id 别名） | `font.rs:84-102`（W4C-067） | **吸收**：壳查清单/渲染器载的双寻址 |
-| 文本度量两级：min-content → max-content + BorderBox 内缩 | `pipeline.rs:317-347`、`widget/text.rs:219-248`（W4C-051/039/040） | **吸收**：对齐原生宽度的关键式（青简 C2 上游实现） |
+| 文本度量两级：min-content → max-content + BorderBox 内缩 | `pipeline.rs:317-347`、`widget/text.rs:219-248`（W4C-051/039/040） | **吸收**：对齐原生宽度的关键式（本项目 C2 上游实现） |
 | 空阶段直通（UI 无项不开通道；无 clip 不裁剪） | `render_pass.rs:49`、`clipping.rs:26`（W4C-077/095） | **吸收**：零脏零成本 |
 | taffy 作为布局内核 | `bevy_ui/Cargo.toml:40`、`ui_surface.rs:44-52` | **不吸收（候选窗级）**：与 ADR-09 一致；Bevy 的用法（特性裁剪/content_size 回调/不用 calc）留作大面板阶段复测的参照 |
-| parley 0.11 + FontCx（排版库托管字体库） | `parley_context.rs:37`、`bevy_text/Cargo.toml:44`（W4C-074） | **有界吸收**：我们按青简路线用 cosmic-text（时间戳结论）；parley/fontique 作为"字体清单层替代"候选记录 |
+| parley 0.11 + FontCx（排版库托管字体库） | `parley_context.rs:37`、`bevy_text/Cargo.toml:44`（W4C-074） | **有界吸收**：我们按本项目路线用 cosmic-text（时间戳结论）；parley/fontique 作为"字体清单层替代"候选记录 |
 | 多相机/子视图合成（UI 子视图 1、相机 order 排序） | `lib.rs:1375`、`camera.rs:821`（W4C-087/107） | **有界吸收**：我们单窗+overlay，只需"合成顺序显式"这一条 |
 | 每帧全树 compute + 全量重写顶点缓冲 + 批每帧重建 | `layout/mod.rs:272`、`lib.rs:2166/2589`（W4C-029/088/093） | **不吸收**：正是我们 damage/tile 比较要替换掉的形态 |
 | UiMaterial 管线无批处理（注释自认） | `ui_material_pipeline.rs:110`（W4C-098） | **不吸收（反面）**：我们 GPU 档必须建批 |

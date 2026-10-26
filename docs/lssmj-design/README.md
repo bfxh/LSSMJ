@@ -1,7 +1,7 @@
 # LSSMJ 渲染引擎设计（v1，2026-10-01）
 
 > **这份文档是什么**：在 1300+ 条证据锚定条目（`../analysis/ledger/`，`verify` 全绿）与 8 篇引擎深读
-> （`../engines/`）、2 篇平台深读（`../platforms/`）、2 个真实样本解剖（`../targets/`、`../renderer-gn/`）
+> （`../engines/`）、2 篇平台深读（`../platforms/`）、2 个真实样本解剖（`../targets/`、）
 > 的基础上，给出**我们自己的**渲染引擎设计。**规则：每个关键取舍必须写明"学谁 / 弃谁 + 证据锚 +
 > 否证条件"**；证据不足处一律标"待测"，不许写成结论（本仓表述纪律）。
 > 决策明细见 [`../reports/10-decisions-adr.md`](../reports/10-decisions-adr.md)。
@@ -12,8 +12,8 @@
 
 **做**：一张"显示面"渲染引擎——候选窗、悬浮条、overlay、游戏 HUD、小面板——输入"内容模型 + 主题"，
 输出**位图（默认）或 GPU 帧（可选档）**，平台壳只负责贴图与回传输入坐标。
-**不做**：完整控件 toolkit（表单/无障碍留给平台原生或上位框架）——这是青简对 UI 两分法的结论
-（`../renderer-qingjian/01-overview.md`，`docs/design/rendering.md:13`–`:14`），延续它。
+**不做**：完整控件 toolkit（表单/无障碍留给平台原生或上位框架）——这是参考实现对 UI 两分法的结论
+，延续它。
 
 **语言**：整仓 Rust（用户口径）。文字/光栅/字体全部选 Rust 生态现成最优件（cosmic-text+swash、
 tiny-skia、fontdb），不重复造轮子；**借鉴对象不限语言**——C/C++ 的 Skia/Chromium/Qt/GSK/GN SDK
@@ -23,18 +23,18 @@ tiny-skia、fontdb），不重复造轮子；**借鉴对象不限语言**——C
 
 | # | 判据 | 锚（现状基线或参照） | 状态 |
 | --- | --- | --- | --- |
-| C1 | 稳态单帧 P95 满足预算（400×500 pt @2x 场景：P95 ≤ 2 ms CPU 光栅路径） | 基线：青简单帧 release 1 ms / 冷首帧 6 ms（`docs/design/rendering.md:87`；口径=macOS spike、单场景） | 待测 |
-| C2 | 文本宽度对原生 ≤0.01 pt；字形归属可查 | 青简判据（`rendering.md:95`）；工具 `trace_families` | 复用 |
+| C1 | 稳态单帧 P95 满足预算（400×500 pt @2x 场景：P95 ≤ 2 ms CPU 光栅路径） | 基线：参考实现单帧 release 1 ms / 冷首帧 6 ms（`docs/design/rendering.md:87`；口径=macOS spike、单场景） | 待测 |
+| C2 | 文本宽度对原生 ≤0.01 pt；字形归属可查 | 参考实现判据（`rendering.md:95`）；工具 `trace_families` | 复用 |
 | C3 | **空 damage → 零重画**（无变化帧只允许一次比较+memset 级工作） | WebRender 空脏区跳过合成（`w1e` W1E-082）；GSK 树 diff（`w2d` W2D-017） | 待实现 |
 | C4 | 帧间金丝雀：同一内容渲染两次逐位相同 | 本仓账本金丝雀纪律 | 待实现 |
-| C5 | 资源缺失可定位 + 自动回退 | GN 的 RunLog 失败模式（`w4a` W4A-060）；青简 `NoUiFont` 回退（`w5a`） | 复用 |
+| C5 | 资源缺失可定位 + 自动回退 | GN 的 RunLog 失败模式（`w4a` W4A-060）；参考实现 `NoUiFont` 回退 | 复用 |
 | C6 | 每帧零大分配（字符串/缓冲），分配点白名单化 | ImGui FAQ 字符串警告（`w3f` W3F-060）；Mineradio 预算纪律（`w4b` W4B-019..022） | 待测 |
 
 ## 3. 总体架构
 
 ```text
         ┌────────────────────────────────────────────────────────────┐
-内容模型 │ Frame { rows, preedit, highlight, columns, footer, … }     │  ← 与青简 Frame 同族
+内容模型 │ Frame { rows, preedit, highlight, columns, footer, … }     │  ← 与参考实现 Frame 同族
         └────────────────────────────────────────────────────────────┘
                        │  版本号（内容变才重排）
         ┌──────────────▼──────────────┐
@@ -46,8 +46,8 @@ tiny-skia、fontdb），不重复造轮子；**借鉴对象不限语言**——C
         │  damage 区域重栅格（tile 比较）  │  GPU 档：SortKey 批 + 区间归并（`w1e`）
         └──────────────┬──────────────┘
         ┌──────────────▼──────────────┐
-合成与贴图 │ Compose → 位图/BGRA → Present │  学青简契约：预乘 RGBA + 命中表（`w5a` W5A-003/077）
-        └──────────────────────────────┘   Windows: UpdateLayeredWindow（W5A-093/094）
+合成与贴图 │ Compose → 位图/BGRA → Present │  学参考实现契约：预乘 RGBA + 命中表
+        └──────────────────────────────┘   Windows: UpdateLayeredWindow
 ```
 
 **crate 划分**（按依赖单向）：
@@ -61,7 +61,7 @@ tiny-skia、fontdb），不重复造轮子；**借鉴对象不限语言**——C
 | `lssmj-shell-{win,mac,linux}` | 贴图/输入/IME/Dpi | windows-rs / objc2 / wayland-or-x11 |
 | `lssmj-gpu`（可选档） | wgpu 后端（同显示列表，换执行器） | wgpu |
 
-**线程模型**：默认 **UI 线程同步出帧**（青简：单线程共享渲染器，"字形缓存共享"，`w5a` W5A-090）；
+**线程模型**：默认 **UI 线程同步出帧**；
 大场景（滚动面板）引入 **damage 后台栅格化**（学 Chromium worker 栅格 `w2c` 与 GSK 树 diff 的
 "只重画 damage"），但**帧的提交点永远单点**（Qt 每窗一线程的复杂度不引入，`w2d` W2D-012 记为有界吸收）。
 
@@ -79,10 +79,10 @@ tiny-skia、fontdb），不重复造轮子；**借鉴对象不限语言**——C
   256KiB、条带数 < 线程数时折半（下限 8）**（`w4e` W4E-007..010）；**ThorVG 的 SmartRender
   16×16 分区双缓冲脏表是"CPU 端 damage"的现成范式**（`w4e` W4E-068/070/072），与 §4.3 的三层
   设计同构，可作 P1 的实现先例。
-- **字形**：覆盖率遮罩 × 颜色（青简 `w5a` W5A-007/008）+ 覆盖率 gamma LUT（W5A-056）；
-  彩色 emoji 直通 RGBA（W5A-008）。
-- **阴影**：3 遍盒式模糊近似高斯（青简 `w5a` W5A-014..018 的成本与正确性都有测试锚）；
-  **改进**：随滚动/移动的内容阴影缓存"尺寸不变即复用"，把 6 次全画布扫描降为一次贴图（青简自留的优化项，`09-assessment` §9.3）。
+- **字形**：覆盖率遮罩 × 颜色+ 覆盖率 gamma LUT；
+  彩色 emoji 直通 RGBA。
+- **阴影**：3 遍盒式模糊近似高斯；
+  **改进**：随滚动/移动的内容阴影缓存"尺寸不变即复用"，把 6 次全画布扫描降为一次贴图（参考实现自留的优化项，`09-assessment` §9.3）。
 
 ### 4.2 批处理与 GPU 档（预留，不当第一优先级）
 
@@ -93,13 +93,13 @@ tiny-skia、fontdb），不重复造轮子；**借鉴对象不限语言**——C
 - 纹理图集：`comparisonKey = 图集指针`（Qt `w2d` W2D-037）；图集分配器从简（guillotine/BSP 够用）。
 - 着色器：**构建期离线编译全部着色器**（Impeller 的 key 卖点，`w3f` W3F-050）——GPU 档的第一条纪律。
 
-### 4.3 脏区与 damage（本设计对青简最大的升级）
+### 4.3 脏区与 damage（本设计对参考实现最大的升级）
 
-青简现状是"每帧全画、无脏区"（`../renderer-qingjian/05` §5.1、`08` §8.4）——候选窗量级可接受，
+参考实现现状是"每帧全画、无脏区"——候选窗量级可接受，
 **大面板不可接受**。本设计采用三层：
 
 1. **内容版本号**：布局产物（DisplayList）按内容 hash 复用；内容不变 → 布局零工作
-   （学 GN `SetText/Show` 分离 `w4a` W4A-042；反例=青简竖/横排 measure+draw 双整形 `w5a` W5A-064/065）。
+   。
 2. **tile 内容描述符双缓冲比较**：逐 tile 比较描述符决定重栅格；damage 单调 union 成矩形；
    **空 damage 直接跳过合成**（WebRender `w1e` W1E-055/058/082 全套照抄口径）。
 3. **树 diff（二级手段）**：结构变化大时用 Myers 风格差分求 damage（GSK `w2d` W2D-017）——
@@ -119,23 +119,23 @@ tiny-skia、fontdb），不重复造轮子；**借鉴对象不限语言**——C
 
 ## 5. 文本与字体（对齐原生的完整清单）
 
-1. **字体清单加载**（青简路线，`../renderer-qingjian/03` §3.7）：平台清单 + mmap 惰性读页，
-   不扫系统目录（`w5a` W5A-023/024）；用户字体=族名+文件清单（壳查、渲染器载，W5A-040）。
-2. **整形**：cosmic-text（0.19 起用 **harfrust**，`w1b`）；整形等级 Advanced（`w5a` W5A-054）。
+1. **字体清单加载**（参考实现路线， §3.7）：平台清单 + mmap 惰性读页，
+   不扫系统目录；用户字体=族名+文件清单（壳查、渲染器载，）。
+2. **整形**：cosmic-text（0.19 起用 **harfrust**，`w1b`）；整形等级 Advanced。
 3. **对齐系统排版的三件套**（缺一宽度就对不上，`docs/design/rendering.md:91`–`:96`）：
-   - `opsz` 光学字号——**按字号分键**（修掉青简"全局单槽"限制，`w5a` W5A-050）；
-   - `trak` 字距——按字形所用字体查表、逐点插值、坏表防 NaN（`w5a` W5A-036..039）；
-   - 覆盖率 `gamma`——按极性/主题给值（浅 0.85/深 0.75，`w5a` 06.3）。
+   - `opsz` 光学字号——**按字号分键**；
+   - `trak` 字距——按字形所用字体查表、逐点插值、坏表防 NaN；
+   - 覆盖率 `gamma`——按极性/主题给值。
 4. **字形缓存**：缓存键含 **4×4 子像素格** + 缩放档（GTK `w2d` W2D-020/036）；
-   图集与字形位图二选一的判据：**窗口小、字形少（<2k）用 SwashCache 直存**（青简现状，零图集管理成本）；
+   图集与字形位图二选一的判据：**窗口小、字形少（<2k）用 SwashCache 直存**（参考实现现状，零图集管理成本）；
    **字形多/跨帧稳定（大面板、编辑框）上 2D 图集**（Qt/GTK 路线）。
-5. **亚像素**：默认灰度 AA（青简的明确决策：与 GDI/AppKit 并排无可感差异，`rendering.md:71/85`）；
+5. **亚像素**：默认灰度 AA（参考实现的明确决策：与 GDI/AppKit 并排无可感差异，`rendering.md:71/85`）；
    LCD 亚像素作为"可选档"——**启用条件比照 Chromium 的 tile 级否决清单**（`w2c` W2C 的 11 项枚举），
    而不是全窗一刀切。
 6. **CJK 专项**：断行用 UAX#14 的 ID 类语义（`w3f` W3F-012）；竖排=字形替换表而非旋转
    （UAX#50 `w3f` W3F-017/018）；禁则"先挤进后推出"（clreq `w3f` W3F-040）；
    注音/标注不得与所注汉字分离（`w3f` W3F-041）。
-7. **SDF/矢量字**：候选窗规模**不用**（青简评估与 GTK/Qt 的图集路线更稳，`../renderer-qingjian/09` §9.4）；
+7. **SDF/矢量字**：候选窗规模**不用**（参考实现评估与 GTK/Qt 的图集路线更稳， §9.4）；
    大字号/极端缩放的 UI 再评估 msdf-atlas-gen（`w3f` W3F-005/007）。
    图集档参考 **Godot per-size shelf atlas**（单源 MSDF 服务全字号是另一档；`w2a` W2A-086..092/098/099）。
 8. **实现纪律（第二轮回填）**：gamma 空间不做混合/缩放（`w1f` W1F-039）；亚像素启用须过三条硬约束
@@ -158,12 +158,12 @@ tiny-skia、fontdb），不重复造轮子；**借鉴对象不限语言**——C
 
 ## 7. 平台壳、输入与 IME
 
-- 契约（青简，`w5a`）：壳只做"贴图 + 回传坐标"；渲染器输出 `{pixmap(预乘 RGBA), content_rect, hit_table}`。
-- Windows：`UpdateLayeredWindow`（BGRA 预乘，逐通道换序 `w5a` W5A-093/094）；DPI=`dpi/96`（W5A-092）；
-  回退链（字体失败 → 系统绘制）照抄（W5A-091）。合成层官方背书：DComp 自述
+- 契约：壳只做"贴图 + 回传坐标"；渲染器输出 `{pixmap(预乘 RGBA), content_rect, hit_table}`。
+- Windows：`UpdateLayeredWindow`；DPI=`dpi/96`；
+  回退链（字体失败 → 系统绘制）照抄。合成层官方背书：DComp 自述
   **"works with bitmap content only; it does not support vectors or text"**（`w2f` W2F-075）——
   系统合成路径与我们的位图契约同构。
-- macOS：`NSBitmapImageRep`（8bpc/4ch/预乘，按行 stride 拷，`w5a` W5A-098/100/101）；系统阴影跟 alpha（W5A-097）。
+- macOS：`NSBitmapImageRep`；系统阴影跟 alpha。
 - Linux：显示面在 Fcitx5/IBus（`docs/design/rendering.md:33`），壳不实现或只做无框架调试窗。
 - IME：preedit/commit/delete 生命周期显式建模（wayland text-input-v3 的 `preedit_string/commit_string`
   事件序，`w3f` W3F-045..047；TSF/DWrite 侧同构）。
@@ -174,15 +174,15 @@ tiny-skia、fontdb），不重复造轮子；**借鉴对象不限语言**——C
 
 | 层 | 预算（400×500pt@2x） | 依据 |
 | --- | --- | --- |
-| 布局 | 内容不变 = 0；内容变 ≤ 一次整形量 | GN/青简三方互证 |
+| 布局 | 内容不变 = 0；内容变 ≤ 一次整形量 | GN/参考实现三方互证 |
 | 字形拉取 | 稳态命中率 ≥99%（4×4 子像素格缓存） | GTK 键设计 `w2d` |
-| 光栅 | 只栅格 damage；全窗重栅格 ≤2 ms | 青简 1 ms 读数（同量级场景） |
-| 阴影/装饰 | 尺寸不变 = 0（缓存） | 青简自留优化项 |
+| 光栅 | 只栅格 damage；全窗重栅格 ≤2 ms | 参考实现 1 ms 读数（同量级场景） |
+| 阴影/装饰 | 尺寸不变 = 0（缓存） | 参考实现自留优化项 |
 | 贴图 | 每帧 1 次整窗提交（面积=damage 时可局部） | Mineradio 的"每帧 1 层"教训镜像 |
 
 ## 9. 路线图
 
-- **P0（位图契约）**：Frame→位图→贴图全链 + 宽度对表工具（复用青简判据 C2）。产出：候选窗等价物。
+- **P0（位图契约）**：Frame→位图→贴图全链 + 宽度对表工具（复用参考实现判据 C2）。产出：候选窗等价物。
 - **P1（damage + 显示列表）**：内容版本号 + tile 比较 + 空脏跳过（判据 C3）。产出：滚动面板 60fps。
 - **P2（文本三件套 + 图集档）**：opsz 分键 / trak / gamma + 2D 图集 + 亚像素否决清单。
 - **P3（GPU 档）**：wgpu 执行器 + SortKey 批 + 预编译着色器（判据新增：CPU 占用降低幅度）。

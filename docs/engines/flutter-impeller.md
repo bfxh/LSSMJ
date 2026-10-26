@@ -75,7 +75,7 @@
 | 两趟 DisplayList dispatcher（FirstPass + 渲染趟） | W2B-095/096 | **不吸收**：已知两趟裁剪不一致（W2B-118），一致性成本高于收益 |
 | Framebuffer fetch / blit-to-onscreen 类后端特化快路径 | W2B-074/075 | **不吸收**：无 GPU 后端，无对应问题 |
 | 模板缓冲 + 模板重放恢复 backdrop | W2B-078 | **不吸收**（CPU 自绘）；但「裁剪状态必须随 backdrop 一同恢复」这条语义是吸收的 |
-| 运行时着色器（RuntimeStage + 用户 fragment shader） | W2B-101 | **不吸收**：青简自绘无用户着色器契约 |
+| 运行时着色器（RuntimeStage + 用户 fragment shader） | W2B-101 | **不吸收**：本项目自绘无用户着色器契约 |
 | Skia 时代的 ShaderWarmUp（100–200ms 启动成本） | W2B-043/044/045 | **不吸收**（是反例留档）：只有运行时编译着色器才需要它 |
 
 ## 1. 架构全景（模块地图，逐文件职责）
