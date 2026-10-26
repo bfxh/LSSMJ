@@ -98,9 +98,12 @@ fn build_job_table(prepared: &[Prepared], grid: &Grid) -> Result<JobTable, Strin
             .checked_mul(bbox_size[1])
             .and_then(|v| v.checked_mul(bbox_size[2]))
             .ok_or("GPU splat bbox 体素数溢出 u32")?;
-        total = total
-            .checked_add(count)
-            .ok_or("GPU splat job 总数溢出 u32")?;
+        total = total.checked_add(count).ok_or_else(|| {
+            format!(
+                "GPU splat job 总数溢出 u32（累计 {} + 本高斯 {}，bbox {:?}）",
+                total, count, bbox_size
+            )
+        })?;
         offsets.push(total);
         gaussians.push(GpuGaussian {
             mean: [g.mean[0], g.mean[1], g.mean[2], g.opacity],
