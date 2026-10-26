@@ -75,6 +75,7 @@
 | **默认（迁移后：>256³ 钉核宽）** | 1.05566 | 0.50864 | **0.72455（χ=5，5 分量）** | 0.69 |
 | 迁移后（scene03） | 2.00791 | 0.70657 | **1.17873（χ=17，10 分量）** | 0.59 |
 | **pinned**（`--kernel-clamp-ref 256` + 显式 iso） | 0.29814 | 0.50864 | **0.72455**（χ=5，5 分量） | 2.43 |
+| **`--cross-resolution 256`**（一键版，含 256³ 探针 iso） | 0.29814 | 0.50864 | **0.72455** | 2.43 |
 | **pinned**（scene03） | 0.38344 | 0.70657 | 1.17873 | 3.08 |
 
 - 默认配置下 512³ 的 iso 由探针 `× (probe_n/n)²` 换算，512 体积约为 256 的一半，且拓扑是壳。
@@ -121,10 +122,12 @@
 gauss2mesh convert scene.ply --grid 256 --largest-component
 gauss2mesh convert scene.ply --grid 512 --largest-component   # 默认已是实心体，无需额外开关
 
-# 跨分辨率对齐（opt-in）：核宽与阈值都钉在 256³
+# 跨分辨率对齐（opt-in，一键）：核宽与阈值都钉在 256³，iso 由 256³ 探针自动取
+gauss2mesh convert scene.ply --grid 128 --cross-resolution 256
+gauss2mesh convert scene.ply --grid 256 --cross-resolution 256
+gauss2mesh convert scene.ply --grid 512 --cross-resolution 256
+# 等价于手写两个参数（结果逐位相同）
 gauss2mesh convert scene.ply --grid 128 --kernel-clamp-ref 256 --iso 29.38631
-gauss2mesh convert scene.ply --grid 256 --kernel-clamp-ref 256 --iso 29.38631
-gauss2mesh convert scene.ply --grid 512 --kernel-clamp-ref 256 --iso 29.38631
 
 # 只想保留默认核宽但要固定阈值（较弱，拓扑仍可能不闭合）
 gauss2mesh convert scene.ply --grid 512 --density-norm 256 --iso 29.38631
@@ -161,5 +164,8 @@ gauss2mesh convert a.ply b.ply c.ply d.ply --grid 256 --out-dir out/
 4. **`--bins3d` 与 `--density-norm` 不兼容**（tile 路径未归一化，显式报错）。
 5. **GPU 内核未实现 density-norm**：显式选 GPU 时会降级到 CPU 并在日志说明。
 6. **`--splat-integrate` 是实验开关**：物理更正确但分辨率相关，**不要用于生产**（见 §4 第 9 条）。
-7. **128/256 之间仍有 2.08×**：默认口径下 128 的核宽下限按格算会撑胖；要跨档一致请显式
-   `--kernel-clamp-ref 256 --iso <256³ 的 iso>`（得到 0.298 / 0.509 / 0.725）。
+7. **128/256 之间仍有 2.08×**：默认口径下 128 的核宽下限按格算会撑胖；要跨档一致请用
+   `--cross-resolution 256`（得到 0.298 / 0.509 / 0.725）。但 128³ 在该口径下网格更碎
+   （χ=30、8 分量、2112 三角形 vs 默认 2824），**体积接近不等于质量更好**。
+8. **`--cross-resolution` 在 64³ 不可用**：核宽下限只有 0.17 格，实测塌到 0.0142；
+   工具会在核宽下限 < 0.5 格时打印警告并建议 `--grid ≥ N`。

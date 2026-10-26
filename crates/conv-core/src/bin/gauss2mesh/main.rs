@@ -441,6 +441,7 @@ fn convert_and_write(
     let kernel_clamp_ref = if cfg.kernel_clamp_ref.is_none()
         && cfg.kernel_clamp_world.is_none()
         && !cfg.splat_integrate
+        && cfg.cross_resolution.is_none()
         && sparse
         && mode == VoxelMode::Density
         && cfg.grid > 256
@@ -475,6 +476,43 @@ fn convert_and_write(
         threads,
         ..VoxelizeOptions::default()
     };
+    // --cross-resolution <ref>：一键统一口径——核宽钉在参考网格，iso 也用参考网格的绝对阈值。
+    if let Some(r) = cfg.cross_resolution {
+        if voxel_opts.kernel_clamp_ref.is_none() && voxel_opts.kernel_clamp_world.is_none() {
+            voxel_opts.kernel_clamp_ref = Some(r);
+        }
+        if voxel_opts.iso_abs.is_none() {
+            let mut probe = voxel_opts.clone();
+            probe.n = r;
+            probe.backend = Backend::Cpu;
+            probe.bins3d = false;
+            probe.seal = false;
+            let iso = voxelize(&kept, &probe)
+                .map_err(|e| format!("--cross-resolution {r} 的参考 iso 探针失败：{e}"))?
+                .iso;
+            voxel_opts.iso_abs = Some(iso);
+            let inner_cur = (cfg.grid as f32 - 1.0 - 2.0 * cfg.padding as f32).max(1.0);
+            let inner_ref = (r as f32 - 1.0 - 2.0 * cfg.padding as f32).max(1.0);
+            let ratio = inner_cur / inner_ref;
+            let mut note = format!(
+                "--cross-resolution {r}：核宽钉在 {r}³ 世界尺度，iso={iso:.5}（{r}³ 探针，所有 grid 复用）"
+            );
+            if ratio < 0.667 {
+                note.push_str(&format!(
+                    "；⚠ 本 grid 的核宽下限只有 {:.2} 格，<0.5 格会采样成空场（64³ 实测塌到 0.014），建议 --grid ≥ {r}",
+                    0.75 * ratio
+                ));
+            }
+            clamp_default_note = Some(match clamp_default_note {
+                Some(mut s) => {
+                    s.push('；');
+                    s.push_str(&note);
+                    s
+                }
+                None => note,
+            });
+        }
+    }
     let mut fallback = None;
     let mut sparse_note = None;
     let mut acc_vox = 0.0;
