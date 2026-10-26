@@ -440,6 +440,7 @@ fn convert_and_write(
         iso_frac: 0.65,
         iso_abs: cfg.iso,
         seal: cfg.seal,
+        kernel_clamp_world: cfg.kernel_clamp_world,
         quant16: cfg.quant16,
         quant_scale: cfg.quant_scale,
         threads,
