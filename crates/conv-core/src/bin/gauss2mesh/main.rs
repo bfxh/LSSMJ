@@ -260,7 +260,10 @@ fn run_batch(cfg: &Config, inputs: &[String]) -> Result<(), String> {
     // auto：批量 ≥2 文件时 GPU 初始化可摊平（实测 4×256³ 为 2810 vs 3344 ms）
     let auto_gpu = cfg.gpu_auto && inputs.len() >= 2;
     if auto_gpu {
-        eprintln!("auto: 批量 {} 文件 → 自研 GPU 内核（初始化可摊平）", inputs.len());
+        eprintln!(
+            "auto: 批量 {} 文件 → 自研 GPU 内核（初始化可摊平）",
+            inputs.len()
+        );
     }
     let mut used: HashSet<std::path::PathBuf> = HashSet::new();
     let mut ok = 0usize;

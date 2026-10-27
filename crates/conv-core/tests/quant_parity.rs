@@ -4,7 +4,12 @@ use conv_core::gauss::voxel::{VoxelizeOptions, voxelize_quant};
 use conv_core::gauss::{sphere_gaussians, torus_gaussians};
 
 fn opts(threads: usize) -> VoxelizeOptions {
-    VoxelizeOptions { n: 64, threads, seal: false, ..VoxelizeOptions::default() }
+    VoxelizeOptions {
+        n: 64,
+        threads,
+        seal: false,
+        ..VoxelizeOptions::default()
+    }
 }
 
 #[test]

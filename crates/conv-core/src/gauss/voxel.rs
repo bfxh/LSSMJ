@@ -9,9 +9,9 @@ use super::{Aabb, Gaussian, bounds_of, dot, normalize_vec};
 
 #[cfg(target_arch = "x86_64")]
 mod avx2;
+pub mod quant;
 pub mod sparse_density;
 pub mod sparse_surfel;
-pub mod quant;
 pub mod surface_blocks;
 pub mod ternary;
 mod tiles;
@@ -781,9 +781,7 @@ fn splat_density_chunk(
                 #[cfg(target_arch = "x86_64")]
                 if simd {
                     unsafe {
-                        avx2::density_row(
-                            g, grid, y, z, range.lo[0], range.hi[0], 0, op, out, row,
-                        );
+                        avx2::density_row(g, grid, y, z, range.lo[0], range.hi[0], 0, op, out, row);
                     }
                     continue;
                 }

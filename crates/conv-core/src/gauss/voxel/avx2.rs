@@ -87,7 +87,6 @@ pub(super) unsafe fn density_row(
     }
 }
 
-
 /// u8/u16 定点量化行内核：与标量 `splat_quant_chunk` 逐位一致（只向量化 maha，无 FMA/无重排）。
 #[allow(clippy::too_many_arguments)]
 #[target_feature(enable = "avx2")]

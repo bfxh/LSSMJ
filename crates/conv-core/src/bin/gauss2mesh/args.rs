@@ -255,7 +255,9 @@ pub(crate) fn parse_config(
         cfg.kernel_clamp_world = Some(x);
     }
     if let Some(v) = flags.get("quant-scale") {
-        let x: f32 = v.parse().map_err(|_| format!("--quant-scale 不是数值：{v}"))?;
+        let x: f32 = v
+            .parse()
+            .map_err(|_| format!("--quant-scale 不是数值：{v}"))?;
         if x <= 0.0 || !x.is_finite() {
             return Err("--quant-scale 必须 > 0".into());
         }

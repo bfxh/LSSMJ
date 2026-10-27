@@ -67,7 +67,14 @@ fn trit_add(words: &mut [u32], idx: usize) {
     }
 }
 
-fn splat_trit_chunk(prepared: &[Prepared], indices: &[u32], grid: &Grid, chunk: Chunk, m_cut: f32, out: &mut [u32]) {
+fn splat_trit_chunk(
+    prepared: &[Prepared],
+    indices: &[u32],
+    grid: &Grid,
+    chunk: Chunk,
+    m_cut: f32,
+    out: &mut [u32],
+) {
     let n = grid.n as usize;
     let n2 = n * n;
     for &gi in indices {
@@ -125,12 +132,25 @@ pub fn voxelize_ternary_with(
     if !aligned {
         let mut buf = vec![0u32; (n * n * n).div_ceil(16)];
         let indices: Vec<u32> = (0..prepared.len() as u32).collect();
-        splat_trit_chunk(&prepared, &indices, &grid, Chunk { z0: 0, z1: n as u32 }, m_cut, &mut buf);
+        splat_trit_chunk(
+            &prepared,
+            &indices,
+            &grid,
+            Chunk {
+                z0: 0,
+                z1: n as u32,
+            },
+            m_cut,
+            &mut buf,
+        );
         words = buf;
     } else {
         // 每块 4 个 z 层 = 4·n² 个体素 = n²/4 个 word（n%4==0 ⇒ 整字）。
         let blocks: Vec<Chunk> = (0..n / 4)
-            .map(|i| Chunk { z0: (i * 4) as u32, z1: (i * 4 + 4) as u32 })
+            .map(|i| Chunk {
+                z0: (i * 4) as u32,
+                z1: (i * 4 + 4) as u32,
+            })
             .collect();
         let mut parts = parallel_map_chunks(&blocks, workers, |_, c| {
             let wps = (c.z1 - c.z0) as usize * n * n / 16;
@@ -162,7 +182,11 @@ pub fn voxelize_ternary_with(
     let mut observed = 0usize;
     for (i, w) in words.iter().enumerate() {
         let mut w = *w;
-        let limit = if i == words.len() - 1 { n * n * n - i * 16 } else { 16 };
+        let limit = if i == words.len() - 1 {
+            n * n * n - i * 16
+        } else {
+            16
+        };
         for _ in 0..limit {
             match w & 0b11 {
                 0 => {}
@@ -176,10 +200,20 @@ pub fn voxelize_ternary_with(
         }
     }
 
-    Ok(TritField { grid, words, occupied, observed, workers, bounds })
+    Ok(TritField {
+        grid,
+        words,
+        occupied,
+        observed,
+        workers,
+        bounds,
+    })
 }
 
 /// 默认 3σ 截断（等价于旧的 18.0）。
-pub fn voxelize_ternary(gaussians: &[Gaussian], opts: &VoxelizeOptions) -> Result<TritField, String> {
+pub fn voxelize_ternary(
+    gaussians: &[Gaussian],
+    opts: &VoxelizeOptions,
+) -> Result<TritField, String> {
     voxelize_ternary_with(gaussians, opts, 18.0)
 }

@@ -6,7 +6,12 @@ use conv_core::gauss::{Gaussian, sphere_gaussians};
 fn opts(n: u32, threads: usize) -> VoxelizeOptions {
     // seal=false：不把未知区填成内部，否则 `values > iso` 会把「未观测的外部」也算进来，
     // 那不是 density 覆盖集。
-    VoxelizeOptions { n, threads, seal: false, ..VoxelizeOptions::default() }
+    VoxelizeOptions {
+        n,
+        threads,
+        seal: false,
+        ..VoxelizeOptions::default()
+    }
 }
 
 fn gs() -> Vec<Gaussian> {
@@ -40,5 +45,8 @@ fn single_gaussian_marks_its_own_voxel() {
     let n = t.grid.n;
     let c = n / 2;
     assert!(t.trit_at(c, c, c) >= 1, "中心体素必须被覆盖");
-    assert!(t.observed >= 1 && t.occupied == 0, "单个高斯不可能达到 trit=2");
+    assert!(
+        t.observed >= 1 && t.occupied == 0,
+        "单个高斯不可能达到 trit=2"
+    );
 }
