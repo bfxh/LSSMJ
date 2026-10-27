@@ -36,7 +36,7 @@ pub struct Mesh {
 /// GPU Surface Nets（`crate::gsn`）网格化。四边形槽位在 GPU 上按 atomicAdd 写入、顺序不定，
 /// 这里按三角形规范序排序后再算统计/哈希 ⇒ 同输入逐位一致。
 pub fn field_to_mesh_gpu(hd: &crate::jfa::Headless, field: &Field) -> Result<Mesh, String> {
-    let gsn = crate::gsn::surface_nets_gpu(hd, &field.values, field.grid.n)?;
+    let gsn = crate::gsn::surface_nets_gpu(hd, &field.values, field.grid.n, None)?;
     Ok(mesh_from_gsn(&gsn, &field.grid))
 }
 

@@ -7,6 +7,7 @@
 //! 样本缓冲按每三角上限 64 预分配（n_tris×64×16B）——压缩属后续片（GPU scan）。
 
 use crate::jfa::{Headless, INVALID, jfa_run, readback_f32, storage_entry, uniform_entry};
+use crate::timer::GpuTimer;
 use wgpu::util::DeviceExt;
 
 #[repr(C)]
@@ -22,7 +23,14 @@ const MAX_PER_TRI: u32 = 64;
 const WG1: u32 = 64;
 
 /// GPU mesh→SDF：返回世界单位窄带有符号距离场（带外为无符号距离）。
-pub fn mesh_to_sdf_gpu(hd: &Headless, verts: &[[f32; 3]], faces: &[[u32; 3]], n: u32) -> Vec<f32> {
+/// `timer`：C22 逐边 GPU 计时（None = 不计时）。
+pub fn mesh_to_sdf_gpu(
+    hd: &Headless,
+    verts: &[[f32; 3]],
+    faces: &[[u32; 3]],
+    n: u32,
+    mut timer: Option<&mut GpuTimer>,
+) -> Vec<f32> {
     let h_world = 2.0 / (n as f32 - 1.0);
     let device = &hd.device;
     let queue = &hd.queue;
@@ -169,27 +177,30 @@ pub fn mesh_to_sdf_gpu(hd: &Headless, verts: &[[f32; 3]], faces: &[[u32; 3]], n:
         ],
     });
 
-    let dispatch_linear = |pipe: &wgpu::ComputePipeline, threads: u32| {
+    let dispatch_linear =
+        |pipe: &wgpu::ComputePipeline, threads: u32, timer: &mut Option<&mut GpuTimer>| {
+            let mut enc =
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+            let tw = timer.as_deref_mut().and_then(|t| t.writes());
+            {
+                let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: None,
+                    timestamp_writes: tw,
+                });
+                pass.set_pipeline(pipe);
+                pass.set_bind_group(0, &bg, &[]);
+                pass.dispatch_workgroups(threads.div_ceil(WG1), 1, 1);
+            }
+            queue.submit([enc.finish()]);
+        };
+    let dispatch_3d = |pipe: &wgpu::ComputePipeline, timer: &mut Option<&mut GpuTimer>| {
         let mut enc =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        let tw = timer.as_deref_mut().and_then(|t| t.writes());
         {
             let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: None,
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(pipe);
-            pass.set_bind_group(0, &bg, &[]);
-            pass.dispatch_workgroups(threads.div_ceil(WG1), 1, 1);
-        }
-        queue.submit([enc.finish()]);
-    };
-    let dispatch_3d = |pipe: &wgpu::ComputePipeline| {
-        let mut enc =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-        {
-            let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: None,
-                timestamp_writes: None,
+                timestamp_writes: tw,
             });
             pass.set_pipeline(pipe);
             pass.set_bind_group(0, &bg, &[]);
@@ -200,7 +211,7 @@ pub fn mesh_to_sdf_gpu(hd: &Headless, verts: &[[f32; 3]], faces: &[[u32; 3]], n:
     };
 
     // ① 计数 + 回读（小缓冲回读；GPU 前缀和属后续片）
-    dispatch_linear(&count_pipe, n_tris);
+    dispatch_linear(&count_pipe, n_tris, &mut timer);
     let counts: Vec<u32> = readback_f32(hd, &counts_buf)
         .into_iter()
         .map(f32::to_bits)
@@ -216,14 +227,21 @@ pub fn mesh_to_sdf_gpu(hd: &Headless, verts: &[[f32; 3]], faces: &[[u32; 3]], n:
     queue.write_buffer(&base_buf, 0, bytemuck::cast_slice(&base));
 
     // ③ 发射样本 + atomicMin 散布
-    dispatch_linear(&emit_pipe, n_tris);
-    dispatch_linear(&scatter_pipe, total);
+    dispatch_linear(&emit_pipe, n_tris, &mut timer);
+    dispatch_linear(&scatter_pipe, total, &mut timer);
 
     // ④ JFA 泛洪 + 终距离（GPU 驻留；距离写入 dist_buf）
-    jfa_run(hd, &label_buf, &samples_buf, n, &dist_buf);
+    jfa_run(
+        hd,
+        &label_buf,
+        &samples_buf,
+        n,
+        &dist_buf,
+        timer.as_deref_mut(),
+    );
 
     // ⑤ 符号（窄带内逐体素径向射线，带外保持无符号）
-    dispatch_3d(&sign_pipe);
+    dispatch_3d(&sign_pipe, &mut timer);
 
     let mut out = readback_f32(hd, &dist_buf);
     for d in &mut out {
