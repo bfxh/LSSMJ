@@ -1,6 +1,6 @@
 //! 三值体素场判据：并行 = 串行（逐位），且是 density 场的超集。
 
-use conv_core::gauss::voxel::{VoxelizeOptions, voxelize, voxelize_ternary};
+use conv_core::gauss::voxel::{VoxelizeOptions, voxelize_ternary};
 use conv_core::gauss::{Gaussian, sphere_gaussians};
 
 fn opts(n: u32, threads: usize) -> VoxelizeOptions {

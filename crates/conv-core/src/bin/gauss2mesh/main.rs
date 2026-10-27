@@ -898,7 +898,7 @@ fn iso_pinned(opts: &VoxelizeOptions) -> bool {
         || opts.splat_integrate
 }
 
-/// >256³ 的 density iso：显式 `--iso` 直接用；否则跑半分辨率探针。
+/// \>256³ 的 density iso：显式 `--iso` 直接用；否则跑半分辨率探针。
 /// 默认核宽随 h 漂移，实测 iso ∝ n⁻²（scene01：128→117.52、256→29.386、512→7.469，
 /// 比值 4.00 / 3.94），探针 iso 必须按 (probe_n/n)² 换算；但核宽/密度钉住后密度已
 /// 近似分辨率无关，再乘会把 512 的阈值压低 4 倍。

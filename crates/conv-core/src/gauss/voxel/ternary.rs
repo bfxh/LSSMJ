@@ -126,7 +126,7 @@ pub fn voxelize_ternary_with(
     let prepared = prepare_density(gaussians, &grid, opts);
     let workers = opts.threads.clamp(1, n.max(1));
 
-    let aligned = n % 4 == 0;
+    let aligned = n.is_multiple_of(4);
     let mut words: Vec<u32>;
 
     if !aligned {

@@ -51,8 +51,8 @@ pub fn try_headless_device_sized(need_bytes: u64) -> Result<Headless, String> {
         // 先按 adapter 实际上限申请；失败再退回默认（128³ 及以下不受影响）。
         let supported = adapter.limits();
         let dflt = wgpu::Limits::default();
-        let fits_default = need_bytes <= dflt.max_storage_buffer_binding_size as u64
-            && need_bytes <= dflt.max_buffer_size as u64;
+        let fits_default = need_bytes <= dflt.max_storage_buffer_binding_size
+            && need_bytes <= dflt.max_buffer_size;
         let elevated = wgpu::Limits {
             max_storage_buffer_binding_size: supported.max_storage_buffer_binding_size,
             max_buffer_size: supported.max_buffer_size,

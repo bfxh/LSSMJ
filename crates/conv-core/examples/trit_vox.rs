@@ -104,11 +104,11 @@ fn main() {
         for tri in &trits {
             let mut inter = 0usize;
             let mut occ = 0usize;
-            for i in 0..n {
+            for (i, s) in surf.iter().enumerate().take(n) {
                 let t = (tri.words[i / 16] >> ((i % 16) * 2)) & 0b11;
                 if t >= 1 {
                     occ += 1;
-                    if surf[i] {
+                    if *s {
                         inter += 1;
                     }
                 }

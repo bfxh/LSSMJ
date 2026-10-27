@@ -248,7 +248,6 @@ mod tests {
 
     #[test]
     fn avx2_quant_row_matches_scalar_bitwise() {
-        use super::super::quant::Acc;
         if !available() {
             eprintln!("AVX2 unavailable; skip");
             return;
