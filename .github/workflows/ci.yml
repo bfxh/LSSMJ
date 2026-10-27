@@ -1,0 +1,84 @@
+# LSSMJ 阶段 1 基础 CI（v5 落地版）。
+#
+# 覆盖范围（如实声明）：
+#   - ledger selftest / ref_gate（schema 层 + 引用完整性；不含锚文件逐字复核）
+#   - Rust fmt / clippy / CPU 测试 / doc 测试 / GPU 测试编译（不运行 GPU）
+# 不覆盖：证据恢复与 A1 全量复算（F02，阶段 2）、GPU 运行时数值门（阶段 3）、
+# 性能与多平台矩阵（阶段 4）。GPU 相关变更不能以本 workflow 的绿色为"已验证"。
+#
+# Actions 以完整 commit SHA 固定（2026-10-08 自官方仓库解析，轻量 tag 即提交本身）：
+#   actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd   = v5.0.1
+#   actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 = v6.1.0
+# 升级由 Dependabot 提 PR，人工审核后更新 SHA 与旁注版本。
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # 只取消过时的 PR 运行；main push 与 merge_group 不中途取消。
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ledger-gates:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
+        with:
+          # 3.13 系列：本方案在 3.13.16 实测 selftest/ref_gate/单测全通过。
+          python-version: '3.13'
+      - name: ledger selftest（坏引文必须红在正确原因上）
+        run: python tools/ledger.py selftest
+      - name: ref_gate selftest + 单元测试
+        run: |
+          python tools/ref_gate.py selftest
+          python -m unittest discover -s tools/tests -v
+      - name: ref_gate check（docs 引用 → 账本 ID，fail-closed）
+        run: python tools/ref_gate.py check --exceptions ci/ref-gate-exceptions.json
+      - name: ledger 结构统计（仅展示，不替代 verify；A1 证据复算待阶段 2）
+        run: python tools/ledger.py stats
+
+  rust-gates:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+      - name: 安装 rust-toolchain.toml 固定的工具链
+        # runner 预装 rustup；不引入第三方 toolchain action。
+        # 显式 install（rustup ≥1.28 读取 rust-toolchain.toml），不依赖隐式自动安装。
+        run: |
+          rustup toolchain install
+          rustup show active-toolchain
+      - name: Rust 基础门（与本地同一脚本）
+        run: bash scripts/ci/rust-check.sh
+
+  ci-required:
+    # 唯一应设为 required check 的汇总 job：始终执行，任何前置非 success 即失败。
+    # skipped / cancelled / failure 一律不通过，杜绝"跳过即绿"。
+    if: ${{ always() }}
+    needs: [ledger-gates, rust-gates]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require all configured gates
+        env:
+          LEDGER_RESULT: ${{ needs.ledger-gates.result }}
+          RUST_RESULT: ${{ needs.rust-gates.result }}
+        run: |
+          echo "ledger-gates=$LEDGER_RESULT rust-gates=$RUST_RESULT"
+          test "$LEDGER_RESULT" = success
+          test "$RUST_RESULT" = success
