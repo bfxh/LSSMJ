@@ -1,0 +1,4 @@
+# 门脚本钉 LF。本机 core.autocrlf=true 且此前无属性文件，Windows 检出会把 .sh
+# 转成 CRLF：实测 Git Bash 容忍行尾 CR（rust-check.sh 全链仍退出码 0），但 WSL /
+# 真 Linux bash 会把 CR 带进命令参数（实测 path=[...Cargo.toml^M]），门会误红。
+*.sh text eol=lf

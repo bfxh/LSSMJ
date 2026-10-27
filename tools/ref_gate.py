@@ -46,6 +46,15 @@ def default_docs_dir() -> str:
     return os.path.join(repo_root(), "docs")
 
 
+def display_rel(path: str) -> str:
+    """报错定位用的相对路径。Windows 上 TEMP 夹具与仓库可能不同挂载点，
+    os.path.relpath 跨盘符会抛 ValueError；退回绝对路径，判定语义不变。"""
+    try:
+        return os.path.relpath(path, repo_root()).replace("\\", "/")
+    except ValueError:
+        return os.path.abspath(path).replace("\\", "/")
+
+
 class GateResult:
     """统一收集违规，保证输出与退出码一致、顺序确定。"""
 
@@ -79,7 +88,7 @@ def load_ledger_ids(ledger_dir: str, result: GateResult) -> set[str]:
         return ids
     result.stats["ledger_files"] = len(files)
     for path in files:
-        rel = os.path.relpath(path, repo_root()).replace("\\", "/")
+        rel = display_rel(path)
         try:
             with open(path, encoding="utf-8") as fh:
                 for lineno, line in enumerate(fh, 1):
@@ -158,7 +167,7 @@ def scan_docs(docs_dir: str, ids: set[str], exempt: set[str],
                 continue
             doc_files += 1
             path = os.path.join(root, fn)
-            rel = os.path.relpath(path, repo_root()).replace("\\", "/")
+            rel = display_rel(path)
             try:
                 with open(path, encoding="utf-8") as fh:
                     for lineno, line in enumerate(fh, 1):
