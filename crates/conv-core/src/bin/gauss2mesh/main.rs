@@ -20,7 +20,7 @@ use conv_core::gauss::{
     Gaussian, PruneOptions, add_floaters, blob_sphere_gaussians, bounds_of, median_flatness, prune,
     sphere_gaussians, torus_gaussians,
 };
-use conv_core::jfa::{Headless, try_headless_device};
+use conv_core::jfa::{Headless, try_headless_device_sized};
 use html::write_html;
 use report::{ReportData, Timings, jstr, report_json};
 use std::collections::{HashMap, HashSet};
@@ -36,11 +36,11 @@ static GPU_CACHE: OnceLock<Headless> = OnceLock::new();
 const SPARSE_BLOCK: u32 = 16;
 
 /// 同进程内复用同一 wgpu 设备；batch 的首个文件付 init，其余复用。
-fn cached_gpu() -> Result<&'static Headless, String> {
+fn cached_gpu(need_bytes: u64) -> Result<&'static Headless, String> {
     if let Some(hd) = GPU_CACHE.get() {
         return Ok(hd);
     }
-    let hd = try_headless_device()?;
+    let hd = try_headless_device_sized(need_bytes)?;
     Ok(GPU_CACHE.get_or_init(|| hd))
 }
 
@@ -115,6 +115,12 @@ fn run() -> Result<(), String> {
             let input = positional
                 .first()
                 .ok_or("convert 需要输入 PLY：gauss2mesh convert <input.ply>")?;
+            // auto：单文件只有大网格 + surfel 才走 GPU。
+            // 512³ density 的 GPU job 表会溢出 u32（探针已断言），必须留在稀疏 CPU。
+            let mut cfg = cfg;
+            if cfg.gpu_auto && cfg.grid >= 512 && cfg.mode == ModeSel::Surfel {
+                cfg.gpu = true;
+            }
             run_convert(&cfg, Path::new(input))
         }
         "batch" => run_batch(&cfg, &positional),
@@ -251,6 +257,14 @@ fn run_batch(cfg: &Config, inputs: &[String]) -> Result<(), String> {
     }
     fs::create_dir_all(&cfg.out_dir)
         .map_err(|e| format!("建目录 {} 失败：{e}", cfg.out_dir.display()))?;
+    // auto：批量 ≥2 文件时 GPU 初始化可摊平（实测 4×256³ 为 2810 vs 3344 ms）
+    let auto_gpu = cfg.gpu_auto && inputs.len() >= 2;
+    if auto_gpu {
+        eprintln!(
+            "auto: 批量 {} 文件 → 自研 GPU 内核（初始化可摊平）",
+            inputs.len()
+        );
+    }
     let mut used: HashSet<std::path::PathBuf> = HashSet::new();
     let mut ok = 0usize;
     let mut failed = 0usize;
@@ -270,6 +284,10 @@ fn run_batch(cfg: &Config, inputs: &[String]) -> Result<(), String> {
         }
         used.insert(obj.clone());
         let mut c = cfg.clone();
+        if auto_gpu {
+            c.gpu = true;
+            c.gpu_auto = false;
+        }
         c.out = Some(obj.clone());
         c.html = if cfg.no_html {
             None
@@ -374,14 +392,33 @@ fn convert_and_write(
     } else {
         cfg.threads
     };
-    let sparse = cfg.grid > 256;
+    let gpu_dense_512 = cfg.grid > 256 && cfg.gpu && mode == VoxelMode::Surfel;
+    let mut sparse = cfg.grid > 256 && !gpu_dense_512;
     let mut gpu_fallback = None;
-    if sparse && (cfg.gpu || cfg.gpu_mesh) {
-        gpu_fallback = Some(">256³ 走 CPU 稀疏分块；--gpu/--gpu-mesh 不适用".into());
-    }
-    let gpu_device = if !sparse && (cfg.gpu || cfg.gpu_mesh) {
+    let want_gpu = if cfg.grid > 256 && !gpu_dense_512 {
+        if cfg.gpu || cfg.gpu_mesh {
+            gpu_fallback = Some(if mode == VoxelMode::Density {
+                "512³ density 的 GPU job 表会溢出 u32；已走稀疏 CPU（auto-iso）".into()
+            } else {
+                ">256³ 的 --gpu-mesh 需要配合 --gpu（dense GPU）；已走稀疏 CPU".into()
+            });
+        }
+        false
+    } else {
+        cfg.gpu || cfg.gpu_mesh
+    };
+    // --density-norm 只实现了 CPU 内核；显式/自动选 GPU 时降级到 CPU 并说明。
+    let want_gpu = if cfg.density_norm_ref.is_some() && want_gpu {
+        gpu_fallback = Some("--density-norm 仅有 CPU 实现 → CPU".into());
+        false
+    } else {
+        want_gpu
+    };
+    let gpu_device = if want_gpu {
         let t = Instant::now();
-        match cached_gpu() {
+        // 只按本次实际需要的缓冲申请 limits（小网格不要求 512 MB 绑定）
+        let need = (cfg.grid as u64).pow(3) * if mode == VoxelMode::Surfel { 16 } else { 4 };
+        match cached_gpu(need) {
             Ok(hd) => {
                 timings.gpu_init = t.elapsed().as_secs_f64() * 1e3;
                 Some(hd)
@@ -394,7 +431,31 @@ fn convert_and_write(
     } else {
         None
     };
+    if want_gpu && cfg.grid > 256 && cfg.gpu && gpu_device.is_none() {
+        sparse = true;
+        gpu_fallback = Some("GPU 初始化失败 → 512 走稀疏 CPU".into());
+    }
     let gpu_ref = gpu_device;
+    // >256³ 的稀疏 density：数值核宽下限 `0.75×h` 在细网格上远小于数据的作者尺度，
+    // 于是等值面被抽成薄壳，默认 `seal=true` 承诺的「实心体」拿不到（实测 512³
+    // 0.25505 / χ=−39 / 25 分量）。默认把核宽钉在参考 256³ 的世界尺度，512³ 得到
+    // 0.72455 / χ=5 / 5 分量。≤256³ 与 surfel 不受影响；显式 --kernel-clamp-* 优先。
+    let mut clamp_default_note = None;
+    let kernel_clamp_ref = if cfg.kernel_clamp_ref.is_none()
+        && cfg.kernel_clamp_world.is_none()
+        && !cfg.splat_integrate
+        && cfg.cross_resolution.is_none()
+        && sparse
+        && mode == VoxelMode::Density
+        && cfg.grid > 256
+    {
+        clamp_default_note = Some(
+            ">256³ density 默认把核宽钉在参考 256³ 世界尺度（否则等值面被抽成薄壳）".to_string(),
+        );
+        Some(256u32)
+    } else {
+        cfg.kernel_clamp_ref
+    };
     let mut voxel_opts = VoxelizeOptions {
         mode,
         bins3d: cfg.bins3d,
@@ -409,9 +470,52 @@ fn convert_and_write(
         iso_frac: 0.65,
         iso_abs: cfg.iso,
         seal: cfg.seal,
+        kernel_clamp_world: cfg.kernel_clamp_world,
+        kernel_clamp_ref,
+        density_norm_ref: cfg.density_norm_ref,
+        splat_integrate: cfg.splat_integrate,
+        quant16: cfg.quant16,
+        quant_scale: cfg.quant_scale,
         threads,
         ..VoxelizeOptions::default()
     };
+    // --cross-resolution <ref>：一键统一口径——核宽钉在参考网格，iso 也用参考网格的绝对阈值。
+    if let Some(r) = cfg.cross_resolution {
+        if voxel_opts.kernel_clamp_ref.is_none() && voxel_opts.kernel_clamp_world.is_none() {
+            voxel_opts.kernel_clamp_ref = Some(r);
+        }
+        if voxel_opts.iso_abs.is_none() {
+            let mut probe = voxel_opts.clone();
+            probe.n = r;
+            probe.backend = Backend::Cpu;
+            probe.bins3d = false;
+            probe.seal = false;
+            let iso = voxelize(&kept, &probe)
+                .map_err(|e| format!("--cross-resolution {r} 的参考 iso 探针失败：{e}"))?
+                .iso;
+            voxel_opts.iso_abs = Some(iso);
+            let inner_cur = (cfg.grid as f32 - 1.0 - 2.0 * cfg.padding as f32).max(1.0);
+            let inner_ref = (r as f32 - 1.0 - 2.0 * cfg.padding as f32).max(1.0);
+            let ratio = inner_cur / inner_ref;
+            let mut note = format!(
+                "--cross-resolution {r}：核宽钉在 {r}³ 世界尺度，iso={iso:.5}（{r}³ 探针，所有 grid 复用）"
+            );
+            if ratio < 0.667 {
+                note.push_str(&format!(
+                    "；⚠ 本 grid 的核宽下限只有 {:.2} 格，<0.5 格会采样成空场（64³ 实测塌到 0.014），建议 --grid ≥ {r}",
+                    0.75 * ratio
+                ));
+            }
+            clamp_default_note = Some(match clamp_default_note {
+                Some(mut s) => {
+                    s.push('；');
+                    s.push_str(&note);
+                    s
+                }
+                None => note,
+            });
+        }
+    }
     let mut fallback = None;
     let mut sparse_note = None;
     let mut acc_vox = 0.0;
@@ -438,6 +542,11 @@ fn convert_and_write(
                     Err(e) => e.clone(),
                     Ok(_) => "GPU 输出空网格".to_string(),
                 };
+                if cfg.grid > 256 && result.is_err() {
+                    return Err(format!(
+                        "512³ GPU 失败（{reason}）；去掉 --gpu 可走稀疏 CPU"
+                    ));
+                }
                 voxel_opts.backend = Backend::Cpu;
                 result = run_leg(&kept, &voxel_opts, gpu_ref);
                 if let Ok((_, _, v, m)) = &result {
@@ -472,6 +581,10 @@ fn convert_and_write(
     };
     timings.voxel = acc_vox;
     timings.mesh = acc_mesh;
+    if let Some(note) = &clamp_default_note {
+        auto_reason.push('；');
+        auto_reason.push_str(note);
+    }
     if let Some(note) = &sparse_note {
         auto_reason.push('；');
         auto_reason.push_str(note);
@@ -760,9 +873,15 @@ fn run_leg(
     gpu: Option<&Headless>,
 ) -> Result<(Field, Mesh, f64, f64), String> {
     let t = Instant::now();
-    let field = match (opts.backend, gpu) {
-        (Backend::Gpu, Some(hd)) => voxelize_gpu_with(hd, gaussians, opts)?,
-        _ => voxelize(gaussians, opts)?,
+    let field = if opts.quant16 {
+        // 显式 u16 定点路径：与 f32 同面（IoU 0.996–1.000），1.1×，内存 1/2
+        let (f, _scale) = conv_core::gauss::voxel::quantize_field_auto(gaussians, opts)?;
+        f
+    } else {
+        match (opts.backend, gpu) {
+            (Backend::Gpu, Some(hd)) => voxelize_gpu_with(hd, gaussians, opts)?,
+            _ => voxelize(gaussians, opts)?,
+        }
     };
     let voxel_ms = t.elapsed().as_secs_f64() * 1e3;
     let t = Instant::now();
@@ -771,20 +890,82 @@ fn run_leg(
     Ok((field, mesh, voxel_ms, mesh_ms))
 }
 
+/// 核宽/密度是否已钉在世界单位（此时密度近似分辨率无关，探针 iso 不再按 n⁻² 换算）。
+fn iso_pinned(opts: &VoxelizeOptions) -> bool {
+    opts.kernel_clamp_ref.is_some()
+        || opts.kernel_clamp_world.is_some()
+        || opts.density_norm_ref.is_some()
+        || opts.splat_integrate
+}
+
+/// \>256³ 的 density iso：显式 `--iso` 直接用；否则跑半分辨率探针。
+/// 默认核宽随 h 漂移，实测 iso ∝ n⁻²（scene01：128→117.52、256→29.386、512→7.469，
+/// 比值 4.00 / 3.94），探针 iso 必须按 (probe_n/n)² 换算；但核宽/密度钉住后密度已
+/// 近似分辨率无关，再乘会把 512 的阈值压低 4 倍。
+fn resolve_sparse_iso(
+    gaussians: &[Gaussian],
+    opts: &VoxelizeOptions,
+) -> Result<(f32, f64, Option<String>), String> {
+    if let Some(v) = opts.iso_abs {
+        return Ok((v, 0.0, None));
+    }
+    let probe_n = (opts.n / 2).clamp(8, 256);
+    let mut probe = opts.clone();
+    probe.n = probe_n;
+    probe.backend = Backend::Cpu;
+    probe.bins3d = false;
+    probe.seal = false;
+    let t = Instant::now();
+    let iso = voxelize(gaussians, &probe)
+        .map_err(|e| format!(">256³ density 自动 iso 失败（{probe_n}³ 探针）：{e}"))?
+        .iso;
+    let probe_ms = t.elapsed().as_secs_f64() * 1e3;
+    let pinned = iso_pinned(opts) || opts.splat_integrate;
+    let k = if pinned {
+        1.0
+    } else {
+        (probe_n as f32 / opts.n as f32).powi(2)
+    };
+    let iso = iso * k;
+    let note = if pinned {
+        format!("auto iso {iso:.8}（{probe_n}³ 探针，核宽/密度已钉在世界单位 ⇒ 不换算分辨率）")
+    } else {
+        format!(
+            "auto iso {iso:.4}（{probe_n}³ 探针 ×{k:.3} 分辨率换算；                         p99.9 本身随分辨率漂移，512³ 体积约为 256³ 的 1/2，需同面请显式 --iso）"
+        )
+    };
+    Ok((iso, probe_ms, Some(note)))
+}
+
 fn run_sparse_leg(
     gaussians: &[Gaussian],
     opts: &VoxelizeOptions,
 ) -> Result<(Field, Mesh, f64, f64, Option<String>), String> {
     let bounds = opts.aabb.unwrap_or_else(|| bounds_of(gaussians));
     let grid = Grid::fit(bounds, opts.n, opts.padding)?;
+    let mut probe_ms = 0.0f64;
+    let mut iso_note = None;
+    let iso_fixed = if opts.mode == VoxelMode::Density {
+        let (iso, ms, note) = resolve_sparse_iso(gaussians, opts)?;
+        probe_ms = ms;
+        iso_note = note;
+        Some(iso)
+    } else {
+        None
+    };
+    // 候选块检测内部会跑一遍粗分辨率 density；若核宽已钉住但 iso 还是 auto，粗场会
+    // 用自己的（随分辨率漂移的）auto-iso，导致 auto 与显式 --iso 选出不同的块集。
+    // 钉住时把已解析的 iso 交给检测，两条路径才一致；默认路径不动。
+    let mut det_opts = opts.clone();
+    if let (Some(iso), true, true) = (iso_fixed, iso_pinned(opts), opts.iso_abs.is_none()) {
+        det_opts.iso_abs = Some(iso);
+    }
     let t = Instant::now();
-    let blocks = SurfaceBlocks::detect(gaussians, opts, grid, SPARSE_BLOCK, 0, 4)
+    let blocks = SurfaceBlocks::detect(gaussians, &det_opts, grid, SPARSE_BLOCK, 0, 4)
         .map_err(|e| format!("稀疏候选块失败：{e}"))?;
     let detect_ms = t.elapsed().as_secs_f64() * 1e3;
     let build_ms;
     let mesh_ms;
-    let mut probe_ms = 0.0f64;
-    let mut iso_note = None;
     let (mesh, observed, sealed, iso) = match opts.mode {
         VoxelMode::Surfel => {
             let t = Instant::now();
@@ -796,26 +977,7 @@ fn run_sparse_leg(
             (m, s.observed, s.sealed_interior, 0.0)
         }
         VoxelMode::Density => {
-            let iso = match opts.iso_abs {
-                Some(v) => v,
-                None => {
-                    let probe_n = (opts.n / 2).clamp(8, 256);
-                    let mut probe = opts.clone();
-                    probe.n = probe_n;
-                    probe.backend = Backend::Cpu;
-                    probe.bins3d = false;
-                    probe.seal = false;
-                    let t = Instant::now();
-                    let iso = voxelize(gaussians, &probe)
-                        .map_err(|e| {
-                            format!(">256³ density 自动 iso 失败（{probe_n}³ 探针）：{e}")
-                        })?
-                        .iso;
-                    probe_ms = t.elapsed().as_secs_f64() * 1e3;
-                    iso_note = Some(format!("auto iso {iso:.4}（{probe_n}³ 探针）"));
-                    iso
-                }
-            };
+            let iso = iso_fixed.ok_or("density 路径缺少 iso")?;
             let t = Instant::now();
             let s = SparseDensity::build(gaussians, opts, grid, &blocks, iso, opts.seal)?;
             build_ms = t.elapsed().as_secs_f64() * 1e3;

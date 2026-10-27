@@ -13,15 +13,28 @@ LSSMJ gauss2mesh · 高斯体素 → 网格
   gauss2mesh inspect <input.ply>           只读入并报告统计
 
 常用选项：
-  --grid <N>             体素分辨率 8..512（默认 64；>256 走稀疏分块，density 自动半分辨率探针求 iso）
+  --grid <N>             体素分辨率 8..1024（默认 64；>256 无 --gpu 走稀疏分块，density 自动半分辨率探针求 iso）
   --threads <N>          splat 线程数（默认 0=自动；1=单线程参照）
-  --gpu                  GPU splat（定点整数原子；失败回退 CPU；忽略 --threads）
-  --gpu-mesh             GPU Surface Nets 网格化（实验档：读回开销大，通常慢于 CPU；失败回退）
+  --gpu                  强制 GPU splat（自研 wgpu 内核；512 走 dense GPU，约 3 GB 显存；失败回退 CPU/稀疏）
+  --no-gpu               强制 CPU（默认 auto：批量 ≥2 文件或 grid ≥512 走 GPU，其余 CPU）
+  --gpu-mesh             GPU Surface Nets（实验档：通常慢于 CPU；>256 需配合 --gpu；失败回退）
   --bins3d               CPU splat 走 3D tile 分桶（默认 z-slab；GPU 忽略）
   --simd-prep            可选 SIMD/cyclic eigen prep（默认标量逐位；opt-in 改哈希）
   --largest-component    只保留最大连通分量（去 floaters/碎片）
   --mode <auto|density|surfel>（默认 auto）
   --iso <auto|数值>      密度阈值；auto = 0.65 × 正密度 99.9 分位
+  --kernel-clamp-world <σ>  核标准差下限用世界单位（默认按 0.75 格）
+  --kernel-clamp-ref <N>    按参考网格 N 折算核下限（= 0.75 × h_N）：跨 grid 复用同一核宽，
+                        等价于把核宽冻结在 N³；opt-in，不改默认行为
+  --cross-resolution <N> 一键统一跨 grid 口径：核宽钉在 N³ 世界尺度 + iso 取 N³ 的绝对阈值
+                        （= --kernel-clamp-ref N + --iso <N³ 探针值>；opt-in，不改默认）
+  --splat-integrate      体素内积分 splat：核方差 +h²/12、权重 ×h³ ⇒ 密度与分辨率无关
+                        （跨 grid 复用同一 --iso；与 --kernel-clamp-* 互斥）
+  --density-norm <N>    把 splat 权重乘 (h_N/h)²，让密度跨分辨率可比（opt-in，仅 CPU）
+                        注意：它只修密度幅度、不修核宽，512³ 拓扑仍不闭合；
+                        要跨分辨率同面请用 --kernel-clamp-ref <N> + 显式 --iso
+  --quant16              走 u16 定点密度 splat（需 --iso）：同面、内存 1/2
+  --quant-scale <S>      指定 u16 定点 scale，跳过标定（批量复用时省一趟 splat）
   --prune-opacity <f>    不透明度下限（默认 0.05）
   --min-radius <f>       3σ 半径下限（默认 0，关）
   --padding <n>          域边界留白格（默认 3；覆盖 3h 采样带宽）
@@ -77,6 +90,15 @@ pub(crate) struct Config {
     pub(crate) padding: u32,
     pub(crate) seal: bool,
     pub(crate) largest_component: bool,
+    pub(crate) kernel_clamp_world: Option<f32>,
+    pub(crate) kernel_clamp_ref: Option<u32>,
+    pub(crate) density_norm_ref: Option<u32>,
+    pub(crate) splat_integrate: bool,
+    pub(crate) cross_resolution: Option<u32>,
+    pub(crate) quant16: bool,
+    pub(crate) no_gpu: bool,
+    pub(crate) gpu_auto: bool,
+    pub(crate) quant_scale: Option<f32>,
     pub(crate) seed: u64,
     pub(crate) raw_scale: bool,
     pub(crate) raw_opacity: bool,
@@ -105,6 +127,15 @@ impl Default for Config {
             padding: 3,
             seal: true,
             largest_component: false,
+            kernel_clamp_world: None,
+            kernel_clamp_ref: None,
+            density_norm_ref: None,
+            splat_integrate: false,
+            cross_resolution: None,
+            quant16: false,
+            no_gpu: false,
+            gpu_auto: true,
+            quant_scale: None,
             seed: 7,
             raw_scale: false,
             raw_opacity: false,
@@ -127,11 +158,14 @@ pub(crate) fn is_bool_flag(name: &str) -> bool {
             | "raw-opacity"
             | "quiet"
             | "help"
+            | "quant16"
+            | "no-gpu"
             | "gpu"
             | "gpu-mesh"
             | "bins3d"
             | "simd-prep"
             | "largest-component"
+            | "splat-integrate"
     )
 }
 
@@ -144,6 +178,11 @@ pub(crate) fn parse_config(
         "threads",
         "mode",
         "iso",
+        "quant-scale",
+        "kernel-clamp-world",
+        "kernel-clamp-ref",
+        "density-norm",
+        "cross-resolution",
         "prune-opacity",
         "min-radius",
         "max-radius",
@@ -161,8 +200,8 @@ pub(crate) fn parse_config(
     let mut cfg = Config::default();
     if let Some(v) = flags.get("grid") {
         cfg.grid = v.parse().map_err(|_| format!("--grid 不是整数：{v}"))?;
-        if !(8..=512).contains(&cfg.grid) {
-            return Err("--grid 必须在 8..=512".into());
+        if !(8..=1024).contains(&cfg.grid) {
+            return Err("--grid 必须在 8..=1024".into());
         }
     }
     if let Some(v) = flags.get("threads") {
@@ -178,6 +217,51 @@ pub(crate) fn parse_config(
             "surfel" => ModeSel::Surfel,
             _ => return Err(format!("--mode 只能是 auto|density|surfel：{v}")),
         };
+    }
+    if let Some(v) = flags.get("kernel-clamp-ref") {
+        let x: u32 = v
+            .parse()
+            .map_err(|_| format!("--kernel-clamp-ref 不是整数：{v}"))?;
+        if x < 8 {
+            return Err("--kernel-clamp-ref 必须 ≥ 8".into());
+        }
+        cfg.kernel_clamp_ref = Some(x);
+    }
+    if let Some(v) = flags.get("cross-resolution") {
+        let x: u32 = v
+            .parse()
+            .map_err(|_| format!("--cross-resolution 不是整数：{v}"))?;
+        if !(8..=1024).contains(&x) {
+            return Err("--cross-resolution 必须在 8..=1024".into());
+        }
+        cfg.cross_resolution = Some(x);
+    }
+    if let Some(v) = flags.get("density-norm") {
+        let x: u32 = v
+            .parse()
+            .map_err(|_| format!("--density-norm 不是整数：{v}"))?;
+        if x < 8 {
+            return Err("--density-norm 必须 ≥ 8".into());
+        }
+        cfg.density_norm_ref = Some(x);
+    }
+    if let Some(v) = flags.get("kernel-clamp-world") {
+        let x: f32 = v
+            .parse()
+            .map_err(|_| format!("--kernel-clamp-world 不是数值：{v}"))?;
+        if x <= 0.0 || !x.is_finite() {
+            return Err("--kernel-clamp-world 必须 > 0".into());
+        }
+        cfg.kernel_clamp_world = Some(x);
+    }
+    if let Some(v) = flags.get("quant-scale") {
+        let x: f32 = v
+            .parse()
+            .map_err(|_| format!("--quant-scale 不是数值：{v}"))?;
+        if x <= 0.0 || !x.is_finite() {
+            return Err("--quant-scale 必须 > 0".into());
+        }
+        cfg.quant_scale = Some(x);
     }
     if let Some(v) = flags.get("iso").filter(|v| *v != "auto") {
         let x: f32 = v.parse().map_err(|_| format!("--iso 不是数值：{v}"))?;
@@ -215,7 +299,15 @@ pub(crate) fn parse_config(
     }
     cfg.seal = !bools.contains("hollow");
     cfg.largest_component = bools.contains("largest-component");
+    cfg.quant16 = bools.contains("quant16");
+    cfg.splat_integrate = bools.contains("splat-integrate");
+    cfg.no_gpu = bools.contains("no-gpu");
     cfg.gpu = bools.contains("gpu");
+    if cfg.gpu && cfg.no_gpu {
+        return Err("--gpu 与 --no-gpu 不能同时用".into());
+    }
+    // 默认 auto：没显式指定就由规模决定（批量/大网格走自研 GPU 内核）
+    cfg.gpu_auto = !cfg.gpu && !cfg.no_gpu;
     cfg.gpu_mesh = bools.contains("gpu-mesh");
     cfg.bins3d = bools.contains("bins3d");
     cfg.simd_prep = bools.contains("simd-prep");

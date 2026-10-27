@@ -9,9 +9,11 @@ use super::{Aabb, Gaussian, bounds_of, dot, normalize_vec};
 
 #[cfg(target_arch = "x86_64")]
 mod avx2;
+pub mod quant;
 pub mod sparse_density;
 pub mod sparse_surfel;
 pub mod surface_blocks;
+pub mod ternary;
 mod tiles;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -114,6 +116,23 @@ pub struct VoxelizeOptions {
     pub iso_abs: Option<f32>,
     /// 密度核在最薄轴上的标准差下限（格）。
     pub kernel_clamp_cells: f32,
+    /// 可选：用**世界单位**给核标准差下限（覆盖 `kernel_clamp_cells × h`）。
+    /// 这样同一 σ 在不同 grid 下含义一致，密度场才可能跨分辨率对齐。
+    pub kernel_clamp_world: Option<f32>,
+    /// 可选：按**参考网格**折算核下限（`0.75 × h_ref`）。同一参考值在任何 grid 上
+    /// 得到同一世界 σ，等价于「把核宽固定成 N³ 时的样子」，无需按场景手算 σ。
+    pub kernel_clamp_ref: Option<u32>,
+    /// 可选：**体素内积分** splat（opt-in）。把每个高斯看成在体素上积分：
+    /// `w = α·h³·N(p; μ, Σ + h²/12)`。两处效果：
+    /// ① `+h²/12` 让核天然不薄于体素（粗网格不会采样成空场）；
+    /// ② 乘 `h³` 使全域求和 ≈ α，**密度与分辨率无关**，同一 iso 可跨 grid 复用。
+    pub splat_integrate: bool,
+    /// 可选（opt-in）：把 splat 权重乘 `(h_ref/h)²`，让密度跨分辨率可比。
+    /// 默认核宽随 h 漂移，实测密度 ∝ h⁻²（iso 按 n⁻² 漂移），乘 h² 后同一 `--iso` 才有可比性。
+    /// 因子锚定在参考网格上（ref == 当前 grid 时因子恰为 1，默认输出逐位不变）。
+    /// **注意**：只修密度幅度、不修核宽，512³ 拓扑仍不闭合；跨分辨率同面要用
+    /// `kernel_clamp_ref` + 显式 `iso_abs`。仅 CPU（dense/sparse）。
+    pub density_norm_ref: Option<u32>,
     /// 面元融合在最薄轴（法线方向）上的标准差下限（格）。
     pub normal_band_cells: f32,
     /// 面元 TSDF 累积的最小权重；低于它的体素视为未观测。
@@ -125,6 +144,10 @@ pub struct VoxelizeOptions {
     pub threads: usize,
     /// 手动取景（世界坐标）；None = 自动按 3σ 包围盒取景。
     pub aabb: Option<Aabb>,
+    /// 仅 `gauss2mesh` 使用：走 u16 定点密度（同面、1.1×、内存 1/2）。库侧 `voxelize` 忽略。
+    pub quant16: bool,
+    /// 显式 u16 scale；None = 由探针标定（多一趟 splat）。
+    pub quant_scale: Option<f32>,
 }
 
 impl Default for VoxelizeOptions {
@@ -139,11 +162,17 @@ impl Default for VoxelizeOptions {
             iso_frac: 0.65,
             iso_abs: None,
             kernel_clamp_cells: 0.75,
+            kernel_clamp_world: None,
+            kernel_clamp_ref: None,
+            splat_integrate: false,
+            density_norm_ref: None,
             normal_band_cells: 1.0,
             min_weight: 0.02,
             seal: true,
             threads: 1,
             aabb: None,
+            quant16: false,
+            quant_scale: None,
         }
     }
 }
@@ -179,6 +208,11 @@ fn fit_inputs(gaussians: &[Gaussian], opts: &VoxelizeOptions) -> Result<(Grid, A
     let grid = Grid::fit(bounds, opts.n, opts.padding)?;
     Ok((grid, bounds))
 }
+
+pub use quant::{
+    QuantField, quantize_auto_quantfield, quantize_field_auto, scale_for_iso, voxelize_quant,
+};
+pub use ternary::{TritField, voxelize_ternary, voxelize_ternary_with};
 
 pub fn voxelize(gaussians: &[Gaussian], opts: &VoxelizeOptions) -> Result<Field, String> {
     let (grid, bounds) = fit_inputs(gaussians, opts)?;
@@ -355,6 +389,33 @@ fn prepare_density_one(g: &Gaussian, min_var: f32) -> Prepared {
     Prepared {
         mean: g.mean,
         opacity: g.opacity.clamp(0.0, 1.0),
+        eigen,
+        lam,
+        radius,
+        normal: [0.0; 3],
+    }
+}
+
+/// 体素内积分版：`w = α·N(p; μ, Σ+h²/12)`（正态化，不乘 h³）。
+/// `+h²/12` 是体素盒的二阶矩：既让核不薄于体素（粗网格不会采空），
+/// 又让采样值逼近**连续密度**，于是 p99.9/iso 与分辨率无关。
+fn prepare_density_integrated_one(g: &Gaussian, cell_var: f32) -> Prepared {
+    let eigen = g.eigen();
+    let lam = [
+        eigen.values[0] + cell_var,
+        eigen.values[1] + cell_var,
+        eigen.values[2] + cell_var,
+    ];
+    let det = (lam[0] * lam[1] * lam[2]).max(1e-30);
+    let norm = 1.0 / ((2.0 * std::f32::consts::PI).powf(1.5) * det.sqrt());
+    let radius = [
+        world_sigma(&eigen, lam, 0),
+        world_sigma(&eigen, lam, 1),
+        world_sigma(&eigen, lam, 2),
+    ];
+    Prepared {
+        mean: g.mean,
+        opacity: g.opacity.clamp(0.0, 1.0) * norm,
         eigen,
         lam,
         radius,
@@ -564,12 +625,42 @@ fn prepare_surfel_simd(
     })
 }
 
+/// 密度权重缩放（`density_norm_ref`）：把每个 splat 贡献乘 `(h_ref/h)²`。
+/// 未开启时返回 1.0（乘 1.0 在 IEEE754 下逐位不变，故默认输出不受影响）。
+pub(crate) fn density_weight_scale(grid: &Grid, opts: &VoxelizeOptions) -> f32 {
+    let Some(r) = opts.density_norm_ref else {
+        return 1.0;
+    };
+    let inner_cur = (grid.n as f32 - 1.0 - 2.0 * opts.padding as f32).max(1.0);
+    let inner_ref = (r as f32 - 1.0 - 2.0 * opts.padding as f32).max(1.0);
+    let k = inner_cur / inner_ref;
+    (k * k).max(1e-12)
+}
+
 pub(crate) fn prepare_density(
     gaussians: &[Gaussian],
     grid: &Grid,
     opts: &VoxelizeOptions,
 ) -> Vec<Prepared> {
-    let min_var = (opts.kernel_clamp_cells.max(0.001) * grid.h).powi(2);
+    let min_var = if let Some(w) = opts.kernel_clamp_world {
+        w.max(1e-6).powi(2)
+    } else if let Some(r) = opts.kernel_clamp_ref {
+        // 由当前 grid 反推参考网格的 h：h = h_cur × (n−1−2p) / (ref−1−2p)
+        let inner_cur = (grid.n as f32 - 1.0 - 2.0 * opts.padding as f32).max(1.0);
+        let inner_ref = (r as f32 - 1.0 - 2.0 * opts.padding as f32).max(1.0);
+        let h_ref = grid.h * inner_cur / inner_ref;
+        (opts.kernel_clamp_cells.max(0.001) * h_ref).powi(2)
+    } else {
+        (opts.kernel_clamp_cells.max(0.001) * grid.h).powi(2)
+    };
+    if opts.splat_integrate {
+        // 体素内积分：核方差加 h²/12（体素盒的二阶矩），权重乘 h³ 做体积归一。
+        // 这条路径不需要 min_var 下限（+h²/12 已保证不薄于体素），也不走 SIMD prep。
+        let cell_var = grid.h * grid.h / 12.0;
+        return parallel_prepare(gaussians, opts.threads, |g| {
+            prepare_density_integrated_one(g, cell_var)
+        });
+    }
     if opts.simd_prep {
         return prepare_density_simd(gaussians, min_var, opts.threads);
     }
@@ -664,6 +755,7 @@ fn splat_density_chunk(
     indices: &[u32],
     grid: &Grid,
     chunk: Chunk,
+    w_scale: f32,
     out: &mut [f32],
 ) {
     let n = grid.n as usize;
@@ -672,6 +764,7 @@ fn splat_density_chunk(
     let simd = avx2_splat();
     for &gi in indices {
         let g = &prepared[gi as usize];
+        let op = g.opacity * w_scale;
         let range = splat_range(grid, g.mean, g.radius);
         if range.empty {
             continue;
@@ -688,7 +781,7 @@ fn splat_density_chunk(
                 #[cfg(target_arch = "x86_64")]
                 if simd {
                     unsafe {
-                        avx2::density_row(g, grid, y, z, range.lo[0], range.hi[0], 0, out, row);
+                        avx2::density_row(g, grid, y, z, range.lo[0], range.hi[0], 0, op, out, row);
                     }
                     continue;
                 }
@@ -699,7 +792,7 @@ fn splat_density_chunk(
                     if m > 18.0 {
                         continue;
                     }
-                    out[row + x as usize] += g.opacity * (-0.5 * m).exp();
+                    out[row + x as usize] += op * (-0.5 * m).exp();
                 }
             }
         }
@@ -750,7 +843,12 @@ fn splat_surfel_chunk(
     }
 }
 
-fn parallel_splat_density(prepared: &[Prepared], grid: &Grid, workers: usize) -> (Vec<f32>, usize) {
+fn parallel_splat_density(
+    prepared: &[Prepared],
+    grid: &Grid,
+    workers: usize,
+    w_scale: f32,
+) -> (Vec<f32>, usize) {
     let n = grid.n as usize;
     let n2 = n * n;
     let chunk_count = if workers <= 1 {
@@ -763,7 +861,7 @@ fn parallel_splat_density(prepared: &[Prepared], grid: &Grid, workers: usize) ->
     let bins = build_bins(prepared, grid, &chunks);
     let mut parts = parallel_map_chunks(&chunks, workers, |i, c| {
         let mut local = vec![0f32; n2 * (c.z1 - c.z0) as usize];
-        splat_density_chunk(prepared, &bins[i], grid, *c, &mut local);
+        splat_density_chunk(prepared, &bins[i], grid, *c, w_scale, &mut local);
         local
     });
     parts.sort_by_key(|(i, _)| *i);
@@ -821,10 +919,14 @@ fn voxelize_density(
     if prepared.is_empty() {
         return Err("没有有效的高斯（NaN/Inf/非正不透明度）".into());
     }
+    let w_scale = density_weight_scale(&grid, opts);
     let (density, workers) = if opts.bins3d {
+        if opts.density_norm_ref.is_some() {
+            return Err("--density-norm 与 --bins3d 暂不兼容（tile 路径未归一化）".into());
+        }
         tiles::splat_density_tiles(&prepared, &grid, opts.threads)
     } else {
-        parallel_splat_density(&prepared, &grid, opts.threads)
+        parallel_splat_density(&prepared, &grid, opts.threads, w_scale)
     };
     density_post(density, opts, grid, bounds, workers, Backend::Cpu)
 }
@@ -955,60 +1057,85 @@ pub(crate) fn surfel_post(
 ///
 /// 这是 TSDF 体融合的符号传播；开放面会让泛洪漏进内部（sealed_interior≈0），
 /// 上层应据此告警而不是静默出一个破面。
-fn seal_unknown(values: &mut [f32], known: &[bool], grid: &Grid, outside: f32) -> usize {
-    let n = grid.n;
-    let n_usize = n as usize;
-    let count = n_usize * n_usize * n_usize;
-    use std::collections::VecDeque;
-    let mut outside_mask = vec![false; count];
-    let mut queue = VecDeque::new();
-    let push = |idx: usize, mask: &mut [bool], q: &mut VecDeque<usize>| {
-        if !known[idx] && !mask[idx] {
-            mask[idx] = true;
-            q.push_back(idx);
+pub(crate) fn seal_unknown(values: &mut [f32], known: &[bool], grid: &Grid, outside: f32) -> usize {
+    let n = grid.n as usize;
+    let n2 = n * n;
+    // 扫描线填充：每个种子沿 x 扩成一段，再把上下左右 4 个邻行里与之重叠的未知段入栈。
+    // 语义与逐体素 BFS 完全相同（同一连通分量），只是入栈次数从 O(体素) 降到 O(段)。
+    let mut outside_mask = vec![false; n * n * n];
+    let mut stack: Vec<(usize, usize, usize)> = Vec::with_capacity(n * 2);
+
+    #[inline]
+    fn push_row(
+        mask: &mut [bool],
+        known: &[bool],
+        stack: &mut Vec<(usize, usize, usize)>,
+        n: usize,
+        y: usize,
+        z: usize,
+        xr: std::ops::RangeInclusive<usize>,
+    ) {
+        let row = z * n * n + y * n;
+        let (mut x, x1) = (*xr.start(), *xr.end());
+        while x <= x1 {
+            while x <= x1 && (known[row + x] || mask[row + x]) {
+                x += 1;
+            }
+            if x > x1 {
+                break;
+            }
+            let start = x;
+            while x <= x1 && !known[row + x] && !mask[row + x] {
+                x += 1;
+            }
+            stack.push((y, z, start));
         }
-    };
-    for z in 0..n_usize {
-        for y in 0..n_usize {
-            for x in 0..n_usize {
-                if x == 0
-                    || y == 0
-                    || z == 0
-                    || x + 1 == n_usize
-                    || y + 1 == n_usize
-                    || z + 1 == n_usize
-                {
-                    let idx = x + y * n_usize + z * n_usize * n_usize;
-                    push(idx, &mut outside_mask, &mut queue);
-                }
+    }
+
+    // 种子：域边界的未知体素
+    for z in 0..n {
+        for y in 0..n {
+            if z == 0 || z + 1 == n || y == 0 || y + 1 == n {
+                push_row(&mut outside_mask, known, &mut stack, n, y, z, 0..=n - 1);
+            } else {
+                push_row(&mut outside_mask, known, &mut stack, n, y, z, 0..=0);
+                push_row(&mut outside_mask, known, &mut stack, n, y, z, n - 1..=n - 1);
             }
         }
     }
-    while let Some(idx) = queue.pop_front() {
-        let x = idx % n_usize;
-        let y = (idx / n_usize) % n_usize;
-        let z = idx / (n_usize * n_usize);
-        if x > 0 {
-            push(idx - 1, &mut outside_mask, &mut queue);
+
+    while let Some((y, z, sx)) = stack.pop() {
+        let row = z * n2 + y * n;
+        if known[row + sx] || outside_mask[row + sx] {
+            continue;
         }
-        if x + 1 < n_usize {
-            push(idx + 1, &mut outside_mask, &mut queue);
+        let mut x0 = sx;
+        while x0 > 0 && !known[row + x0 - 1] && !outside_mask[row + x0 - 1] {
+            x0 -= 1;
+        }
+        let mut x1 = sx;
+        while x1 + 1 < n && !known[row + x1 + 1] && !outside_mask[row + x1 + 1] {
+            x1 += 1;
+        }
+        for x in x0..=x1 {
+            outside_mask[row + x] = true;
         }
         if y > 0 {
-            push(idx - n_usize, &mut outside_mask, &mut queue);
+            push_row(&mut outside_mask, known, &mut stack, n, y - 1, z, x0..=x1);
         }
-        if y + 1 < n_usize {
-            push(idx + n_usize, &mut outside_mask, &mut queue);
+        if y + 1 < n {
+            push_row(&mut outside_mask, known, &mut stack, n, y + 1, z, x0..=x1);
         }
         if z > 0 {
-            push(idx - n_usize * n_usize, &mut outside_mask, &mut queue);
+            push_row(&mut outside_mask, known, &mut stack, n, y, z - 1, x0..=x1);
         }
-        if z + 1 < n_usize {
-            push(idx + n_usize * n_usize, &mut outside_mask, &mut queue);
+        if z + 1 < n {
+            push_row(&mut outside_mask, known, &mut stack, n, y, z + 1, x0..=x1);
         }
     }
+
     let mut interior = 0usize;
-    for i in 0..count {
+    for i in 0..n * n * n {
         if !known[i] {
             if outside_mask[i] {
                 values[i] = outside;
@@ -1203,3 +1330,42 @@ mod bench_prepare {
 
 #[cfg(test)]
 mod bench_tiles;
+
+#[cfg(test)]
+mod norm_tests {
+    use super::*;
+
+    fn grid(n: u32, padding: u32) -> Grid {
+        Grid {
+            n,
+            origin: [0.0; 3],
+            h: 1.0 / (n - 1 - 2 * padding) as f32,
+        }
+    }
+
+    #[test]
+    fn density_norm_is_identity_at_reference_grid() {
+        let g = grid(256, 3);
+        let o0 = VoxelizeOptions::default();
+        assert_eq!(density_weight_scale(&g, &o0), 1.0);
+        let o = VoxelizeOptions {
+            density_norm_ref: Some(256),
+            ..Default::default()
+        };
+        // 参考网格 == 当前网格 ⇒ 因子恰为 1（默认输出逐位不变的前提）
+        assert_eq!(density_weight_scale(&g, &o), 1.0);
+    }
+
+    #[test]
+    fn density_norm_scales_with_h_squared() {
+        let o = VoxelizeOptions {
+            density_norm_ref: Some(256),
+            ..Default::default()
+        };
+        let k = density_weight_scale(&grid(128, 3), &o);
+        // h_128/h_256 = 249/121 ⇒ 因子 = (121/249)²
+        let want = (121.0f32 / 249.0).powi(2);
+        assert!((k - want).abs() < 1e-9, "k={k} want={want}");
+        assert!(k < 1.0 && k > 0.2);
+    }
+}

@@ -9,7 +9,7 @@
 > Microsoft WM_POINTER、WM_TOUCH、XInput / Apple NSEvent、UITouch、PencilKit（JSON 通道）/
 > Linux evdev 文档与 libinput / SDL3 文档与源码 / **winit `8b5f46d4`** / **Godot `084a2caa` core/input** /
 > **Flutter `4e5a0929` pointer 管线** / **egui `6b420bc1` 输入状态与命中** / **iced `84f785b0` 鼠标/触控** /
-> 青简 Windows 键输入分派 / Crossref 论文元数据。
+> 本项目 Windows 键输入分派 / Crossref 论文元数据。
 > **抓取物**：`D:/KF/LSSMJ/scratch/w11a/raw/`；复算脚本 `scratch/w11a/fetch.py`、`gen.py`。
 > **账本**：`docs/analysis/ledger/w11a.jsonl` **60 条 / verify rejected=0**（source 26 / doc 24 / paper 10；15 target）。
 > **口径**：本项目 = 渲染引擎 + 前端范式（用户 2026-10-03 范围裁决）；输入系统在范围内。
@@ -151,7 +151,7 @@
   本轮的原子报告/合并纪律是它们手感与正确性的前提。
 - **与 w3c（延迟）**：w3c 有 Carmack/帧调度等二手材料；本轮补上学术锚（`W11A-051..054`）与规范侧的
   coalesced/predicted（`W11A-027/028`），并把"输入延迟"与"帧时间"分开记账（`W11A-053`）。
-- **与 w5a/位图契约**：青简的"壳回传命中坐标"是最小输入回流；本轮把它扩展成完整指针/设备模型
+- **与 /位图契约**：本项目的"壳回传命中坐标"是最小输入回流；本轮把它扩展成完整指针/设备模型
   （宿主输入映射层，`W11A-026`）——位图契约不变，事件侧补全。
 - **与范围边界**：物理由用户侧实现，本轮只到"根运动/位移"的输出接口（w10a M1/G9a），不涉及碰撞与刚体。
 

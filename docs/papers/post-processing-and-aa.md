@@ -136,7 +136,7 @@ UE 的 Blendable Location 枚举把这一思想产品化（Before/After Tonemapp
   "After Rendering Post Processing"（后处理之后、AfterRendering 之前，W7A-145）——**两来源独立指向
   同一边界：后处理链止于 UI 合成之前**。
 - TAA 对透明/单历史是弱项（W7A-039），UI 是 alpha 密集的贴着相机的内容，进 TAA 只会更糟。
-- 结论：UI 档维持 `w5a` 位图契约（壳只贴最终帧），AA 选项仅影响场景层。
+- 结论：UI 档维持  位图契约（壳只贴最终帧），AA 选项仅影响场景层。
 
 ### 4.2 场景档（P5+）：最小可用集
 

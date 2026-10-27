@@ -1,7 +1,7 @@
 # 25 · 显示拓扑、DPI 缩放与窗口合成（多显示器 / 逻辑-物理换算 / 交换链 / VRR）
 
 > **这份报告是什么**：LSSMJ 显示面的**拓扑与缩放证据锚定**。此前的显示面是分块的：w3g 给了平台合成器
-> （DWM/SurfaceFlinger/WindowServer）、w5a 给了分层窗贴图、w10b 给了色彩管理与 HDR 显示链、
+> （DWM/SurfaceFlinger/WindowServer）、 给了分层窗贴图、w10b 给了色彩管理与 HDR 显示链、
 > w11a 给了输入坐标；但**多显示器、逐显示器 DPI、逻辑↔物理换算、缩放变化、窗口放置与交换链重建**
 > 是空白（关键词扫描：per-monitor/fractional scale/hiDPI/multi-monitor/devicePixelRatio/backing scale/
 > window placement/work area/hotplug 全仓命中≈0）。
@@ -132,7 +132,7 @@
 
 - **与 w3g（平台合成器）**：w3g 给了 DWM/SurfaceFlinger/WindowServer 的合成侧；本轮给"显示器拓扑 + 缩放 + 交换链"，
   两者共同构成"窗口→合成器→显示器"的完整链。
-- **与 w5a（分层窗贴图/壳）**：w5a 的位图契约在逻辑↔物理换算上依赖本轮结论（贴图尺寸=物理像素，
+- **与 （分层窗贴图/壳）**： 的位图契约在逻辑↔物理换算上依赖本轮结论（贴图尺寸=物理像素，
   命中坐标=逻辑像素）。
 - **与 w10b（色彩/HDR）**：色彩空间与 HDR 是**逐显示器**属性；本轮的显示器对象要带色彩能力，
   两者共同决定输出配置（C18 与 C21 联动）。

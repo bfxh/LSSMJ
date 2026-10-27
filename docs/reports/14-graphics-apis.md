@@ -16,7 +16,7 @@
    **GPU 档统一站在 `wgpu`（WebGPU 模型）上，不直接写原生 API**；原生 API 的特性（Work Graphs/稀疏/描述符索引）作为**能力参考与降级判据**，不进内核。
 8. **理由链**：①多后端单代码（W6F-008）②规范先行、可审计（W6F-009）③我们不需要 Work-Graphs 级自治（UI/小面板档）④Rust 生态与 naga/WGSL 同栈（W6D-015）。
 9. **代价也要记账**：wgpu 抽象层=新能力到达滞后（Work Graphs 等先在原生 API 出现，W6F-002）+ 特定后端缺陷需绕行——列为 GPU 档的风险项。
-10. **降级梯度**：wgpu（Vulkan/Metal/D3D12）→ wgpu（GL 后端）→ CPU 位图路径（本仓现状，`renderer-qingjian` 全套）——三级全部有现成实现。
+10. **降级梯度**：wgpu（Vulkan/Metal/D3D12）→ wgpu（GL 后端）→ CPU 位图路径（本仓现状）——三级全部有现成实现。
 
 ## API 对照表（按对我们的关注点）
 

@@ -22,7 +22,7 @@ fn compare_3d_tiles() {
         };
         let d = prepare_density(&gs, &grid, &opts);
         let t = Instant::now();
-        let (z, _) = parallel_splat_density(&d, &grid, 24);
+        let (z, _) = parallel_splat_density(&d, &grid, 24, 1.0);
         let z_ms = t.elapsed().as_secs_f64() * 1e3;
         let t = Instant::now();
         let (tile, _) = splat_density_tiles(&d, &grid, 24);
