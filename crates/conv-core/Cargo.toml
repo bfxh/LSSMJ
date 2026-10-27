@@ -8,7 +8,7 @@ description = "LSSMJ 表示转换核心：体素/隐式场·粒子·高斯·网�
 [dependencies]
 fast-surface-nets = "0.2.1"
 wgpu = "30.0.0"
-pollster = "0.4"
+pollster = "1.0"
 bytemuck = "1"
 
 [profile.release]
