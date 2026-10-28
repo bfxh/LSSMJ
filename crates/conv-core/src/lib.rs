@@ -10,6 +10,7 @@
 use std::collections::{HashMap, HashSet};
 use std::f32::consts::PI;
 
+pub mod budget;
 pub mod gauss;
 pub mod gsn;
 pub mod jfa;
