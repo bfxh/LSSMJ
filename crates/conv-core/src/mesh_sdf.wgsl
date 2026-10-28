@@ -163,6 +163,11 @@ fn sign_winding(@builtin(global_invocation_id) gid: vec3<u32>) {
             continue;
         }
         let num = dot(a, cross(b, c));
+        // 分子恰为 0（退化三角 b×c≡0，或 p 恰在三角平面上）⇒ 立体角真值 0，与 CPU 同口径。
+        // 不能交给 atan2：den 在 f32 下可为负，atan2(0, 负) = π 会让 w 突跳 0.5 ⇒ 符号翻转。
+        if (num == 0.0) {
+            continue;
+        }
         let den = la * lb * lc + dot(a, b) * lc + dot(b, c) * la + dot(c, a) * lb;
         sum = sum + 2.0 * atan2(num, den);
     }
