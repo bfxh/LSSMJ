@@ -183,7 +183,8 @@ fn plane_passthrough(
         });
         pass.set_pipeline(pipe);
         pass.set_bind_group(0, &bg, &[]);
-        pass.dispatch_workgroups(n.div_ceil(64), 1, 1);
+        // 派发封顶 65535（1D 上限）+ 核内 grid-stride（各腿规模探针第一片）
+        pass.dispatch_workgroups(n.div_ceil(64).min(65535), 1, 1);
     }
     hd.queue.submit([enc.finish()]);
     readback_f32(hd, &dst_buf)
