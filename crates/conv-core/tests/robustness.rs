@@ -91,25 +91,13 @@ fn gsn_n2_minimal_grid_deterministic_and_empty() {
     // R=0.75 的球在 2³ 角点域上处处为正 ⇒ 无表面 ⇒ 空输出（有效而非崩溃）
     let sdf = field_to_voxels(2, 0.75);
     let hd = headless_device();
-    let a = surface_nets_gpu(&hd, &sdf, 2, None);
-    let b = surface_nets_gpu(&hd, &sdf, 2, None);
+    let a = surface_nets_gpu(&hd, &sdf, 2, None).expect("gsn");
+    let b = surface_nets_gpu(&hd, &sdf, 2, None).expect("gsn");
     assert_eq!(a.quad_count, 0, "n=2 全正场应得空网格");
     assert_eq!(a.indices, b.indices, "n=2 索引两次运行应一致");
     assert_eq!(
-        fnv_f32(
-            &a.positions
-                .iter()
-                .flatten()
-                .copied()
-                .collect::<Vec<f32>>()
-        ),
-        fnv_f32(
-            &b.positions
-                .iter()
-                .flatten()
-                .copied()
-                .collect::<Vec<f32>>()
-        ),
+        fnv_f32(&a.positions.iter().flatten().copied().collect::<Vec<f32>>()),
+        fnv_f32(&b.positions.iter().flatten().copied().collect::<Vec<f32>>()),
     );
 }
 
@@ -295,7 +283,7 @@ fn gsn_sphere_is_oriented_edge_manifold() {
     let _gpu = gpu_lock();
     let sdf = field_to_voxels(64, 0.75);
     let hd = headless_device();
-    let m = surface_nets_gpu(&hd, &sdf, 64, None);
+    let m = surface_nets_gpu(&hd, &sdf, 64, None).expect("gsn");
     let quads = directed_quads(&m.indices, |v| v);
     assert!(!quads.is_empty(), "反空跑：球面网格为空");
 

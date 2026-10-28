@@ -75,7 +75,7 @@ fn gpu_jfa_n_one_rejected_before_alloc() {
 fn gpu_gsn_n_one_rejected_before_dispatch() {
     let _gpu = gpu_lock();
     let hd = headless_device();
-    let _ = surface_nets_gpu(&hd, &[], 1, None);
+    let _ = surface_nets_gpu(&hd, &[], 1, None).expect("gsn");
 }
 
 #[test]
