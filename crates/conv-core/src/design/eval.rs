@@ -229,11 +229,18 @@ pub fn extrude(contour: &Contour, plane: Plane, distance: f32) -> Result<Mesh, S
     Ok(Mesh { verts, tris })
 }
 
+/// 布尔/倒角使用的默认体素分辨率（精度 ~1–3%，见 [`super::csg`]）。
+pub const CSG_N: u32 = 48;
+
 /// 零件级求值：按顺序重放 ops，返回产出的实体列表。
 ///
-/// 只支持 Sketch + Extrude；其余 op 明确报"未实现"——不静默跳过一个布尔或倒角，
-/// 那会让调用方以为零件已经建对了。
+/// 支持 Sketch / Extrude / Boolean / Fillet；Texture 只改材质（几何不变，算 no-op）；
+/// Revolve 尚未实现，遇到就报错——不静默跳过一个特征，那会让调用方以为零件已经建对了。
 pub fn build_part(part: &super::ir::Part) -> Result<Vec<Mesh>, String> {
+    build_part_at(part, CSG_N)
+}
+
+pub fn build_part_at(part: &super::ir::Part, n: u32) -> Result<Vec<Mesh>, String> {
     let mut bodies: Vec<Mesh> = Vec::new();
     let mut pending: Option<(super::ir::Contour, Plane)> = None;
     for (i, op) in part.ops.iter().enumerate() {
@@ -247,9 +254,29 @@ pub fn build_part(part: &super::ir::Part) -> Result<Vec<Mesh>, String> {
                     .ok_or_else(|| format!("{}@{}: 拉伸前没有草图", part.id, i))?;
                 bodies.push(extrude(&c, plane, *distance)?);
             }
+            super::ir::Op::Boolean { kind, with } => {
+                let last = bodies.len().checked_sub(1).ok_or_else(|| {
+                    format!("{}@{}: 布尔前没有实体", part.id, i)
+                })?;
+                if *with >= bodies.len() || *with == last {
+                    return Err(format!("{}@{}: 布尔引用下标 {with} 无效", part.id, i));
+                }
+                let tool = bodies.pop().ok_or("空实体表")?;
+                let target = bodies[*with].clone();
+                bodies[*with] = super::csg::boolean(&target, &tool, *kind, n)?;
+            }
+            super::ir::Op::Fillet { radius } => {
+                if bodies.is_empty() {
+                    return Err(format!("{}@{}: 倒角前没有实体", part.id, i));
+                }
+                for b in bodies.iter_mut() {
+                    *b = super::csg::fillet(b, *radius, n)?;
+                }
+            }
+            super::ir::Op::Texture { .. } => {}
             other => {
                 return Err(format!(
-                    "{}@{}: {} 尚未实现（当前只支持 sketch+extrude）",
+                    "{}@{}: {} 尚未实现（支持 sketch/extrude/boolean/fillet）",
                     part.id,
                     i,
                     other.kind()
@@ -457,12 +484,57 @@ mod tests {
                     plane: Plane::Xy,
                     profile: Contour(ccw_square()),
                 },
-                Op::Extrude { distance: 0.5 },
-                Op::Fillet { radius: 0.01 },
+                Op::Revolve { angle_deg: 90.0 },
             ],
         };
         let e = build_part(&p).unwrap_err();
-        assert!(e.contains("尚未实现") && e.contains("fillet"), "{e}");
+        assert!(e.contains("尚未实现") && e.contains("revolve"), "{e}");
+    }
+
+    #[test]
+    fn part_applies_boolean_difference() {
+        use super::super::ir::{Attach, BoolKind, Id, Op, Part, Place};
+        // 2×2×1 的大板，挖掉 1×1×1 的小方块（与板同高）
+        let big = vec![[0.0, 0.0], [2.0, 0.0], [2.0, 2.0], [0.0, 2.0]];
+        let mut cut = ccw_square();
+        for p in cut.iter_mut() {
+            p[0] += 0.5;
+            p[1] += 0.5;
+        }
+        let p = Part {
+            id: Id::new("plate").unwrap(),
+            attach: Attach::Base(Place::IDENTITY),
+            ops: vec![
+                Op::Sketch { plane: Plane::Xy, profile: Contour(big) },
+                Op::Extrude { distance: 1.0 },
+                Op::Sketch { plane: Plane::Xy, profile: Contour(cut) },
+                Op::Extrude { distance: 1.0 },
+                Op::Boolean { kind: BoolKind::Difference, with: 0 },
+            ],
+        };
+        let bodies = build_part_at(&p, 48).unwrap();
+        assert_eq!(bodies.len(), 1, "布尔会吃掉工具实体");
+        let v = bodies[0].signed_volume();
+        assert!((v - 3.0).abs() / 3.0 < 0.06, "4 − 1 = 3，实得 {v}");
+        assert!(bodies[0].is_closed());
+    }
+
+    #[test]
+    fn part_applies_fillet() {
+        use super::super::ir::{Attach, Id, Op, Part, Place};
+        let p = Part {
+            id: Id::new("box").unwrap(),
+            attach: Attach::Base(Place::IDENTITY),
+            ops: vec![
+                Op::Sketch { plane: Plane::Xy, profile: Contour(ccw_square()) },
+                Op::Extrude { distance: 1.0 },
+                Op::Fillet { radius: 0.1 },
+            ],
+        };
+        let bodies = build_part_at(&p, 64).unwrap();
+        let v = bodies[0].signed_volume();
+        assert!(v < 1.0 && v > 0.9, "圆角后应略小于 1，实得 {v}");
+        assert!(bodies[0].is_closed());
     }
 
     #[test]

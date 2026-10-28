@@ -5,11 +5,13 @@
 //! 设计目标：这是神经头要吐出的**目标格式**——所以它必须纯数据、可确定性重放、
 //! 报错带零件路径（能指回是哪一颗零件、第几步）。
 
+pub mod csg;
 pub mod eval;
 pub mod ir;
 pub mod plan;
 pub mod splat;
 
+pub use csg::{boolean, fillet};
 pub use eval::{build_part, compose, extrude, transform, Mesh};
 pub use splat::surfels;
 pub use ir::*;
