@@ -5,8 +5,10 @@
 //! 设计目标：这是神经头要吐出的**目标格式**——所以它必须纯数据、可确定性重放、
 //! 报错带零件路径（能指回是哪一颗零件、第几步）。
 
+pub mod eval;
 pub mod ir;
 pub mod plan;
 
+pub use eval::{build_part, extrude, Mesh};
 pub use ir::*;
 pub use plan::{validate, Diag, Plan, State, Step, Summary, MAX_ASM_DEPTH};
