@@ -39,7 +39,7 @@ fn compact_mesh_dense_matches_sparse_bitwise() {
     let _gpu = GPU_LOCK.lock().unwrap();
     let sdf = field_to_voxels(GRID, R);
     let hd = headless_device();
-    let whole = surface_nets_gpu(&hd, &sdf, GRID, None);
+    let whole = surface_nets_gpu(&hd, &sdf, GRID, None).expect("whole");
     let compact = compact_mesh(&hd, &whole, None);
 
     // ① 计数：顶点数 = flags 计数；索引数不变
@@ -95,7 +95,7 @@ fn compact_mesh_deterministic_bitwise() {
     let _gpu = GPU_LOCK.lock().unwrap();
     let sdf = field_to_voxels(GRID, R);
     let hd = headless_device();
-    let whole = surface_nets_gpu(&hd, &sdf, GRID, None);
+    let whole = surface_nets_gpu(&hd, &sdf, GRID, None).expect("whole");
     let a = compact_mesh(&hd, &whole, None);
     let b = compact_mesh(&hd, &whole, None);
     assert_eq!(a.vertex_count, b.vertex_count);
@@ -119,7 +119,7 @@ fn compact_mesh_empty_input() {
     // 全正场：无顶点、无四边形（scan/散射的零路径）
     let sdf = vec![1.0f32; (GRID * GRID * GRID) as usize];
     let hd = headless_device();
-    let mesh = surface_nets_gpu(&hd, &sdf, GRID, None);
+    let mesh = surface_nets_gpu(&hd, &sdf, GRID, None).expect("mesh");
     assert_eq!(mesh.quad_count, 0);
     let compact = compact_mesh(&hd, &mesh, None);
     assert_eq!(compact.vertex_count, 0);
