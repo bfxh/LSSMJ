@@ -159,11 +159,13 @@ impl Ctx {
 
     fn part(&mut self, p: &Part, prefix: &str, earlier: &[String], first: bool) -> String {
         let path = self.claim(&p.id, prefix);
-        match &p.attach {
-            Attach::Base if !first => {
+        let place = match &p.attach {
+            Attach::Base(pl) if !first => {
                 self.err(&path, "只有本总成的第一个零件可以用 Base");
+                pl
             }
-            Attach::To(t) => {
+            Attach::Base(pl) => pl,
+            Attach::To { id: t, place } => {
                 if first {
                     self.err(&path, "第一个零件必须用 Base（没有可挂的对象）");
                 } else if !earlier.iter().any(|e| e.ends_with(&format!("/{t}"))) {
@@ -172,8 +174,13 @@ impl Ctx {
                         format!("挂接目标 {t} 不是本总成里更早声明的零件（装配顺序不成立）"),
                     );
                 }
+                place
             }
-            Attach::Base => {}
+        };
+        if !place.is_finite() {
+            self.err(&path, "放置里有非有限值");
+        } else if place.norm_q() < 1e-6 {
+            self.err(&path, "放置的四元数为零");
         }
         let mut st = State {
             bodies: 0,
@@ -320,10 +327,13 @@ mod tests {
 
     /// 一个能过的最小方案：1 系统 / 1 总成（含子总成）/ 3 零件。
     fn good() -> Design {
-        let bolt = Part::slab(id("bolt"), Attach::Base, Plane::Xy, square(), 0.1);
+        let bolt = Part::slab(id("bolt"), Attach::Base(Place::IDENTITY), Plane::Xy, square(), 0.1);
         let plate = Part {
             id: id("plate"),
-            attach: Attach::To(id("bolt")),
+            attach: Attach::To {
+                id: id("bolt"),
+                place: Place::at([0.0, 0.0, 0.1]),
+            },
             ops: vec![
                 Op::Sketch {
                     plane: Plane::Xz,
@@ -340,7 +350,7 @@ mod tests {
             id("knee"),
             vec![Node::Part(Part::slab(
                 id("bracket"),
-                Attach::Base,
+                Attach::Base(Place::IDENTITY),
                 Plane::Xz,
                 square(),
                 0.05,
@@ -352,6 +362,7 @@ mod tests {
                 id: id("frame"),
                 assemblies: vec![Assembly {
                     id: id("leg_l"),
+                    place: Place::IDENTITY,
                     children: vec![Node::Part(bolt), Node::Part(plate), knee],
                 }],
             }],
@@ -434,7 +445,10 @@ mod tests {
     fn attach_must_point_at_earlier_sibling() {
         let mut d = good();
         if let Node::Part(p) = &mut d.systems[0].assemblies[0].children[0] {
-            p.attach = Attach::To(id("bracket")); // 自相矛盾：第一个零件不能挂
+            p.attach = Attach::To {
+                id: id("bracket"),
+                place: Place::IDENTITY,
+            }; // 自相矛盾：第一个零件不能挂
         }
         let e = validate(&d).unwrap_err();
         assert!(e.iter().any(|x| x.msg.contains("第一个零件必须用 Base")), "{e:?}");
@@ -451,7 +465,13 @@ mod tests {
     #[test]
     fn too_deep_nesting_is_rejected() {
         let mut d = good();
-        let mut node = Node::Part(Part::slab(id("leaf"), Attach::Base, Plane::Xy, square(), 0.1));
+        let mut node = Node::Part(Part::slab(
+            id("leaf"),
+            Attach::Base(Place::IDENTITY),
+            Plane::Xy,
+            square(),
+            0.1,
+        ));
         for i in 0..MAX_ASM_DEPTH {
             node = Node::assembly(id(&format!("a{i}")), vec![node]);
         }

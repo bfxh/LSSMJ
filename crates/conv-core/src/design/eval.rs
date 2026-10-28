@@ -263,6 +263,69 @@ pub fn build_part(part: &super::ir::Part) -> Result<Vec<Mesh>, String> {
     Ok(bodies)
 }
 
+/// 把总成组合到世界坐标：返回每个零件的路径与**世界坐标下**的实体。
+///
+/// 放置按树复合：`world = 父总成世界放置 ∘ 本总成放置 ∘ 零件放置`；
+/// `To { id, place }` 的参照系是**同一总成里更早的零件**（与校验规则一致）。
+pub fn compose(asm: &super::ir::Assembly, world: super::ir::Place) -> Result<Vec<(String, Vec<Mesh>)>, String> {
+    let mut out = Vec::new();
+    walk(asm, world, "", &mut out)?;
+    Ok(out)
+}
+
+fn walk(
+    asm: &super::ir::Assembly,
+    world: super::ir::Place,
+    prefix: &str,
+    out: &mut Vec<(String, Vec<Mesh>)>,
+) -> Result<(), String> {
+    use super::ir::{Attach, Node, Place};
+    let here = world.then(&asm.place);
+    let path = if prefix.is_empty() {
+        asm.id.to_string()
+    } else {
+        format!("{prefix}/{}", asm.id)
+    };
+    let mut placed: Vec<(String, Place)> = Vec::new();
+    for child in &asm.children {
+        match child {
+            Node::Assembly(a) => walk(a, here, &path, out)?,
+            Node::Part(p) => {
+                // Base 相对本总成坐标系；To 的目标已经带着世界放置，不能再乘一次 here
+                // （否则整组旋转会被应用两遍——这个 bug 就是 placement_chain 测试抓到的）。
+                let w = match &p.attach {
+                    Attach::Base(pl) => here.then(pl),
+                    Attach::To { id, place } => {
+                        let (_, parent) = placed
+                            .iter()
+                            .find(|(pid, _)| pid == id.as_str())
+                            .ok_or_else(|| {
+                                format!("{}: 挂接目标 {id} 不在本总成里（或声明在后面）", p.id)
+                            })?;
+                        parent.then(place)
+                    }
+                };
+                let bodies = build_part(p)?;
+                out.push((format!("{path}/{}", p.id), bodies.into_iter().map(|m| transform(&m, &w)).collect()));
+                placed.push((p.id.to_string(), w));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 刚体变换网格：只转顶点，拓扑与体积不变。
+pub fn transform(m: &Mesh, place: &super::ir::Place) -> Mesh {
+    use super::ir::rotate;
+    Mesh {
+        verts: m.verts.iter().map(|v| {
+            let r = rotate(place.q, *v);
+            [r[0] + place.t[0], r[1] + place.t[1], r[2] + place.t[2]]
+        }).collect(),
+        tris: m.tris.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -359,10 +422,10 @@ mod tests {
 
     #[test]
     fn part_builds_bodies_in_order() {
-        use super::super::ir::{Attach, Id, Op, Part};
+        use super::super::ir::{Attach, Id, Op, Part, Place};
         let p = Part {
             id: Id::new("base").unwrap(),
-            attach: Attach::Base,
+            attach: Attach::Base(Place::IDENTITY),
             ops: vec![
                 Op::Sketch {
                     plane: Plane::Xy,
@@ -385,10 +448,10 @@ mod tests {
 
     #[test]
     fn unsupported_op_is_reported_not_skipped() {
-        use super::super::ir::{Attach, Id, Op, Part};
+        use super::super::ir::{Attach, Id, Op, Part, Place};
         let p = Part {
             id: Id::new("p").unwrap(),
-            attach: Attach::Base,
+            attach: Attach::Base(Place::IDENTITY),
             ops: vec![
                 Op::Sketch {
                     plane: Plane::Xy,
@@ -400,6 +463,79 @@ mod tests {
         };
         let e = build_part(&p).unwrap_err();
         assert!(e.contains("尚未实现") && e.contains("fillet"), "{e}");
+    }
+
+    #[test]
+    fn compose_applies_placement_chain() {
+        use super::super::ir::{Assembly, Attach, Id, Node, Op, Part, Place};
+        let mk = |name: &str, attach: Attach| {
+            Node::Part(Part {
+                id: Id::new(name).unwrap(),
+                attach,
+                ops: vec![
+                    Op::Sketch {
+                        plane: Plane::Xy,
+                        profile: Contour(ccw_square()),
+                    },
+                    Op::Extrude { distance: 0.5 },
+                ],
+            })
+        };
+        let asm = Assembly {
+            id: Id::new("asm").unwrap(),
+            place: Place::rot_z(90.0), // 整组绕 Z 转 90°
+            children: vec![
+                mk("base", Attach::Base(Place::IDENTITY)),
+                mk(
+                    "arm",
+                    Attach::To {
+                        id: Id::new("base").unwrap(),
+                        place: Place::at([2.0, 0.0, 0.0]), // 母件坐标系的 +X 2 m
+                    },
+                ),
+            ],
+        };
+        let out = compose(&asm, Place::IDENTITY).unwrap();
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].0, "asm/base");
+        assert_eq!(out[1].0, "asm/arm");
+        // 整组绕 Z 转 90°：零件自身占 x∈[-1,0]（方块的 −y 落到 −x），
+        // 第二件挂在母件坐标系 +X 2 m ⇒ 世界平移 (0,2,0)，故 y∈[2,3]。
+        let xs: Vec<f32> = out[1].1[0].verts.iter().map(|v| v[0]).collect();
+        let ys: Vec<f32> = out[1].1[0].verts.iter().map(|v| v[1]).collect();
+        let (xmin, xmax) = (xs.iter().cloned().fold(f32::INFINITY, f32::min), xs.iter().cloned().fold(f32::NEG_INFINITY, f32::max));
+        let (ymin, ymax) = (ys.iter().cloned().fold(f32::INFINITY, f32::min), ys.iter().cloned().fold(f32::NEG_INFINITY, f32::max));
+        assert!((xmin + 1.0).abs() < 1e-5 && (xmax - 0.0).abs() < 1e-5, "x 范围 {xmin}..{xmax}");
+        assert!((ymin - 2.0).abs() < 1e-5 && (ymax - 3.0).abs() < 1e-5, "y 范围 {ymin}..{ymax}");
+        // 刚体变换不改变体积与水密性
+        for (_, bodies) in &out {
+            for b in bodies {
+                assert!(b.is_closed());
+                assert!((b.signed_volume() - 0.5).abs() < 1e-5);
+            }
+        }
+    }
+
+    #[test]
+    fn compose_rejects_dangling_attach() {
+        use super::super::ir::{Assembly, Attach, Id, Node, Op, Part, Place};
+        let asm = Assembly {
+            id: Id::new("a").unwrap(),
+            place: Place::IDENTITY,
+            children: vec![Node::Part(Part {
+                id: Id::new("p").unwrap(),
+                attach: Attach::To {
+                    id: Id::new("ghost").unwrap(),
+                    place: Place::IDENTITY,
+                },
+                ops: vec![Op::Sketch {
+                    plane: Plane::Xy,
+                    profile: Contour(ccw_square()),
+                }, Op::Extrude { distance: 1.0 }],
+            })],
+        };
+        let e = compose(&asm, Place::IDENTITY).unwrap_err();
+        assert!(e.contains("ghost"), "{e}");
     }
 
     #[test]

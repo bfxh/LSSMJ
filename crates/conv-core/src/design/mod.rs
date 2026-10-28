@@ -9,6 +9,6 @@ pub mod eval;
 pub mod ir;
 pub mod plan;
 
-pub use eval::{build_part, extrude, Mesh};
+pub use eval::{build_part, compose, extrude, transform, Mesh};
 pub use ir::*;
 pub use plan::{validate, Diag, Plan, State, Step, Summary, MAX_ASM_DEPTH};
