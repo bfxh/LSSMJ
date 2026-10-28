@@ -254,6 +254,12 @@ pub fn build_part_at(part: &super::ir::Part, n: u32) -> Result<Vec<Mesh>, String
                     .ok_or_else(|| format!("{}@{}: 拉伸前没有草图", part.id, i))?;
                 bodies.push(extrude(&c, plane, *distance)?);
             }
+            super::ir::Op::Revolve { angle_deg } => {
+                let (c, plane) = pending
+                    .take()
+                    .ok_or_else(|| format!("{}@{}: 旋转前没有草图", part.id, i))?;
+                bodies.push(revolve(&c, plane, *angle_deg, 64)?);
+            }
             super::ir::Op::Boolean { kind, with } => {
                 let last = bodies.len().checked_sub(1).ok_or_else(|| {
                     format!("{}@{}: 布尔前没有实体", part.id, i)
@@ -274,14 +280,7 @@ pub fn build_part_at(part: &super::ir::Part, n: u32) -> Result<Vec<Mesh>, String
                 }
             }
             super::ir::Op::Texture { .. } => {}
-            other => {
-                return Err(format!(
-                    "{}@{}: {} 尚未实现（支持 sketch/extrude/boolean/fillet）",
-                    part.id,
-                    i,
-                    other.kind()
-                ))
-            }
+
         }
     }
     if let Some(_c) = pending {
@@ -351,6 +350,93 @@ pub fn transform(m: &Mesh, place: &super::ir::Place) -> Mesh {
         }).collect(),
         tris: m.tris.clone(),
     }
+}
+
+/// 草图绕**平面内 v 轴**（2D 的 u=0 直线）旋转 `angle_deg` 度成实体。
+///
+/// 判据用 Pappus：整圈时 `V = 2π·A·ū`（ū 是轮廓形心到轴的距离），
+/// 部分角按 `θ/2π` 折算。轮廓必须整段在轴的一侧（`u>0`），否则扫出来的体自交。
+///
+/// 拓扑：绕一整圈的**闭合**轮廓扫出的是环面（χ=0）；部分角带两个端盖（χ=2）。
+pub fn revolve(contour: &Contour, plane: Plane, angle_deg: f32, segs: usize) -> Result<Mesh, String> {
+    if !(angle_deg.is_finite() && angle_deg > 0.0 && angle_deg <= 360.0) {
+        return Err(format!("旋转角必须在 (0,360]，实得 {angle_deg}"));
+    }
+    check_contour(&contour.0)?;
+    if contour.0.iter().any(|p| p[0] <= 1e-6) {
+        return Err("轮廓必须整段在旋转轴的一侧（u>0）".into());
+    }
+    let mut pts = contour.0.clone();
+    if signed_area(&pts) < 0.0 {
+        pts.reverse(); // 统一成 CCW，保证法向朝外
+    }
+    let (o, u_ax, v_ax) = frame(plane);
+    let n_ax = cross(u_ax, v_ax);
+    let full = (angle_deg - 360.0).abs() < 1e-6;
+    let k = segs.max(3) * if full { 1 } else { 1 };
+    let steps = if full { k } else { k + 1 }; // 部分角需要 θ 处的一圈
+    let n_pts = pts.len();
+    let mut verts = Vec::with_capacity(steps * n_pts);
+    for s in 0..steps {
+        let phi = angle_deg.to_radians() * s as f32 / k as f32;
+        let (c, sn) = (phi.cos(), phi.sin());
+        for p in &pts {
+            let (a, b) = (p[0] * c, p[0] * sn);
+            verts.push([
+                o[0] + u_ax[0] * a + v_ax[0] * p[1] + n_ax[0] * b,
+                o[1] + u_ax[1] * a + v_ax[1] * p[1] + n_ax[1] * b,
+                o[2] + u_ax[2] * a + v_ax[2] * p[1] + n_ax[2] * b,
+            ]);
+        }
+    }
+    let mut tris = Vec::new();
+    let rings = if full { steps } else { steps - 1 };
+    for s in 0..rings {
+        let s2 = (s + 1) % steps;
+        for i in 0..n_pts {
+            let j = (i + 1) % n_pts;
+            let (a0, a1) = ((s * n_pts + i) as u32, (s * n_pts + j) as u32);
+            let (b0, b1) = ((s2 * n_pts + i) as u32, (s2 * n_pts + j) as u32);
+            tris.push([a0, a1, b1]);
+            tris.push([a0, b1, b0]);
+        }
+    }
+    if !full {
+        // 两个端盖：φ=0 的法向是 −n，φ=θ 的是 +n（绕序相应反/正）
+        let ring = ear_clip(&pts);
+        let last = (steps - 1) * n_pts;
+        for t in &ring {
+            tris.push([t[0] as u32, t[2] as u32, t[1] as u32]);
+            tris.push([
+                (t[0] + last) as u32,
+                (t[1] + last) as u32,
+                (t[2] + last) as u32,
+            ]);
+        }
+    }
+    let mut m = Mesh { verts, tris };
+    if m.signed_volume() < 0.0 {
+        for t in &mut m.tris {
+            t.swap(1, 2);
+        }
+    }
+    Ok(m)
+}
+
+/// 多边形形心（面积加权）的 u 坐标，用于 Pappus 对账与合法性判断。
+pub fn centroid_u(pts: &[[f32; 2]]) -> f32 {
+    let n = pts.len();
+    let (mut a, mut cu) = (0f64, 0f64);
+    for i in 0..n {
+        let (p, q) = (pts[i], pts[(i + 1) % n]);
+        let cr = (p[0] as f64) * (q[1] as f64) - (q[0] as f64) * (p[1] as f64);
+        a += cr;
+        cu += (p[0] as f64 + q[0] as f64) * cr;
+    }
+    if a.abs() < 1e-12 {
+        return 0.0;
+    }
+    (cu / (3.0 * a)) as f32
 }
 
 #[cfg(test)]
@@ -474,21 +560,25 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_op_is_reported_not_skipped() {
+    fn texture_is_a_geometry_noop() {
         use super::super::ir::{Attach, Id, Op, Part, Place};
-        let p = Part {
+        let base = || vec![
+            Op::Sketch {
+                plane: Plane::Xy,
+                profile: Contour(ccw_square()),
+            },
+            Op::Extrude { distance: 0.5 },
+        ];
+        let mk = |ops| Part {
             id: Id::new("p").unwrap(),
             attach: Attach::Base(Place::IDENTITY),
-            ops: vec![
-                Op::Sketch {
-                    plane: Plane::Xy,
-                    profile: Contour(ccw_square()),
-                },
-                Op::Revolve { angle_deg: 90.0 },
-            ],
+            ops,
         };
-        let e = build_part(&p).unwrap_err();
-        assert!(e.contains("尚未实现") && e.contains("revolve"), "{e}");
+        let a = build_part(&mk(base())).unwrap();
+        let mut with_tex = base();
+        with_tex.push(Op::Texture { name: "steel".into() });
+        let b = build_part(&mk(with_tex)).unwrap();
+        assert_eq!(a, b, "贴图只改材质，不该动几何");
     }
 
     #[test]
@@ -517,6 +607,64 @@ mod tests {
         let v = bodies[0].signed_volume();
         assert!((v - 3.0).abs() / 3.0 < 0.06, "4 − 1 = 3，实得 {v}");
         assert!(bodies[0].is_closed());
+    }
+
+    #[test]
+    fn revolve_matches_pappus() {
+        // 轮廓 u∈[1,2]、v∈[0,1]：A=1、ū=1.5 ⇒ 整圈 V = 2π·1·1.5 = 9.4248
+        let pts = vec![[1.0, 0.0], [2.0, 0.0], [2.0, 1.0], [1.0, 1.0]];
+        assert!((signed_area(&pts) - 1.0).abs() < 1e-6);
+        assert!((centroid_u(&pts) - 1.5).abs() < 1e-5);
+        let want = 2.0 * std::f32::consts::PI * 1.5;
+        let m = revolve(&Contour(pts.clone()), Plane::Xy, 360.0, 96).unwrap();
+        assert!(m.is_closed(), "整圈旋转必须水密");
+        assert_eq!(m.euler(), 0, "闭合轮廓绕一圈是环面");
+        let err96 = (m.signed_volume() - want).abs() / want;
+        // 多边形近似：误差应随分段数按 1/K² 收敛（K 翻 4 倍 → 误差约降 16 倍）
+        let fine = revolve(&Contour(pts.clone()), Plane::Xy, 360.0, 384).unwrap();
+        let err384 = (fine.signed_volume() - want).abs() / want;
+        assert!(err96 < 3e-3, "K=96 相对误差 {err96}");
+        assert!(err384 < 2e-4, "K=384 相对误差 {err384}");
+        assert!(err384 < err96 / 4.0, "误差没随分段收敛：{err96} → {err384}");
+
+        // 90°：V = (π/2)·A·ū，拓扑是实心块（χ=2）
+        let q = revolve(&Contour(pts), Plane::Xy, 90.0, 384).unwrap();
+        assert!(q.is_closed());
+        assert_eq!(q.euler(), 2, "部分角有端盖，拓扑是球");
+        let want = std::f32::consts::FRAC_PI_2 * 1.5;
+        let e = (q.signed_volume() - want).abs() / want;
+        assert!(e < 2e-3, "90° 体积 {} 应≈{want}（相对误差 {e}）", q.signed_volume());
+    }
+
+    #[test]
+    fn revolve_rejects_profile_crossing_axis() {
+        let pts = vec![[-0.5, 0.0], [1.0, 0.0], [1.0, 1.0], [-0.5, 1.0]];
+        let e = revolve(&Contour(pts), Plane::Xy, 360.0, 32).unwrap_err();
+        assert!(e.contains("一侧"), "{e}");
+        assert!(revolve(&Contour(ccw_square()), Plane::Xy, 0.0, 32).is_err());
+        assert!(revolve(&Contour(ccw_square()), Plane::Xy, 400.0, 32).is_err());
+    }
+
+    #[test]
+    fn part_applies_revolve() {
+        use super::super::ir::{Attach, Id, Op, Part, Place};
+        let p = Part {
+            id: Id::new("ring").unwrap(),
+            attach: Attach::Base(Place::IDENTITY),
+            ops: vec![
+                Op::Sketch {
+                    plane: Plane::Yz,
+                    profile: Contour(vec![[1.0, 0.0], [2.0, 0.0], [2.0, 1.0], [1.0, 1.0]]),
+                },
+                Op::Revolve { angle_deg: 360.0 },
+            ],
+        };
+        let bodies = build_part(&p).unwrap();
+        assert_eq!(bodies.len(), 1);
+        assert!(bodies[0].is_closed());
+        let want = 3.0 * std::f32::consts::PI;
+        let e = (bodies[0].signed_volume() - want).abs() / want;
+        assert!(e < 0.01, "体积 {} 应≈{want}（相对误差 {e}）", bodies[0].signed_volume());
     }
 
     #[test]
