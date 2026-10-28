@@ -52,6 +52,8 @@ pub struct System {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Assembly {
     pub id: Id,
+    /// 相对父级坐标系的位置；顶层总成即相对系统坐标系。
+    pub place: Place,
     pub children: Vec<Node>,
 }
 
@@ -63,8 +65,100 @@ pub enum Node {
 
 impl Node {
     pub fn assembly(id: Id, children: Vec<Node>) -> Self {
-        Node::Assembly(Box::new(Assembly { id, children }))
+        Node::Assembly(Box::new(Assembly {
+            id,
+            place: Place::IDENTITY,
+            children,
+        }))
     }
+}
+
+/// 刚体放置：平移 + 四元数 `[w, x, y, z]`（不做缩放——缩放该写进草图尺寸，便于追溯）。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Place {
+    pub t: [f32; 3],
+    pub q: [f32; 4],
+}
+
+impl Place {
+    pub const IDENTITY: Place = Place {
+        t: [0.0; 3],
+        q: [1.0, 0.0, 0.0, 0.0],
+    };
+
+    pub fn at(t: [f32; 3]) -> Self {
+        Self { t, ..Self::IDENTITY }
+    }
+
+    /// 绕 Z 轴旋转 `deg` 度。
+    pub fn rot_z(deg: f32) -> Self {
+        let h = deg.to_radians() * 0.5;
+        Self {
+            t: [0.0; 3],
+            q: [h.cos(), 0.0, 0.0, h.sin()],
+        }
+    }
+
+    pub fn is_finite(&self) -> bool {
+        self.t.iter().all(|v| v.is_finite()) && self.q.iter().all(|v| v.is_finite())
+    }
+
+    pub fn norm_q(&self) -> f32 {
+        (self.q[0] * self.q[0] + self.q[1] * self.q[1] + self.q[2] * self.q[2] + self.q[3] * self.q[3])
+            .sqrt()
+    }
+
+    /// 复合：`self ∘ other`（先 other 再 self）。
+    pub fn then(&self, other: &Place) -> Place {
+        let (a, b) = (self.normalized(), other.normalized());
+        let q = [
+            a.q[0] * b.q[0] - a.q[1] * b.q[1] - a.q[2] * b.q[2] - a.q[3] * b.q[3],
+            a.q[0] * b.q[1] + a.q[1] * b.q[0] + a.q[2] * b.q[3] - a.q[3] * b.q[2],
+            a.q[0] * b.q[2] - a.q[1] * b.q[3] + a.q[2] * b.q[0] + a.q[3] * b.q[1],
+            a.q[0] * b.q[3] + a.q[1] * b.q[2] - a.q[2] * b.q[1] + a.q[3] * b.q[0],
+        ];
+        let r = rotate(a.q, b.t);
+        Place {
+            t: [a.t[0] + r[0], a.t[1] + r[1], a.t[2] + r[2]],
+            q,
+        }
+    }
+
+    fn normalized(&self) -> Place {
+        let n = self.norm_q();
+        if n > 0.0 {
+            Place {
+                t: self.t,
+                q: [
+                    self.q[0] / n,
+                    self.q[1] / n,
+                    self.q[2] / n,
+                    self.q[3] / n,
+                ],
+            }
+        } else {
+            Self::IDENTITY
+        }
+    }
+}
+
+/// 用单位四元数旋转向量。
+pub fn rotate(q: [f32; 4], v: [f32; 3]) -> [f32; 3] {
+    let n = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt();
+    if n <= 0.0 {
+        return v;
+    }
+    let (w, x, y, z) = (q[0] / n, q[1] / n, q[2] / n, q[3] / n);
+    let t = [
+        2.0 * (y * v[2] - z * v[1]),
+        2.0 * (z * v[0] - x * v[2]),
+        2.0 * (x * v[1] - y * v[0]),
+    ];
+    [
+        v[0] + w * t[0] + (y * t[2] - z * t[1]),
+        v[1] + w * t[1] + (z * t[0] - x * t[2]),
+        v[2] + w * t[2] + (x * t[1] - y * t[0]),
+    ]
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -77,10 +171,12 @@ pub struct Part {
     pub ops: Vec<Op>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// 零件落位的两种方式。两者都带 [`Place`]：`Base` 相对本总成坐标系，
+/// `To` 相对被挂零件的坐标系。
+#[derive(Clone, Debug, PartialEq)]
 pub enum Attach {
-    Base,
-    To(Id),
+    Base(Place),
+    To { id: Id, place: Place },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
