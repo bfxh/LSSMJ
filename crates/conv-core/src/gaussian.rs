@@ -10,6 +10,7 @@
 //! SH 高阶系数、PLY/SPZ 读入、planar 量化变体属后续片。
 
 use crate::jfa::{Headless, readback_f32, storage_entry, uniform_entry};
+use crate::kernels::{AnisoKernels, splat_field_weighted};
 use wgpu::util::DeviceExt;
 
 /// 高斯云（planar 布局，五平面）。
@@ -237,4 +238,29 @@ pub fn identity_roundtrip(
         opa,
         unflat3(&col),
     )
+}
+
+/// 高斯→体素（矩阵边 11 第一片，锚 `W15A-016/017`：Gaussian-to-voxel splatting，**概率占据**）。
+///
+/// 口径（钉死）：每高斯 = 一枚各向异性核（中心 = position、朝向 = rotation、
+/// σ = exp(log_scale)）；核权重 = **σ(opacity)**（logit → 概率）；场 = Σ p_i·exp(−½M²)
+/// ——质量密度（未归一）；"概率占据"的阈值语义归消费方。3σ 窗截断同上；
+/// 超大 σ（真实 3DGS 尺度常见）受稀疏前提约束（窗口随 σ³ 增长，由 grid-stride 兜底）。
+pub fn gaussians_to_field(
+    hd: &Headless,
+    cloud: &GaussianCloud,
+    n: u32,
+    timer: Option<&mut crate::timer::GpuTimer>,
+) -> Vec<f32> {
+    let kernels = AnisoKernels::new(
+        cloud.positions.clone(),
+        cloud.rotations.clone(),
+        cloud.log_scales.iter().map(|s| s.map(f32::exp)).collect(),
+    );
+    let weights: Vec<f32> = cloud
+        .opacities
+        .iter()
+        .map(|&o| 1.0 / (1.0 + (-o).exp()))
+        .collect();
+    splat_field_weighted(hd, &kernels, &weights, n, timer)
 }

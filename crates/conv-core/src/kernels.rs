@@ -66,9 +66,27 @@ pub fn splat_field(
     n: u32,
     timer: Option<&mut crate::timer::GpuTimer>,
 ) -> Vec<f32> {
+    let ones = vec![1.0f32; kernels.centers.len()];
+    splat_field_weighted(hd, kernels, &ones, n, timer)
+}
+
+/// splat（按核加权）：每核贡献 = weight_i × exp(−½ Mahalanobis²)——「概率占据」
+/// 等语义（opacity 等标量）由权重承载；`weights` 长度须与核数一致。
+pub fn splat_field_weighted(
+    hd: &Headless,
+    kernels: &AnisoKernels,
+    weights: &[f32],
+    n: u32,
+    timer: Option<&mut crate::timer::GpuTimer>,
+) -> Vec<f32> {
     let device = &hd.device;
     let queue = &hd.queue;
     let count = kernels.centers.len() as u32;
+    assert_eq!(
+        weights.len(),
+        kernels.centers.len(),
+        "weights 长度须与核数一致"
+    );
     let h = 2.0 / (n as f32 - 1.0);
     let max_s = kernels
         .scales
@@ -103,6 +121,11 @@ pub fn splat_field(
         contents: bytemuck::cast_slice(&flat(&kernels.scales)),
         usage: wgpu::BufferUsages::STORAGE,
     });
+    let weights_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("k-weights"),
+        contents: bytemuck::cast_slice(weights),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
     let field_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("k-field"),
         contents: &vec![0u8; (n as usize) * (n as usize) * (n as usize) * 4],
@@ -129,6 +152,7 @@ pub fn splat_field(
             storage_entry(2, true),
             storage_entry(3, false),
             uniform_entry(4),
+            storage_entry(5, true),
         ],
     });
     let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -167,6 +191,10 @@ pub fn splat_field(
             wgpu::BindGroupEntry {
                 binding: 4,
                 resource: params_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: weights_buf.as_entire_binding(),
             },
         ],
     });
