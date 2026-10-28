@@ -21,6 +21,7 @@ pub mod mesh_sdf_gpu;
 pub mod ply;
 pub mod quant;
 pub mod scan;
+pub mod sparse;
 pub mod surfel;
 pub mod timer;
 
