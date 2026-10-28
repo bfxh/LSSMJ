@@ -12,6 +12,8 @@ use std::f32::consts::PI;
 
 pub mod budget;
 pub mod gauss;
+pub mod gaussian;
+
 pub mod gsn;
 pub mod jfa;
 pub mod mesh_sdf_gpu;
