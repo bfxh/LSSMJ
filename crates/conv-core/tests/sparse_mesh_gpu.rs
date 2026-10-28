@@ -131,7 +131,7 @@ fn sparse_block_meshes_stitch_to_whole() {
     }
     assert_eq!(sp.allocated_blocks(), 125, "格点 [0,33)³ 应触 5³ 块");
 
-    let dense = surface_nets_gpu(&hd, &sdf, N, None);
+    let dense = surface_nets_gpu(&hd, &sdf, N, None).expect("dense");
 
     let n3 = (N * N * N) as usize;
     let mut apos = vec![[0f32; 3]; n3];
