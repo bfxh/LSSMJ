@@ -7,7 +7,8 @@ use conv_core::ply::{PlyError, PlyFormat, SH_C0, load_ply};
 const ASCII: &[u8] = include_bytes!("fixtures/gauss-mini-ascii.ply");
 const BINARY: &[u8] = include_bytes!("fixtures/gauss-mini-binary.ply");
 
-/// 与夹具逐字对应的期望云（rotation 走 (x,y,z,w) 平面、color 走 SH-DC 映射规则）。
+/// 与夹具逐字对应的期望云（rotation 走 (x,y,z,w) 平面、color 走 SH-DC 映射规则、
+/// f_rest 按属性序逐位承载）。
 fn expected_cloud() -> GaussianCloud {
     let positions = vec![
         [1.5, -2.25, 0.125],
@@ -36,7 +37,13 @@ fn expected_cloud() -> GaussianCloud {
         [0.0, 0.0, 0.0],
     ];
     let colors = dc.iter().map(|c| c.map(|v| 0.5 + SH_C0 * v)).collect();
-    GaussianCloud::new(positions, log_scales, rotations, opacities, colors)
+    let sh_rest = vec![
+        0.125, -0.25, 0.375, // v0
+        -0.125, 0.0, 0.5, // v1
+        1.0, 2.0, 3.0, // v2
+        -1.0, -2.0, -3.0, // v3
+    ];
+    GaussianCloud::new(positions, log_scales, rotations, opacities, colors).with_sh_rest(sh_rest, 3)
 }
 
 fn flat3(p: &[[f32; 3]]) -> Vec<f32> {
@@ -65,8 +72,8 @@ fn ply_ascii_and_binary_match_expected_bitwise() {
     assert_eq!(ib.format, PlyFormat::BinaryLittleEndian);
     assert_eq!(ia.vertex_count, 4);
     assert_eq!(ib.vertex_count, 4);
-    assert_eq!(ia.ignored_f_rest, 3, "f_rest 忽略计数（显式披露）");
-    assert_eq!(ib.ignored_f_rest, 3);
+    assert_eq!(ia.sh_rest_stride, 3, "SH 承载 stride（显式披露）");
+    assert_eq!(ib.sh_rest_stride, 3);
 
     // 双格式互拍（f_rest 不同值、被忽略，不影响）
     assert_eq!(
@@ -94,13 +101,15 @@ fn ply_ascii_and_binary_match_expected_bitwise() {
     );
     assert_f32_slice_bits_eq(&ca.opacities, &exp.opacities, "opacity 平面");
     assert_f32_slice_bits_eq(&flat3(&ca.colors), &flat3(&exp.colors), "color 平面");
+    assert_f32_slice_bits_eq(&ca.sh_rest, &exp.sh_rest, "SH 平面（属性序逐位）");
+    assert_f32_slice_bits_eq(&cb.sh_rest, &exp.sh_rest, "binary SH 平面（属性序逐位）");
 
-    // 金样（读入契约的机器锚）
+    // 金样（读入契约的机器锚；SH 承载后换约——旧值 0xcb1f8830bc27ba46 为 5 平面版）
     let h = cloud_hash(&ca);
     println!("ply golden hash: {h:#018x}");
     assert_eq!(
-        h, 0xcb1f8830bc27ba46,
-        "金样哈希漂移 —— 读入映射规则变更？（重排/域/公式）"
+        h, 0xb7d26feeaf0ef268,
+        "金样哈希漂移 —— 读入映射规则变更？（重排/域/公式/SH）"
     );
 }
 
