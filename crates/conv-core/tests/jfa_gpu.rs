@@ -58,10 +58,10 @@ fn jfa_matches_cpu_brute() {
     let _gpu = GPU_LOCK.lock().unwrap();
     // JFA 是近似算法（Rong-Tan 2006 口径："approximation to the distance transform"）——
     // 判据 = 对拍带：mean 极小 + max ≤ 2 体素间距；罕见体素的标签失准计入近似口径。
-    // ⚠️ max 档从 1.0 改 2.0（2026-10-10，F11 连带）：旧 Lcg 把种子聚在网格下半区，
-    // 1.0 是在有偏样本上钉的；全域种子后 8 种子测量 = 7 个 max≤0.80 且零格 >1，
-    // 本判据种子（0x5eed_2026_1007）恰是 plain JFA 的不幸布局（23/32768 格 >1，max=2.0）。
-    // 场景确定性 ⇒ max 逐位稳定，钉实测最坏；JFA+1 改进趟（根治尾部）属后续 GPU 片。
+    // 档位沿革（全留痕）：① 旧 Lcg 有偏种子上钉的 1.0（F11）；② 全域种子后改钉实测 2.0
+    // （plain JFA 不幸布局 23/32768 格 >1，max=2.0）；③ **JFA+1 改进趟后重测（2026-10-11）**：
+    // 8 种子中 7 个达到精确（max≈1e-6），判据种子尾巴收窄为 6/32768 格 >1、max=1.24
+    // ⇒ 钉值 2.0 保持（≈实测最坏 1.6×）。更深档（JFA+2/8SSEB）属后续片。
     let n = 32;
     let seeds = seed_points(n, 128);
     let headless = headless_device();
@@ -93,7 +93,7 @@ fn jfa_matches_cpu_brute() {
     assert!(mean <= 0.01, "mean_err={mean}");
     assert!(
         max_err <= 2.0,
-        "max_err={max_err}（plain JFA 罕见标签失准档，见上方记档）"
+        "max_err={max_err}（JFA+1 罕见标签失准档，见上方记档）"
     );
 }
 
