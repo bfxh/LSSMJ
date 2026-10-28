@@ -6,6 +6,8 @@
 //   ③ scan_final：块内重扫 + 加块偏移 → 输出。
 // 绑定：0=in 1=out 2=block_sums(nb) 3=block_offsets(nb) 4=params(n)
 // 长度任意（末块越界按 0 补，"n" 之外的加载返回 0）。
+// grid-stride（规模第一片）：block_scan / scan_final 按块号步进（派发封顶 65535 ⇒
+// nb>65535 不再拒发）；循环首 barrier 保护上一轮对 sh 的跨线程读（s_sums 回填/扫描尾读）。
 
 struct Params {
     n: u32,
@@ -59,16 +61,25 @@ fn sh_exclusive_scan(tid: u32) -> u32 {
 fn block_scan(
     @builtin(workgroup_id) wid: vec3<u32>,
     @builtin(local_invocation_id) lid: vec3<u32>,
+    @builtin(num_workgroups) nwg: vec3<u32>,
 ) {
     let tid = lid.x;
-    let base = wid.x * WG;
-    sh[tid] = load(base + tid);
-    let e = sh_exclusive_scan(tid);
-    if (base + tid < pp.n) {
-        s_out[base + tid] = e;
-    }
-    if (tid == WG - 1u) {
-        s_sums[wid.x] = sh[WG - 1u];
+    var blk = wid.x;
+    loop {
+        if (blk >= pp.nb) {
+            break;
+        }
+        workgroupBarrier(); // 保护上一轮对 sh 的 s_sums 尾读
+        let base = blk * WG;
+        sh[tid] = load(base + tid);
+        let e = sh_exclusive_scan(tid);
+        if (base + tid < pp.n) {
+            s_out[base + tid] = e;
+        }
+        if (tid == WG - 1u) {
+            s_sums[blk] = sh[WG - 1u];
+        }
+        blk = blk + nwg.x;
     }
 }
 
@@ -110,12 +121,21 @@ fn block_carry(@builtin(local_invocation_id) lid: vec3<u32>) {
 fn scan_final(
     @builtin(workgroup_id) wid: vec3<u32>,
     @builtin(local_invocation_id) lid: vec3<u32>,
+    @builtin(num_workgroups) nwg: vec3<u32>,
 ) {
     let tid = lid.x;
-    let base = wid.x * WG;
-    sh[tid] = load(base + tid);
-    let e = sh_exclusive_scan(tid);
-    if (base + tid < pp.n) {
-        s_out[base + tid] = e + s_off[wid.x];
+    var blk = wid.x;
+    loop {
+        if (blk >= pp.nb) {
+            break;
+        }
+        workgroupBarrier(); // 保护上一轮扫描的跨线程 sh 读
+        let base = blk * WG;
+        sh[tid] = load(base + tid);
+        let e = sh_exclusive_scan(tid);
+        if (base + tid < pp.n) {
+            s_out[base + tid] = e + s_off[blk];
+        }
+        blk = blk + nwg.x;
     }
 }
