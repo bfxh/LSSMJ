@@ -7,11 +7,13 @@
 
 pub mod csg;
 pub mod eval;
+pub mod export;
 pub mod ir;
 pub mod plan;
 pub mod splat;
 
 pub use csg::{boolean, fillet};
+pub use export::{compose_design, totals, write_obj};
 pub use eval::{build_part, compose, extrude, transform, Mesh};
 pub use splat::surfels;
 pub use ir::*;
