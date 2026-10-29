@@ -94,7 +94,16 @@ impl SparseSurfel {
         }
         let sealed_interior = if seal {
             let t = std::time::Instant::now();
-            let sealed = seal_blocks(&mut data, Some(&knowns), &grid, block, per, blocks, outside);
+            let sealed = seal_blocks(
+                &mut data,
+                Some(&knowns),
+                &grid,
+                block,
+                per,
+                blocks,
+                outside,
+                opts.threads,
+            );
             if std::env::var_os("LSSMJ_STAGE_DEBUG").is_some() {
                 eprintln!(
                     "[sparse] surfel seal {:.1} ms",
