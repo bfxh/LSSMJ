@@ -475,12 +475,6 @@ pub(super) fn seal_blocks(
     blocks: &SurfaceBlocks,
     outside: f32,
 ) -> usize {
-    let is_known = |id: usize, idx: usize, v: f32| -> bool {
-        match knowns {
-            Some(k) => k[id].as_ref().unwrap()[idx] != 0,
-            None => v < 0.0,
-        }
-    };
     let n = grid.n;
     let l = (block + 2) as usize;
     let per_i = per as i32;
@@ -577,16 +571,28 @@ pub(super) fn seal_blocks(
     }
 
     let bid = |x: u32, y: u32, z: u32| -> usize {
-        ((x / block) + (y / block) * per + (z / block) * per * per) as usize
+        if block.is_power_of_two() {
+            let s = block.trailing_zeros();
+            ((x >> s) + (y >> s) * per + (z >> s) * per * per) as usize
+        } else {
+            ((x / block) + (y / block) * per + (z / block) * per * per) as usize
+        }
     };
     let mut labels = PackedLabels::new((n * n * n) as usize); // 0 未定, 1 外, 2 内
     let mut queue = VecDeque::new();
+    let bmask = block - 1;
+    let pow2_block = block.is_power_of_two();
+    let nsh = n.trailing_zeros();
+    let nmask = n - 1;
+    let pow2_n = n.is_power_of_two();
     for &id in blocks.active() {
         let id = id as usize;
         let (bx, by, bz) = blocks.xyz(id as u32);
         let x0 = bx * block;
         let y0 = by * block;
         let z0 = bz * block;
+        let vals = data[id].as_ref().unwrap();
+        let kn = knowns.map(|k| k[id].as_ref().unwrap());
         for dz in 0..block {
             let gz = z0 + dz;
             if gz >= n {
@@ -607,7 +613,11 @@ pub(super) fn seal_blocks(
                         continue;
                     }
                     let li = (((dz + 1) as usize * l) + (dy + 1) as usize) * l + (dx + 1) as usize;
-                    if is_known(id, li, data[id].as_ref().unwrap()[li]) {
+                    let known_here = match kn {
+                        Some(k) => k[li] != 0,
+                        None => vals[li] < 0.0,
+                    };
+                    if known_here {
                         continue;
                     }
                     let mut lab = 0u8;
@@ -650,11 +660,20 @@ pub(super) fn seal_blocks(
             }
         }
     }
+    let mut c_nb = usize::MAX;
+    let mut c_vals: &[f32] = &[];
+    let mut c_kn: Option<&[u8]> = None;
     while let Some(g) = queue.pop_front() {
         let g = g as usize;
-        let gx = (g as u32) % n;
-        let gy = ((g as u32) / n) % n;
-        let gz = (g as u32) / (n * n);
+        let (gx, gy, gz) = if pow2_n {
+            (
+                (g as u32) & nmask,
+                ((g as u32) >> nsh) & nmask,
+                (g as u32) >> (2 * nsh),
+            )
+        } else {
+            ((g as u32) % n, ((g as u32) / n) % n, (g as u32) / (n * n))
+        };
         let lab = labels.get(g);
         for (dx, dy, dz) in [
             (-1i32, 0i32, 0i32),
@@ -679,14 +698,33 @@ pub(super) fn seal_blocks(
             if labels.get(ng) != 0 {
                 continue;
             }
-            let bx = x / block;
-            let by = y / block;
-            let bz = z / block;
-            let lx = (x - bx * block + 1) as usize;
-            let ly = (y - by * block + 1) as usize;
-            let lz = (z - bz * block + 1) as usize;
+            let (lx, ly, lz) = if pow2_block {
+                (
+                    (x & bmask) as usize + 1,
+                    (y & bmask) as usize + 1,
+                    (z & bmask) as usize + 1,
+                )
+            } else {
+                let bx = x / block;
+                let by = y / block;
+                let bz = z / block;
+                (
+                    (x - bx * block + 1) as usize,
+                    (y - by * block + 1) as usize,
+                    (z - bz * block + 1) as usize,
+                )
+            };
             let li = (lz * l + ly) * l + lx;
-            if is_known(nb, li, data[nb].as_ref().unwrap()[li]) {
+            if nb != c_nb {
+                c_nb = nb;
+                c_vals = data[nb].as_ref().unwrap();
+                c_kn = knowns.map(|k| k[nb].as_ref().unwrap().as_slice());
+            }
+            let known_nb = match c_kn {
+                Some(k) => k[li] != 0,
+                None => c_vals[li] < 0.0,
+            };
+            if known_nb {
                 continue;
             }
             labels.set(ng, lab);
@@ -701,6 +739,8 @@ pub(super) fn seal_blocks(
         let x0 = bx * block;
         let y0 = by * block;
         let z0 = bz * block;
+        let kn = knowns.map(|k| k[id].as_ref().unwrap());
+        let vals = data[id].as_mut().unwrap();
         for lz in 0..l {
             let gz = z0 as i64 - 1 + lz as i64;
             for ly in 0..l {
@@ -708,7 +748,7 @@ pub(super) fn seal_blocks(
                 for lx in 0..l {
                     let gx = x0 as i64 - 1 + lx as i64;
                     let idx = (lz * l + ly) * l + lx;
-                    let v = &mut data[id].as_mut().unwrap()[idx];
+                    let v = &mut vals[idx];
                     if gx < 0
                         || gy < 0
                         || gz < 0
@@ -719,7 +759,11 @@ pub(super) fn seal_blocks(
                         *v = outside;
                         continue;
                     }
-                    if is_known(id, idx, *v) {
+                    let known_here = match kn {
+                        Some(k) => k[idx] != 0,
+                        None => *v < 0.0,
+                    };
+                    if known_here {
                         continue;
                     }
                     let (gx, gy, gz) = (gx as u32, gy as u32, gz as u32);
@@ -731,7 +775,12 @@ pub(super) fn seal_blocks(
                     } else {
                         2
                     };
-                    let owned = gx / block == bx && gy / block == by && gz / block == bz;
+                    let owned = gx >= x0
+                        && gx < x0 + block
+                        && gy >= y0
+                        && gy < y0 + block
+                        && gz >= z0
+                        && gz < z0 + block;
                     *v = if lab == 1 {
                         outside
                     } else {
