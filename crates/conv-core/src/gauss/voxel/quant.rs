@@ -59,6 +59,7 @@ fn splat_quant_chunk<T: Acc>(
     grid: &Grid,
     chunk: Chunk,
     scale: f32,
+    fast: bool,
     out: &mut [T],
 ) {
     let n = grid.n as usize;
@@ -93,6 +94,7 @@ fn splat_quant_chunk<T: Acc>(
                             range.lo[0],
                             range.hi[0],
                             scale,
+                            fast,
                             out,
                             row,
                         );
@@ -106,7 +108,12 @@ fn splat_quant_chunk<T: Acc>(
                     if m > 18.0 {
                         continue;
                     }
-                    let q = (g.opacity * (-0.5 * m).exp() * scale).round();
+                    let w = if fast {
+                        super::fast_exp::fast_exp(-0.5 * m)
+                    } else {
+                        (-0.5 * m).exp()
+                    };
+                    let q = (g.opacity * w * scale).round();
                     if q < 1.0 {
                         continue;
                     }
@@ -232,7 +239,7 @@ pub fn voxelize_quant<T: Acc>(
             let indices = &indices;
             let _ = &chunks;
             s.spawn(move || {
-                splat_quant_chunk(prepared, indices, grid, c, scale, slice);
+                splat_quant_chunk(prepared, indices, grid, c, scale, opts.fast_exp, slice);
             });
         }
     });

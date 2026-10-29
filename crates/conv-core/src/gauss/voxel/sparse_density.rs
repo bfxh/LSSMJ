@@ -89,7 +89,18 @@ impl SparseDensity {
             let (x0, y0, z0) = (bx * block, by * block, bz * block);
             let mut local = vec![0f32; l * l * l];
             splat_block(
-                &prepared, &bins[id], &grid, x0, y0, z0, block, n, l, w_scale, &mut local,
+                &prepared,
+                &bins[id],
+                &grid,
+                x0,
+                y0,
+                z0,
+                block,
+                n,
+                l,
+                w_scale,
+                opts.fast_exp,
+                &mut local,
             );
             let observed = post_block(&mut local, &grid, iso, outside, x0, y0, z0, block, l);
             (local, observed)
@@ -417,6 +428,7 @@ fn splat_block(
     n: u32,
     l: usize,
     w_scale: f32,
+    fast: bool,
     local: &mut [f32],
 ) {
     let gx0 = x0 as i32 - 1;
@@ -451,7 +463,12 @@ fn splat_block(
                         continue;
                     }
                     let lx = (x as i32 - gx0) as usize;
-                    local[row + lx] += op * (-0.5 * m).exp();
+                    local[row + lx] += op
+                        * if fast {
+                            super::fast_exp::fast_exp(-0.5 * m)
+                        } else {
+                            (-0.5 * m).exp()
+                        };
                 }
             }
         }

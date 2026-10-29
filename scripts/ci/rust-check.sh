@@ -22,6 +22,7 @@ cargo test --manifest-path "$MANIFEST" --locked --lib
 
 echo "== CPU integration tests =="
 cargo test --manifest-path "$MANIFEST" --locked --test cpu_legs
+cargo test --manifest-path "$MANIFEST" --locked --test fast_exp_parity
 
 echo "== doc tests =="
 cargo test --manifest-path "$MANIFEST" --locked --doc

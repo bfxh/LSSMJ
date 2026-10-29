@@ -460,6 +460,7 @@ fn convert_and_write(
         mode,
         bins3d: cfg.bins3d,
         simd_prep: cfg.simd_prep,
+        fast_exp: cfg.fast_exp,
         backend: if !sparse && cfg.gpu && gpu_device.is_some() {
             Backend::Gpu
         } else {

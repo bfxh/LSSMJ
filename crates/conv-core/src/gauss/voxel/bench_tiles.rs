@@ -22,10 +22,10 @@ fn compare_3d_tiles() {
         };
         let d = prepare_density(&gs, &grid, &opts);
         let t = Instant::now();
-        let (z, _) = parallel_splat_density(&d, &grid, 24, 1.0);
+        let (z, _) = parallel_splat_density(&d, &grid, 24, 1.0, false);
         let z_ms = t.elapsed().as_secs_f64() * 1e3;
         let t = Instant::now();
-        let (tile, _) = splat_density_tiles(&d, &grid, 24);
+        let (tile, _) = splat_density_tiles(&d, &grid, 24, false);
         let tile_ms = t.elapsed().as_secs_f64() * 1e3;
         println!(
             "density n={count} z-slab={z_ms:.1}ms 3d-tile={tile_ms:.1}ms speedup={:.2}x equal={}",
@@ -36,10 +36,10 @@ fn compare_3d_tiles() {
 
         let (s, clamp_abs) = prepare_surfel(&gs, &grid, &opts);
         let t = Instant::now();
-        let (zn, zd, _) = parallel_splat_surfel(&s, &grid, clamp_abs, 24);
+        let (zn, zd, _) = parallel_splat_surfel(&s, &grid, clamp_abs, 24, false);
         let z_ms = t.elapsed().as_secs_f64() * 1e3;
         let t = Instant::now();
-        let (tn, td, _) = splat_surfel_tiles(&s, &grid, clamp_abs, 24);
+        let (tn, td, _) = splat_surfel_tiles(&s, &grid, clamp_abs, 24, false);
         let tile_ms = t.elapsed().as_secs_f64() * 1e3;
         println!(
             "surfel  n={count} z-slab={z_ms:.1}ms 3d-tile={tile_ms:.1}ms speedup={:.2}x equal={}",
