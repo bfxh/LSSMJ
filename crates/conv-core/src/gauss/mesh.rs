@@ -363,15 +363,24 @@ pub fn write_obj(mesh: &Mesh, path: &Path) -> std::io::Result<()> {
         mesh.stats.chi,
         mesh.stats.components
     )?;
-    for p in &mesh.positions {
-        writeln!(w, "v {:.6} {:.6} {:.6}", p[0], p[1], p[2])?;
-    }
-    for n in &mesh.normals {
-        writeln!(w, "vn {:.6} {:.6} {:.6}", n[0], n[1], n[2])?;
-    }
-    for t in mesh.indices.as_chunks::<3>().0 {
-        writeln!(
-            w,
+    // 写出是纯格式化（同一张 1024³ 网格到 C:/E: 两块盘都是 ~2.1 s ⇒ 不是 I/O）：分块多线程格式化、
+    // 按原顺序落盘，逐行内容与串行版完全相同。
+    write_lines(&mut w, mesh.positions.len(), |i, buf| {
+        let p = mesh.positions[i];
+        let _ = writeln!(buf, "v {:.6} {:.6} {:.6}", p[0], p[1], p[2]);
+    })?;
+    write_lines(&mut w, mesh.normals.len(), |i, buf| {
+        let n = mesh.normals[i];
+        let _ = writeln!(buf, "vn {:.6} {:.6} {:.6}", n[0], n[1], n[2]);
+    })?;
+    write_lines(&mut w, mesh.indices.len() / 3, |i, buf| {
+        let t = [
+            mesh.indices[3 * i],
+            mesh.indices[3 * i + 1],
+            mesh.indices[3 * i + 2],
+        ];
+        let _ = writeln!(
+            buf,
             "f {}//{} {}//{} {}//{}",
             t[0] + 1,
             t[0] + 1,
@@ -379,7 +388,61 @@ pub fn write_obj(mesh: &Mesh, path: &Path) -> std::io::Result<()> {
             t[1] + 1,
             t[2] + 1,
             t[2] + 1
-        )?;
+        );
+    })?;
+    Ok(())
+}
+
+/// 分块并行格式化 `[0, n)` 行，按顺序写盘（每行内容由 `f` 决定，输出顺序不变）。
+fn write_lines<F>(w: &mut impl Write, n: usize, f: F) -> std::io::Result<()>
+where
+    F: Fn(usize, &mut Vec<u8>) + Sync,
+{
+    if n == 0 {
+        return Ok(());
+    }
+    const CHUNK: usize = 1 << 18;
+    let workers = std::thread::available_parallelism()
+        .map(|v| v.get())
+        .unwrap_or(4)
+        .clamp(1, 8);
+    let mut start = 0;
+    while start < n {
+        let end = (start + CHUNK).min(n);
+        if workers == 1 {
+            let mut buf = Vec::with_capacity((end - start) * 48);
+            for i in start..end {
+                f(i, &mut buf);
+            }
+            w.write_all(&buf)?;
+        } else {
+            let per = (end - start).div_ceil(workers);
+            let bufs: Vec<Vec<u8>> = std::thread::scope(|s| {
+                let mut hs = Vec::new();
+                for k in 0..workers {
+                    let a = start + k * per;
+                    let b = (a + per).min(end);
+                    if a >= b {
+                        continue;
+                    }
+                    let f = &f;
+                    hs.push(s.spawn(move || {
+                        let mut buf = Vec::with_capacity((b - a) * 48);
+                        for i in a..b {
+                            f(i, &mut buf);
+                        }
+                        buf
+                    }));
+                }
+                hs.into_iter()
+                    .map(|h| h.join().expect("obj writer panicked"))
+                    .collect()
+            });
+            for b in &bufs {
+                w.write_all(b)?;
+            }
+        }
+        start = end;
     }
     Ok(())
 }
