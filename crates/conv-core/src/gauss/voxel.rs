@@ -9,6 +9,7 @@ use super::{Aabb, Gaussian, bounds_of, dot, normalize_vec};
 
 #[cfg(target_arch = "x86_64")]
 mod avx2;
+pub mod fast_exp;
 pub mod quant;
 pub mod sparse_density;
 pub mod sparse_surfel;
@@ -148,6 +149,10 @@ pub struct VoxelizeOptions {
     pub quant16: bool,
     /// 显式 u16 scale；None = 由探针标定（多一趟 splat）。
     pub quant_scale: Option<f32>,
+    /// 可选（opt-in，`--fast-exp`）：exp 用 exp2 位技巧 + 7 阶多项式（实测最大相对误差 1.02e-6），
+    /// 稀疏大核下 splat 快 ~3×。**会改哈希**：几何量（体积/χ/分量）与默认一致，
+    /// 但浮点位模式不同。默认 false = 逐位基线。
+    pub fast_exp: bool,
 }
 
 impl Default for VoxelizeOptions {
@@ -173,6 +178,7 @@ impl Default for VoxelizeOptions {
             aabb: None,
             quant16: false,
             quant_scale: None,
+            fast_exp: false,
         }
     }
 }
@@ -756,6 +762,7 @@ fn splat_density_chunk(
     grid: &Grid,
     chunk: Chunk,
     w_scale: f32,
+    fast: bool,
     out: &mut [f32],
 ) {
     let n = grid.n as usize;
@@ -781,7 +788,19 @@ fn splat_density_chunk(
                 #[cfg(target_arch = "x86_64")]
                 if simd {
                     unsafe {
-                        avx2::density_row(g, grid, y, z, range.lo[0], range.hi[0], 0, op, out, row);
+                        avx2::density_row(
+                            g,
+                            grid,
+                            y,
+                            z,
+                            range.lo[0],
+                            range.hi[0],
+                            0,
+                            op,
+                            fast,
+                            out,
+                            row,
+                        );
                     }
                     continue;
                 }
@@ -792,19 +811,26 @@ fn splat_density_chunk(
                     if m > 18.0 {
                         continue;
                     }
-                    out[row + x as usize] += op * (-0.5 * m).exp();
+                    out[row + x as usize] += op
+                        * if fast {
+                            fast_exp::fast_exp(-0.5 * m)
+                        } else {
+                            (-0.5 * m).exp()
+                        };
                 }
             }
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn splat_surfel_chunk(
     prepared: &[Prepared],
     indices: &[u32],
     grid: &Grid,
     chunk: Chunk,
     clamp_abs: f32,
+    fast: bool,
     num: &mut [f32],
     den: &mut [f32],
 ) {
@@ -833,7 +859,12 @@ fn splat_surfel_chunk(
                         continue;
                     }
                     let dist = dot(d, g.normal).clamp(-clamp_abs, clamp_abs);
-                    let w = g.opacity * (-0.5 * m).exp();
+                    let w = g.opacity
+                        * if fast {
+                            fast_exp::fast_exp(-0.5 * m)
+                        } else {
+                            (-0.5 * m).exp()
+                        };
                     let idx = row + x as usize;
                     num[idx] += w * dist;
                     den[idx] += w;
@@ -848,6 +879,7 @@ fn parallel_splat_density(
     grid: &Grid,
     workers: usize,
     w_scale: f32,
+    fast: bool,
 ) -> (Vec<f32>, usize) {
     let n = grid.n as usize;
     let n2 = n * n;
@@ -861,7 +893,7 @@ fn parallel_splat_density(
     let bins = build_bins(prepared, grid, &chunks);
     let mut parts = parallel_map_chunks(&chunks, workers, |i, c| {
         let mut local = vec![0f32; n2 * (c.z1 - c.z0) as usize];
-        splat_density_chunk(prepared, &bins[i], grid, *c, w_scale, &mut local);
+        splat_density_chunk(prepared, &bins[i], grid, *c, w_scale, fast, &mut local);
         local
     });
     parts.sort_by_key(|(i, _)| *i);
@@ -879,6 +911,7 @@ fn parallel_splat_surfel(
     grid: &Grid,
     clamp_abs: f32,
     workers: usize,
+    fast: bool,
 ) -> (Vec<f32>, Vec<f32>, usize) {
     let n = grid.n as usize;
     let n2 = n * n;
@@ -894,7 +927,9 @@ fn parallel_splat_surfel(
         let len = n2 * (c.z1 - c.z0) as usize;
         let mut num = vec![0f32; len];
         let mut den = vec![0f32; len];
-        splat_surfel_chunk(prepared, &bins[i], grid, *c, clamp_abs, &mut num, &mut den);
+        splat_surfel_chunk(
+            prepared, &bins[i], grid, *c, clamp_abs, fast, &mut num, &mut den,
+        );
         (num, den)
     });
     parts.sort_by_key(|(i, _)| *i);
@@ -924,9 +959,9 @@ fn voxelize_density(
         if opts.density_norm_ref.is_some() {
             return Err("--density-norm 与 --bins3d 暂不兼容（tile 路径未归一化）".into());
         }
-        tiles::splat_density_tiles(&prepared, &grid, opts.threads)
+        tiles::splat_density_tiles(&prepared, &grid, opts.threads, opts.fast_exp)
     } else {
-        parallel_splat_density(&prepared, &grid, opts.threads, w_scale)
+        parallel_splat_density(&prepared, &grid, opts.threads, w_scale, opts.fast_exp)
     };
     density_post(density, opts, grid, bounds, workers, Backend::Cpu)
 }
@@ -999,9 +1034,9 @@ fn voxelize_surfel(
         return Err("没有有效的高斯（NaN/Inf/非正不透明度）".into());
     }
     let (num, den, workers) = if opts.bins3d {
-        tiles::splat_surfel_tiles(&prepared, &grid, clamp_abs, opts.threads)
+        tiles::splat_surfel_tiles(&prepared, &grid, clamp_abs, opts.threads, opts.fast_exp)
     } else {
-        parallel_splat_surfel(&prepared, &grid, clamp_abs, opts.threads)
+        parallel_splat_surfel(&prepared, &grid, clamp_abs, opts.threads, opts.fast_exp)
     };
     surfel_post(num, den, opts, grid, bounds, workers, Backend::Cpu)
 }

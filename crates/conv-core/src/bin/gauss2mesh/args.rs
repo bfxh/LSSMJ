@@ -33,6 +33,8 @@ LSSMJ gauss2mesh · 高斯体素 → 网格
   --density-norm <N>    把 splat 权重乘 (h_N/h)²，让密度跨分辨率可比（opt-in，仅 CPU）
                         注意：它只修密度幅度、不修核宽，512³ 拓扑仍不闭合；
                         要跨分辨率同面请用 --kernel-clamp-ref <N> + 显式 --iso
+  --fast-exp             splat 的 exp 改用 exp2 位技巧+7 阶多项式（实测最大相对误差 1.02e-6）：
+                        稀疏大核下体素化快 ~3×，体积/χ/分量与默认一致，但哈希会变（opt-in）
   --quant16              走 u16 定点密度 splat（需 --iso）：同面、内存 1/2
   --quant-scale <S>      指定 u16 定点 scale，跳过标定（批量复用时省一趟 splat）
   --prune-opacity <f>    不透明度下限（默认 0.05）
@@ -82,6 +84,7 @@ pub(crate) struct Config {
     pub(crate) gpu_mesh: bool,
     pub(crate) bins3d: bool,
     pub(crate) simd_prep: bool,
+    pub(crate) fast_exp: bool,
     pub(crate) mode: ModeSel,
     pub(crate) iso: Option<f32>,
     pub(crate) prune_opacity: f32,
@@ -119,6 +122,7 @@ impl Default for Config {
             gpu_mesh: false,
             bins3d: false,
             simd_prep: false,
+            fast_exp: false,
             mode: ModeSel::Auto,
             iso: None,
             prune_opacity: 0.05,
@@ -166,6 +170,7 @@ pub(crate) fn is_bool_flag(name: &str) -> bool {
             | "simd-prep"
             | "largest-component"
             | "splat-integrate"
+            | "fast-exp"
     )
 }
 
@@ -311,6 +316,7 @@ pub(crate) fn parse_config(
     cfg.gpu_mesh = bools.contains("gpu-mesh");
     cfg.bins3d = bools.contains("bins3d");
     cfg.simd_prep = bools.contains("simd-prep");
+    cfg.fast_exp = bools.contains("fast-exp");
     cfg.raw_scale = bools.contains("raw-scale");
     cfg.raw_opacity = bools.contains("raw-opacity");
     cfg.quiet = bools.contains("quiet");

@@ -54,7 +54,19 @@ impl SparseSurfel {
             let mut num = vec![0f32; l * l * l];
             let mut den = vec![0f32; l * l * l];
             splat_surfel_block(
-                &prepared, &bins[id], &grid, x0, y0, z0, block, n, l, clamp_abs, &mut num, &mut den,
+                &prepared,
+                &bins[id],
+                &grid,
+                x0,
+                y0,
+                z0,
+                block,
+                n,
+                l,
+                clamp_abs,
+                opts.fast_exp,
+                &mut num,
+                &mut den,
             );
             post_surfel_block(
                 &num,
@@ -130,6 +142,7 @@ fn splat_surfel_block(
     n: u32,
     l: usize,
     clamp_abs: f32,
+    fast: bool,
     num: &mut [f32],
     den: &mut [f32],
 ) {
@@ -164,7 +177,12 @@ fn splat_surfel_block(
                         continue;
                     }
                     let dist = dot(d, g.normal).clamp(-clamp_abs, clamp_abs);
-                    let w = g.opacity * (-0.5 * m).exp();
+                    let w = g.opacity
+                        * if fast {
+                            super::fast_exp::fast_exp(-0.5 * m)
+                        } else {
+                            (-0.5 * m).exp()
+                        };
                     let idx = row + (x as i32 - gx0) as usize;
                     num[idx] += w * dist;
                     den[idx] += w;

@@ -859,6 +859,36 @@ dense GPU vox + CPU 网格（`bench_gpu_256`，CPU 24T，sealed，GPU 时间不�
 - `--gpu` 在 >256 仅对 surfel 走 dense GPU；`--gpu-mesh` 需配合 `--gpu`，512 网格未验证。
 - 单次 init ~0.5–0.7 s；批量摊销后收益更明显。
 
+### 6.22 可选快速 exp（`--fast-exp`，2026-10-30）
+
+**归因更正**：§6.12 的「去掉 exp 只快约 8%」是 **dense 小核**口径（128³、核宽 6–10 格）。
+在**稀疏大核**（demo sphere 的 σ≈0.09 世界单位、1024³ 下核径上百体素）上，exp 是 splat 的主项：
+
+| 变体（1024³ density 体素化） | 耗时 | 相对默认 |
+|---|---:|---:|
+| 默认（`f32::exp`） | 31.3 s | — |
+| 二次型 `B=VΛ⁻¹Vᵀ`（省 3 次除法，**改数值**） | 28.4 s | −10% |
+| 去掉 exp（仅测占比，**改数值**） | **7.1 s** | exp 占 ~77% |
+| exp2 位技巧 + 7 阶多项式 | **9.6 s** | **−69%** |
+
+**落地**：`--fast-exp`（opt-in，默认 false）。`exp(x) = 2^(x·log2e)`：整数部分用 IEEE 指数字段拼，
+小数部分用 7 阶极小极大多项式；`x ∈ [−9,0]` 内实测最大相对误差 **1.02e-6**，范围外回退 `f32::exp`。
+覆盖路径：dense density/surfel（含 AVX2 行内核）、稀疏 density/surfel、quant 行内核、`--bins3d`。
+
+| 场景（端到端，本机 24T） | 默认 | `--fast-exp` | 差 |
+|---|---:|---:|---:|
+| demo sphere 512³ surfel | 4124 ms | 2445 ms | −41% |
+| demo sphere 1024³ surfel | 18.3 s | 10.8 s | −41% |
+| demo torus 512³ surfel | 2127 ms | 1514 ms | −29% |
+| demo blobs 512³ density | 20.8 s | 4.8 s | **−77%** |
+
+**几何保真**：sphere / torus / blobs / 真实 scene01–04 共 6 组，体积（5 位小数）、χ、分量与默认档**逐项相同**，
+三角数相同（`tests/fast_exp_parity.rs` 锁三组）。**哈希会变** ⇒ 因此只能 opt-in，默认路径仍是逐位基线
+（`src/gauss/voxel/fast_exp.rs` 的 `matches_libm_within_1e_6` 锁住误差上界）。
+
+复算：`cargo test --release --lib fast_exp --test fast_exp_parity`；
+`gauss2mesh demo sphere --grid 1024 --fast-exp`。
+
 ## 7. 限制与否证条件（不许当结论）
 
 1. **CPU 多线程，非实时**：64³/20k 高斯总耗时约 0.05–0.07 s（24 线程；1T 参照 0.36–0.48 s）；

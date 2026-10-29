@@ -42,6 +42,7 @@ pub(super) unsafe fn density_row(
     x1: u32,
     x_base: u32,
     op: f32,
+    fast: bool,
     out: &mut [f32],
     row: usize,
 ) {
@@ -72,7 +73,12 @@ pub(super) unsafe fn density_row(
                 continue;
             }
             let idx = row + (x - x_base) as usize + l;
-            out[idx] += op * (-0.5 * m).exp();
+            out[idx] += op
+                * if fast {
+                    super::fast_exp::fast_exp(-0.5 * m)
+                } else {
+                    (-0.5 * m).exp()
+                };
         }
         x += 8;
     }
@@ -81,7 +87,12 @@ pub(super) unsafe fn density_row(
         let d = [p[0] - g.mean[0], p[1] - g.mean[1], p[2] - g.mean[2]];
         let m = max_maha(&g.eigen, g.lam, d);
         if m <= 18.0 {
-            out[row + (x - x_base) as usize] += op * (-0.5 * m).exp();
+            out[row + (x - x_base) as usize] += op
+                * if fast {
+                    super::fast_exp::fast_exp(-0.5 * m)
+                } else {
+                    (-0.5 * m).exp()
+                };
         }
         x += 1;
     }
@@ -98,6 +109,7 @@ pub(super) unsafe fn quant_row<T: super::quant::Acc>(
     x0: u32,
     x1: u32,
     scale: f32,
+    fast: bool,
     out: &mut [T],
     row: usize,
 ) {
@@ -127,7 +139,12 @@ pub(super) unsafe fn quant_row<T: super::quant::Acc>(
             if m > 18.0 {
                 continue;
             }
-            let q = (g.opacity * (-0.5 * m).exp() * scale).round();
+            let w = if fast {
+                super::fast_exp::fast_exp(-0.5 * m)
+            } else {
+                (-0.5 * m).exp()
+            };
+            let q = (g.opacity * w * scale).round();
             if q < 1.0 {
                 continue;
             }
@@ -141,7 +158,12 @@ pub(super) unsafe fn quant_row<T: super::quant::Acc>(
         let d = [p[0] - g.mean[0], p[1] - g.mean[1], p[2] - g.mean[2]];
         let m = max_maha(&g.eigen, g.lam, d);
         if m <= 18.0 {
-            let q = (g.opacity * (-0.5 * m).exp() * scale).round();
+            let w = if fast {
+                super::fast_exp::fast_exp(-0.5 * m)
+            } else {
+                (-0.5 * m).exp()
+            };
+            let q = (g.opacity * w * scale).round();
             if q >= 1.0 {
                 let i = row + x as usize;
                 out[i] = out[i].add_sat(q as u32);
@@ -208,7 +230,7 @@ mod tests {
                 for y in 0..n {
                     let row = (y * n + z * n * n) as usize;
                     unsafe {
-                        density_row(&p, &grid, y, z, 0, n - 1, 0, p.opacity, &mut b, row);
+                        density_row(&p, &grid, y, z, 0, n - 1, 0, p.opacity, false, &mut b, row);
                     }
                 }
             }
@@ -270,7 +292,7 @@ mod tests {
                 for y in 0..n {
                     let row = (y * n + z * n * n) as usize;
                     unsafe {
-                        super::quant_row(&p, &grid, y, z, 0, n - 1, scale, &mut b16, row);
+                        super::quant_row(&p, &grid, y, z, 0, n - 1, scale, false, &mut b16, row);
                     }
                 }
             }
@@ -283,7 +305,7 @@ mod tests {
                 for y in 0..n {
                     let row = (y * n + z * n * n) as usize;
                     unsafe {
-                        super::quant_row(&p, &grid, y, z, 0, n - 1, scale, &mut b8, row);
+                        super::quant_row(&p, &grid, y, z, 0, n - 1, scale, false, &mut b8, row);
                     }
                 }
             }

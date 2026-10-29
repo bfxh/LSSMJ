@@ -62,6 +62,7 @@ fn splat_density_tile(
     indices: &[u32],
     grid: &Grid,
     tile: Tile,
+    fast: bool,
     out: &mut [f32],
 ) {
     let n = grid.n;
@@ -94,7 +95,7 @@ fn splat_density_tile(
                 if simd {
                     unsafe {
                         super::avx2::density_row(
-                            g, grid, y, z, x0, xa, tile.x0, g.opacity, out, row,
+                            g, grid, y, z, x0, xa, tile.x0, g.opacity, fast, out, row,
                         );
                     }
                     continue;
@@ -106,19 +107,26 @@ fn splat_density_tile(
                     if m > 18.0 {
                         continue;
                     }
-                    out[row + (x - tile.x0) as usize] += g.opacity * (-0.5 * m).exp();
+                    out[row + (x - tile.x0) as usize] += g.opacity
+                        * if fast {
+                            super::fast_exp::fast_exp(-0.5 * m)
+                        } else {
+                            (-0.5 * m).exp()
+                        };
                 }
             }
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn splat_surfel_tile(
     prepared: &[Prepared],
     indices: &[u32],
     grid: &Grid,
     tile: Tile,
     clamp_abs: f32,
+    fast: bool,
     num: &mut [f32],
     den: &mut [f32],
 ) {
@@ -154,7 +162,12 @@ fn splat_surfel_tile(
                         continue;
                     }
                     let dist = dot(d, g.normal).clamp(-clamp_abs, clamp_abs);
-                    let w = g.opacity * (-0.5 * m).exp();
+                    let w = g.opacity
+                        * if fast {
+                            super::fast_exp::fast_exp(-0.5 * m)
+                        } else {
+                            (-0.5 * m).exp()
+                        };
                     let idx = row + (x - tile.x0) as usize;
                     num[idx] += w * dist;
                     den[idx] += w;
@@ -216,6 +229,7 @@ pub(crate) fn splat_density_tiles(
     prepared: &[Prepared],
     grid: &Grid,
     workers: usize,
+    fast: bool,
 ) -> (Vec<f32>, usize) {
     let tiles = tiles(grid.n);
     let workers = workers.min(tiles.len()).max(1);
@@ -235,7 +249,7 @@ pub(crate) fn splat_density_tiles(
                         break;
                     }
                     let mut local = vec![0f32; TL];
-                    splat_density_tile(prepared, &bins[ti], grid, tiles[ti], &mut local);
+                    splat_density_tile(prepared, &bins[ti], grid, tiles[ti], fast, &mut local);
                     out.push((ti, local));
                 }
                 out
@@ -258,6 +272,7 @@ pub(crate) fn splat_surfel_tiles(
     grid: &Grid,
     clamp_abs: f32,
     workers: usize,
+    fast: bool,
 ) -> (Vec<f32>, Vec<f32>, usize) {
     let tiles = tiles(grid.n);
     let workers = workers.min(tiles.len()).max(1);
@@ -279,7 +294,7 @@ pub(crate) fn splat_surfel_tiles(
                     let mut num = vec![0f32; TL];
                     let mut den = vec![0f32; TL];
                     splat_surfel_tile(
-                        prepared, &bins[ti], grid, tiles[ti], clamp_abs, &mut num, &mut den,
+                        prepared, &bins[ti], grid, tiles[ti], clamp_abs, fast, &mut num, &mut den,
                     );
                     out.push((ti, num, den));
                 }
