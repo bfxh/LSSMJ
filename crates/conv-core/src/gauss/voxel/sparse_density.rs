@@ -113,7 +113,16 @@ impl SparseDensity {
         }
         let sealed_interior = if seal {
             let t = std::time::Instant::now();
-            let sealed = seal_blocks(&mut data, None, &grid, block, per, blocks, outside);
+            let sealed = seal_blocks(
+                &mut data,
+                None,
+                &grid,
+                block,
+                per,
+                blocks,
+                outside,
+                opts.threads,
+            );
             if std::env::var_os("LSSMJ_STAGE_DEBUG").is_some() {
                 eprintln!(
                     "[sparse] density seal {:.1} ms",
@@ -530,6 +539,7 @@ fn post_block(
 /// 稀疏内部密封：块级粗分类 + 活跃块内未知细格的 BFS。
 /// 已知（density: value<0；surfel: known mask）是屏障；外部种子来自域边界/外部空块，
 /// 内部种子来自被围住的空块。
+#[allow(clippy::too_many_arguments)]
 pub(super) fn seal_blocks(
     data: &mut [Option<Vec<f32>>],
     knowns: Option<&[Option<Vec<u8>>]>,
@@ -538,6 +548,7 @@ pub(super) fn seal_blocks(
     per: u32,
     blocks: &SurfaceBlocks,
     outside: f32,
+    threads: usize,
 ) -> usize {
     let n = grid.n;
     let l = (block + 2) as usize;
@@ -642,88 +653,86 @@ pub(super) fn seal_blocks(
             ((x / block) + (y / block) * per + (z / block) * per * per) as usize
         }
     };
-    let mut labels = PackedLabels::new((n * n * n) as usize); // 0 未定, 1 外, 2 内
-    let mut queue = VecDeque::new();
+    // 三态标签按块内 2-bit 存：每活跃块 B³ 格（B=16 ⇒ 1 KB/块），四个趟都按块访问。
+    let cells_per_block = (block as usize).pow(3);
+    let mut labels: Vec<Option<PackedLabels>> = (0..count).map(|_| None).collect();
+    for &id in blocks.active() {
+        labels[id as usize] = Some(PackedLabels::new(cells_per_block));
+    }
     let bmask = block - 1;
     let pow2_block = block.is_power_of_two();
     let nsh = n.trailing_zeros();
     let nmask = n - 1;
     let pow2_n = n.is_power_of_two();
-    for &id in blocks.active() {
-        let id = id as usize;
-        let (bx, by, bz) = blocks.xyz(id as u32);
-        let x0 = bx * block;
-        let y0 = by * block;
-        let z0 = bz * block;
-        let vals = data[id].as_ref().unwrap();
-        let kn = knowns.map(|k| k[id].as_ref().unwrap());
-        for dz in 0..block {
-            let gz = z0 + dz;
-            if gz >= n {
-                break;
-            }
-            for dy in 0..block {
-                let gy = y0 + dy;
-                if gy >= n {
-                    break;
-                }
-                for dx in 0..block {
-                    let gx = x0 + dx;
-                    if gx >= n {
-                        break;
-                    }
-                    let g = (gx + gy * n + gz * n * n) as usize;
-                    if labels.get(g) != 0 {
-                        continue;
-                    }
-                    let li = (((dz + 1) as usize * l) + (dy + 1) as usize) * l + (dx + 1) as usize;
-                    let known_here = match kn {
-                        Some(k) => k[li] != 0,
-                        None => vals[li] < 0.0,
-                    };
-                    if known_here {
-                        continue;
-                    }
-                    let mut lab = 0u8;
-                    for (dx, dy, dz) in [
-                        (-1i32, 0i32, 0i32),
-                        (1, 0, 0),
-                        (0, -1, 0),
-                        (0, 1, 0),
-                        (0, 0, -1),
-                        (0, 0, 1),
-                    ] {
-                        let x = gx as i32 + dx;
-                        let y = gy as i32 + dy;
-                        let z = gz as i32 + dz;
-                        if x < 0
-                            || y < 0
-                            || z < 0
-                            || x >= n as i32
-                            || y >= n as i32
-                            || z >= n as i32
-                        {
-                            lab = 1;
-                            break;
-                        }
-                        let nb = bid(x as u32, y as u32, z as u32);
-                        if nb == id || class[nb] == 2 {
-                            continue;
-                        }
-                        if out_block[nb] {
-                            lab = 1;
-                            break;
-                        }
-                        lab = 2;
-                    }
-                    if lab != 0 {
-                        labels.set(g, lab);
-                        queue.push_back(g as u32);
-                    }
-                }
-            }
-        }
+    // 种子趟按活跃块并行：每块只写自己的格，class/out_block/data/knowns 只读。
+    let act = blocks.active();
+    let workers = if threads == 0 {
+        std::thread::available_parallelism()
+            .map(|v| v.get())
+            .unwrap_or(4)
+    } else {
+        threads
     }
+    .clamp(1, 24)
+    .min(act.len().max(1));
+    let bounds: Vec<usize> = (0..=workers).map(|k| act.len() * k / workers).collect();
+    let seeds: Vec<u32> = if workers <= 1 {
+        seed_blocks(
+            &mut labels[..],
+            0,
+            act,
+            data,
+            knowns,
+            blocks,
+            &class,
+            &out_block,
+            n,
+            block,
+            per,
+            l,
+        )
+    } else {
+        let mut lab_slices: Vec<&mut [Option<PackedLabels>]> = Vec::with_capacity(workers);
+        {
+            let mut rest: &mut [Option<PackedLabels>] = &mut labels[..];
+            let mut prev = 0usize;
+            for k in 1..workers {
+                let cut = act[bounds[k]] as usize;
+                let (a, b) = rest.split_at_mut(cut - prev);
+                lab_slices.push(a);
+                rest = b;
+                prev = cut;
+            }
+            lab_slices.push(rest);
+        }
+        let data_ref: &[Option<Vec<f32>>] = data;
+        let class_ref: &[u8] = &class;
+        let ob_ref: &[bool] = &out_block;
+        std::thread::scope(|s| {
+            let mut hs = Vec::new();
+            for (k, labs) in lab_slices.into_iter().enumerate() {
+                let ids = &act[bounds[k]..bounds[k + 1]];
+                // 第 0 片的切片从标签下标 0 起（前面是未分配槽），其余片从首个 id 起
+                let base = if k == 0 {
+                    0usize
+                } else {
+                    act[bounds[k]] as usize
+                };
+                hs.push(s.spawn(move || {
+                    seed_blocks(
+                        labs, base, ids, data_ref, knowns, blocks, class_ref, ob_ref, n, block,
+                        per, l,
+                    )
+                }));
+            }
+            let mut all = Vec::new();
+            for h in hs {
+                all.extend(h.join().expect("seal seed panicked"));
+            }
+            all
+        })
+    };
+    let mut queue: VecDeque<u32> = VecDeque::from(seeds);
     let mut c_nb = usize::MAX;
     let mut c_vals: &[f32] = &[];
     let mut c_kn: Option<&[u8]> = None;
@@ -738,7 +747,13 @@ pub(super) fn seal_blocks(
         } else {
             ((g as u32) % n, ((g as u32) / n) % n, (g as u32) / (n * n))
         };
-        let lab = labels.get(g);
+        let nb_self = bid(gx, gy, gz);
+        let li_self = if pow2_block {
+            (((gz & bmask) * block + (gy & bmask)) * block + (gx & bmask)) as usize
+        } else {
+            (((gz % block) * block + (gy % block)) * block + (gx % block)) as usize
+        };
+        let lab = labels[nb_self].as_ref().unwrap().get(li_self);
         for (dx, dy, dz) in [
             (-1i32, 0i32, 0i32),
             (1, 0, 0),
@@ -759,7 +774,12 @@ pub(super) fn seal_blocks(
                 continue;
             }
             let ng = (x + y * n + z * n * n) as usize;
-            if labels.get(ng) != 0 {
+            let li_nb = if pow2_block {
+                (((z & bmask) * block + (y & bmask)) * block + (x & bmask)) as usize
+            } else {
+                (((z % block) * block + (y % block)) * block + (x % block)) as usize
+            };
+            if labels[nb].as_ref().unwrap().get(li_nb) != 0 {
                 continue;
             }
             let (lx, ly, lz) = if pow2_block {
@@ -791,20 +811,210 @@ pub(super) fn seal_blocks(
             if known_nb {
                 continue;
             }
-            labels.set(ng, lab);
+            labels[nb].as_mut().unwrap().set(li_nb, lab);
             queue.push_back(ng as u32);
         }
     }
+    // 写回趟按活跃块并行：每块只写自己的 data，labels/class/out_block 只读。
+    let inside: usize = if workers <= 1 {
+        write_blocks(
+            &mut data[..],
+            0,
+            act,
+            &labels,
+            blocks,
+            &class,
+            &out_block,
+            knowns,
+            n,
+            block,
+            per,
+            l,
+            outside,
+        )
+    } else {
+        let mut data_slices: Vec<&mut [Option<Vec<f32>>]> = Vec::with_capacity(workers);
+        {
+            let mut rest: &mut [Option<Vec<f32>>] = &mut data[..];
+            let mut prev = 0usize;
+            for k in 1..workers {
+                let cut = act[bounds[k]] as usize;
+                let (a, b) = rest.split_at_mut(cut - prev);
+                data_slices.push(a);
+                rest = b;
+                prev = cut;
+            }
+            data_slices.push(rest);
+        }
+        let lab_ref: &[Option<PackedLabels>] = &labels;
+        let class_ref: &[u8] = &class;
+        let ob_ref: &[bool] = &out_block;
+        std::thread::scope(|s| {
+            let mut hs = Vec::new();
+            for (k, dslice) in data_slices.into_iter().enumerate() {
+                let ids = &act[bounds[k]..bounds[k + 1]];
+                let base = if k == 0 {
+                    0usize
+                } else {
+                    act[bounds[k]] as usize
+                };
+                hs.push(s.spawn(move || {
+                    write_blocks(
+                        dslice, base, ids, lab_ref, blocks, class_ref, ob_ref, knowns, n, block,
+                        per, l, outside,
+                    )
+                }));
+            }
+            hs.into_iter()
+                .map(|h| h.join().expect("seal write panicked"))
+                .sum()
+        })
+    };
+    inside
+}
 
-    let mut inside = 0usize;
-    for &id in blocks.active() {
-        let id = id as usize;
-        let (bx, by, bz) = blocks.xyz(id as u32);
+/// 种子趟的单块组：给未定格的每个格判外/内并登记。
+#[allow(clippy::too_many_arguments)]
+fn seed_blocks(
+    labs: &mut [Option<PackedLabels>],
+    id_base: usize,
+    ids: &[u32],
+    data: &[Option<Vec<f32>>],
+    knowns: Option<&[Option<Vec<u8>>]>,
+    blocks: &SurfaceBlocks,
+    class: &[u8],
+    out_block: &[bool],
+    n: u32,
+    block: u32,
+    per: u32,
+    l: usize,
+) -> Vec<u32> {
+    let pow2 = block.is_power_of_two();
+    let bid = |x: u32, y: u32, z: u32| -> usize {
+        if pow2 {
+            let s = block.trailing_zeros();
+            ((x >> s) + (y >> s) * per + (z >> s) * per * per) as usize
+        } else {
+            ((x / block) + (y / block) * per + (z / block) * per * per) as usize
+        }
+    };
+    let mut out = Vec::new();
+    for &id in ids {
+        let id_us = id as usize;
+        let (bx, by, bz) = blocks.xyz(id);
         let x0 = bx * block;
         let y0 = by * block;
         let z0 = bz * block;
-        let kn = knowns.map(|k| k[id].as_ref().unwrap());
-        let vals = data[id].as_mut().unwrap();
+        let vals = data[id_us].as_ref().unwrap();
+        let kn = knowns.map(|k| k[id_us].as_ref().unwrap());
+        let labs = labs[id_us - id_base].as_mut().unwrap();
+        for dz in 0..block {
+            let gz = z0 + dz;
+            if gz >= n {
+                break;
+            }
+            for dy in 0..block {
+                let gy = y0 + dy;
+                if gy >= n {
+                    break;
+                }
+                for dx in 0..block {
+                    let gx = x0 + dx;
+                    if gx >= n {
+                        break;
+                    }
+                    let g = (gx + gy * n + gz * n * n) as usize;
+                    let li_own = ((dz as usize) * block as usize + dy as usize) * block as usize
+                        + dx as usize;
+                    if labs.get(li_own) != 0 {
+                        continue;
+                    }
+                    let li = (((dz + 1) as usize * l) + (dy + 1) as usize) * l + (dx + 1) as usize;
+                    let known_here = match kn {
+                        Some(k) => k[li] != 0,
+                        None => vals[li] < 0.0,
+                    };
+                    if known_here {
+                        continue;
+                    }
+                    let mut lab = 0u8;
+                    for (ddx, ddy, ddz) in [
+                        (-1i32, 0i32, 0i32),
+                        (1, 0, 0),
+                        (0, -1, 0),
+                        (0, 1, 0),
+                        (0, 0, -1),
+                        (0, 0, 1),
+                    ] {
+                        let x = gx as i32 + ddx;
+                        let y = gy as i32 + ddy;
+                        let z = gz as i32 + ddz;
+                        if x < 0
+                            || y < 0
+                            || z < 0
+                            || x >= n as i32
+                            || y >= n as i32
+                            || z >= n as i32
+                        {
+                            lab = 1;
+                            break;
+                        }
+                        let nb = bid(x as u32, y as u32, z as u32);
+                        if nb == id_us || class[nb] == 2 {
+                            continue;
+                        }
+                        if out_block[nb] {
+                            lab = 1;
+                            break;
+                        }
+                        lab = 2;
+                    }
+                    if lab != 0 {
+                        labs.set(li_own, lab);
+                        out.push(g as u32);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// 写回趟的单块组：未知格按标签写 ±outside；返回**本块拥有**的内部格数。
+#[allow(clippy::too_many_arguments)]
+fn write_blocks(
+    data: &mut [Option<Vec<f32>>],
+    id_base: usize,
+    ids: &[u32],
+    labels: &[Option<PackedLabels>],
+    blocks: &SurfaceBlocks,
+    class: &[u8],
+    out_block: &[bool],
+    knowns: Option<&[Option<Vec<u8>>]>,
+    n: u32,
+    block: u32,
+    per: u32,
+    l: usize,
+    outside: f32,
+) -> usize {
+    let pow2 = block.is_power_of_two();
+    let bid = |x: u32, y: u32, z: u32| -> usize {
+        if pow2 {
+            let s = block.trailing_zeros();
+            ((x >> s) + (y >> s) * per + (z >> s) * per * per) as usize
+        } else {
+            ((x / block) + (y / block) * per + (z / block) * per * per) as usize
+        }
+    };
+    let mut inside = 0usize;
+    for &id in ids {
+        let id_us = id as usize;
+        let (bx, by, bz) = blocks.xyz(id);
+        let x0 = bx * block;
+        let y0 = by * block;
+        let z0 = bz * block;
+        let kn = knowns.map(|k| k[id_us].as_ref().unwrap());
+        let vals = data[id_us - id_base].as_mut().unwrap();
         for lz in 0..l {
             let gz = z0 as i64 - 1 + lz as i64;
             for ly in 0..l {
@@ -833,7 +1043,10 @@ pub(super) fn seal_blocks(
                     let (gx, gy, gz) = (gx as u32, gy as u32, gz as u32);
                     let nb = bid(gx, gy, gz);
                     let lab = if class[nb] == 2 {
-                        labels.get((gx + gy * n + gz * n * n) as usize)
+                        // 拥有块可能不是当前块（halo 格）⇒ 用 % 取块内下标
+                        let li_nb =
+                            (((gz % block) * block + (gy % block)) * block + (gx % block)) as usize;
+                        labels[nb].as_ref().unwrap().get(li_nb)
                     } else if out_block[nb] {
                         1
                     } else {
