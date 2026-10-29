@@ -246,6 +246,10 @@ pub(super) fn mesh_blocks(
     let mut indices: Vec<u32> = Vec::new();
     let mut vert_map: HashMap<u32, u32> = HashMap::new();
     let mut seen_quads: HashSet<[u32; 4]> = HashSet::new();
+    // 块内格（到块边界都留 1 格余量）只有本块看得见 ⇒ 用块级小表去重，
+    // 避掉全局 486 万条目表的随机访问；跨块共享的边界格仍走 vert_map。
+    let mut local_verts: HashMap<u32, u32> = HashMap::new();
+    let mut local_quads: HashSet<[u32; 4]> = HashSet::new();
     for (id, slot) in data.iter().enumerate() {
         let Some(local) = slot else {
             continue;
@@ -285,6 +289,8 @@ pub(super) fn mesh_blocks(
             })
             .collect();
         let norm: Vec<[f32; 3]> = buf.normals.iter().map(|v| normalize_vec(*v)).collect();
+        local_verts.clear();
+        local_quads.clear();
         for q in buf.indices.as_chunks::<6>().0 {
             let mut keys = [0u32; 6];
             let mut valid = true;
@@ -321,11 +327,52 @@ pub(super) fn mesh_blocks(
                 continue;
             }
             quad.sort_unstable();
-            if !seen_quads.insert(quad) {
+            // 四个格都在本块内部时，四边形不可能被邻块重复发出 ⇒ 块级小表即可。
+            let all_inner = q.iter().all(|&vi| {
+                let c = cells[vi as usize];
+                let (lx, ly, lz) = (c[0] - x0 as i32, c[1] - y0 as i32, c[2] - z0 as i32);
+                lx >= 1
+                    && ly >= 1
+                    && lz >= 1
+                    && lx < block as i32 - 1
+                    && ly < block as i32 - 1
+                    && lz < block as i32 - 1
+            });
+            let dup = if all_inner {
+                !local_quads.insert(quad)
+            } else {
+                !seen_quads.insert(quad)
+            };
+            if dup {
                 continue;
             }
             for (j, &vi) in q.iter().enumerate() {
                 let key = keys[j];
+                let c = cells[vi as usize];
+                let (lx, ly, lz) = (c[0] - x0 as i32, c[1] - y0 as i32, c[2] - z0 as i32);
+                // 到块边界都留 1 格余量：邻块的 surface_nets 范围最多伸进本块 1 格，
+                // 所以 inner 格只有本块看得见，可以走块级小表。
+                if lx >= 1
+                    && ly >= 1
+                    && lz >= 1
+                    && lx < block as i32 - 1
+                    && ly < block as i32 - 1
+                    && lz < block as i32 - 1
+                {
+                    let lk = (lz as u32 * block + ly as u32) * block + lx as u32;
+                    let gid = match local_verts.get(&lk) {
+                        Some(&g) => g,
+                        None => {
+                            let g = positions.len() as u32;
+                            local_verts.insert(lk, g);
+                            positions.push(posg[vi as usize]);
+                            normals.push(norm[vi as usize]);
+                            g
+                        }
+                    };
+                    indices.push(gid);
+                    continue;
+                }
                 let gid = match vert_map.get(&key) {
                     Some(&g) => {
                         let d = {
