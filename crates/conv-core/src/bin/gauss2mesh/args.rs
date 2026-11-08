@@ -96,6 +96,8 @@ pub(crate) struct Config {
     pub(crate) patch_scale: f32,
     /// 面片缝合格边长（世界单位；0 = 不缝合）。
     pub(crate) weld_cell: f32,
+    /// 边界封口：提取面片网的边界环并扇形三角化，补成封闭壳。
+    pub(crate) cap: bool,
     pub(crate) normal_band: Option<f32>,
     pub(crate) largest_component: bool,
     pub(crate) kernel_clamp_world: Option<f32>,
@@ -138,6 +140,7 @@ impl Default for Config {
             double_layer: None,
             patch_scale: 2.0,
             weld_cell: 0.0,
+            cap: false,
             normal_band: None,
             largest_component: false,
             kernel_clamp_world: None,
@@ -179,6 +182,7 @@ pub(crate) fn is_bool_flag(name: &str) -> bool {
             | "simd-prep"
             | "largest-component"
             | "splat-integrate"
+            | "cap"
     )
 }
 
@@ -366,6 +370,7 @@ pub(crate) fn parse_config(
     cfg.raw_opacity = bools.contains("raw-opacity");
     cfg.quiet = bools.contains("quiet");
     cfg.no_html = bools.contains("no-html");
+    cfg.cap = bools.contains("cap");
     cfg.out = flags.get("out").map(PathBuf::from);
     cfg.out_dir = flags
         .get("out-dir")

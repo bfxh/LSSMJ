@@ -325,11 +325,84 @@ fn weld_quantize(
     (out_pos, out_n, idx)
 }
 
+/// 边界封口：提取只被一个三角形使用的边（边界边），沿有向边连成环，
+/// 每个环用扇形三角化补面（绕序取与外表面相反），把开放面片网变成封闭壳。
+/// 返回 (补充的三角形索引, 环数, 边界边数)。
+fn cap_boundaries(positions: &[[f32; 3]], indices: &[u32]) -> (Vec<u32>, usize, usize) {
+    let mut count: HashMap<(u32, u32), u32> = HashMap::new();
+    for t in indices.as_chunks::<3>().0 {
+        for k in 0..3 {
+            let a = t[k];
+            let b = t[(k + 1) % 3];
+            let key = if a < b { (a, b) } else { (b, a) };
+            *count.entry(key).or_insert(0) += 1;
+        }
+    }
+    // 边界有向边（三角形内的方向），封口面用其反向 ⇒ 与外表面共同围成封闭体。
+    let mut dirs: Vec<(u32, u32)> = Vec::new();
+    for t in indices.as_chunks::<3>().0 {
+        for k in 0..3 {
+            let a = t[k];
+            let b = t[(k + 1) % 3];
+            let key = if a < b { (a, b) } else { (b, a) };
+            if count.get(&key) == Some(&1) {
+                dirs.push((a, b));
+            }
+        }
+    }
+    let boundary_edges = dirs.len();
+    let mut by_start: HashMap<u32, Vec<usize>> = HashMap::new();
+    for (i, &(a, _)) in dirs.iter().enumerate() {
+        by_start.entry(a).or_default().push(i);
+    }
+    let mut used = vec![false; dirs.len()];
+    let mut caps: Vec<u32> = Vec::new();
+    let mut loops = 0usize;
+    for i in 0..dirs.len() {
+        if used[i] {
+            continue;
+        }
+        let mut ring: Vec<u32> = Vec::new();
+        let mut cur = i;
+        loop {
+            used[cur] = true;
+            let (a, b) = dirs[cur];
+            ring.push(a);
+            let mut nxt = None;
+            if let Some(list) = by_start.get(&b) {
+                for &j in list {
+                    if !used[j] {
+                        nxt = Some(j);
+                        break;
+                    }
+                }
+            }
+            match nxt {
+                Some(j) => cur = j,
+                None => break,
+            }
+            if ring.len() > indices.len() {
+                break;
+            }
+        }
+        if ring.len() >= 3 {
+            loops += 1;
+            // 扇形三角化，绕序取反（(v0, vk+1, vk)）。
+            for k in 1..ring.len() - 1 {
+                caps.extend_from_slice(&[ring[0], ring[k + 1], ring[k]]);
+            }
+        }
+    }
+    let _ = positions;
+    (caps, loops, boundary_edges)
+}
+
 fn surfel_patches(
     gaussians: &[Gaussian],
     patch_scale: f32,
     weld_cell: f32,
-) -> (Mesh, f32) {
+    cap: bool,
+) -> (Mesh, f32, usize) {
     let mut positions = Vec::with_capacity(gaussians.len() * 4);
     let mut normals = Vec::with_capacity(gaussians.len() * 4);
     let mut indices = Vec::with_capacity(gaussians.len() * 6);
@@ -366,7 +439,19 @@ fn surfel_patches(
     }
 
     // 缝合：相邻面片角点落进同一格即共用顶点。
-    let (positions, normals, indices) = weld_quantize(positions, normals, indices, weld_cell);
+    let (positions, normals, mut indices) = weld_quantize(positions, normals, indices, weld_cell);
+
+    // 封口：边界环扇形补面，把开放面片网补成封闭壳。
+    let mut cap_loops = 0usize;
+    if cap {
+        let (caps, loops, bedges) = cap_boundaries(&positions, &indices);
+        cap_loops = loops;
+        indices.extend_from_slice(&caps);
+        eprintln!(
+            "cap: 边界边 {bedges} · 环 {loops} · 补 {} 面",
+            caps.len() / 3
+        );
+    }
 
     let mut area = 0.0f32;
     for t in indices.as_chunks::<3>().0 {
@@ -401,6 +486,7 @@ fn surfel_patches(
             stats,
         },
         area,
+        cap_loops,
     )
 }
 
@@ -427,7 +513,8 @@ fn run_patch(cfg: &Config, input: &Path) -> Result<(), String> {
         return Err("剪枝后没有高斯：降低 --prune-opacity 或 --min-radius".into());
     }
     let t = Instant::now();
-    let (mesh, area) = surfel_patches(&kept, cfg.patch_scale, cfg.weld_cell);
+    let (mesh, area, cap_loops) =
+        surfel_patches(&kept, cfg.patch_scale, cfg.weld_cell, cfg.cap);
     let build_ms = t.elapsed().as_secs_f64() * 1e3;
     let obj = cfg
         .out
@@ -440,13 +527,15 @@ fn run_patch(cfg: &Config, input: &Path) -> Result<(), String> {
     }
     write_obj(&mesh, &obj).map_err(|e| format!("写 OBJ 失败：{e}"))?;
     println!(
-        "{{\"mode\":\"patch\",\"gaussians\":{},\"kept\":{},\"verts\":{},\"tris\":{},\"area\":{:.6},\"patch_scale\":{},\"load_ms\":{:.1},\"build_ms\":{:.1}}}",
+        "{{\"mode\":\"patch\",\"gaussians\":{},\"kept\":{},\"verts\":{},\"tris\":{},\"area\":{:.6},\"patch_scale\":{},\"weld_cell\":{},\"cap_loops\":{},\"load_ms\":{:.1},\"build_ms\":{:.1}}}",
         data.gaussians.len(),
         kept.len(),
         mesh.stats.vertices,
         mesh.stats.triangles,
         area,
         cfg.patch_scale,
+        cfg.weld_cell,
+        cap_loops,
         load_ms,
         build_ms
     );
