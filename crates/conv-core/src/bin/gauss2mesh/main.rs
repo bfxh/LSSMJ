@@ -9,7 +9,8 @@ mod report;
 
 use args::{Config, HELP, ModeSel, is_bool_flag, parse_config};
 use conv_core::gauss::mesh::{
-    Mesh, field_to_mesh, field_to_mesh_gpu, finish_mesh, keep_largest_component, write_obj,
+    Mesh, MeshStats, field_to_mesh, field_to_mesh_gpu, finish_mesh, keep_largest_component,
+    write_obj,
 };
 use conv_core::gauss::ply::{PlyReadOptions, parse_ply_with};
 use conv_core::gauss::voxel::{
@@ -124,6 +125,12 @@ fn run() -> Result<(), String> {
             run_convert(&cfg, Path::new(input))
         }
         "batch" => run_batch(&cfg, &positional),
+        "patch" => {
+            let input = positional
+                .first()
+                .ok_or("patch 需要输入 PLY：gauss2mesh patch <input.ply>")?;
+            run_patch(&cfg, Path::new(input))
+        }
         "inspect" => {
             let input = positional
                 .first()
@@ -246,6 +253,205 @@ fn run_convert(cfg: &Config, input: &Path) -> Result<(), String> {
         cfg.json.as_deref(),
         None,
     )
+}
+
+/// 显式面片重建：每个面元直接出一小块四边形（切平面内，半宽 = patch_scale × 该轴 σ），
+/// 完全不经体素场 ⇒ 没有核宽膨胀；朝向由面元法线给定，切向由协方差的两个厚轴给定。
+/// 缝合：把顶点量化到边长 `cell` 的格子（同格合并成同一个顶点），再去掉退化三角形与重复面。
+/// 相邻面片的角点落进同一格即自动共用顶点，分离的面片因此连成一张网。
+fn weld_quantize(
+    positions: Vec<[f32; 3]>,
+    normals: Vec<[f32; 3]>,
+    indices: Vec<u32>,
+    cell: f32,
+) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
+    if cell <= 0.0 {
+        return (positions, normals, indices);
+    }
+    let key = |p: [f32; 3]| {
+        (
+            (p[0] / cell).floor() as i32,
+            (p[1] / cell).floor() as i32,
+            (p[2] / cell).floor() as i32,
+        )
+    };
+    let mut map: HashMap<(i32, i32, i32), u32> = HashMap::new();
+    let mut out_pos: Vec<[f32; 3]> = Vec::new();
+    let mut out_n: Vec<[f32; 3]> = Vec::new();
+    let mut remap = vec![u32::MAX; positions.len()];
+    for (i, &p) in positions.iter().enumerate() {
+        let k = key(p);
+        let id = match map.get(&k) {
+            Some(&id) => id,
+            None => {
+                let id = out_pos.len() as u32;
+                out_pos.push(p);
+                out_n.push(normals[i]);
+                map.insert(k, id);
+                id
+            }
+        };
+        remap[i] = id;
+    }
+    let mut idx = Vec::with_capacity(indices.len());
+    let mut seen: HashSet<[u32; 3]> = HashSet::new();
+    let mut dropped_degenerate = 0usize;
+    let mut dropped_dup = 0usize;
+    for t in indices.as_chunks::<3>().0 {
+        let (a, b, c) = (
+            remap[t[0] as usize],
+            remap[t[1] as usize],
+            remap[t[2] as usize],
+        );
+        if a == b || b == c || a == c {
+            dropped_degenerate += 1;
+            continue;
+        }
+        let mut k3 = [a, b, c];
+        k3.sort_unstable();
+        if !seen.insert(k3) {
+            dropped_dup += 1;
+            continue;
+        }
+        idx.extend_from_slice(&[a, b, c]);
+    }
+    if dropped_degenerate + dropped_dup > 0 {
+        eprintln!(
+            "weld: 合并顶点 {} → {}，丢退化 {dropped_degenerate} / 重复 {dropped_dup} 面",
+            positions.len(),
+            out_pos.len()
+        );
+    }
+    (out_pos, out_n, idx)
+}
+
+fn surfel_patches(
+    gaussians: &[Gaussian],
+    patch_scale: f32,
+    weld_cell: f32,
+) -> (Mesh, f32) {
+    let mut positions = Vec::with_capacity(gaussians.len() * 4);
+    let mut normals = Vec::with_capacity(gaussians.len() * 4);
+    let mut indices = Vec::with_capacity(gaussians.len() * 6);
+    for g in gaussians {
+        let eig = g.eigen();
+        let raw = g.normal.unwrap_or(eig.vectors[0]);
+        let ln = (raw[0] * raw[0] + raw[1] * raw[1] + raw[2] * raw[2])
+            .sqrt()
+            .max(1e-9);
+        let n = [raw[0] / ln, raw[1] / ln, raw[2] / ln];
+        let mut u = eig.vectors[1];
+        let mut v = eig.vectors[2];
+        // u × v 必须与 n 同向，四边形绕序才朝外。
+        let cr = [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ];
+        if cr[0] * n[0] + cr[1] * n[1] + cr[2] * n[2] < 0.0 {
+            std::mem::swap(&mut u, &mut v);
+        }
+        let su = patch_scale * eig.values[1].max(0.0).sqrt();
+        let sv = patch_scale * eig.values[2].max(0.0).sqrt();
+        let base = positions.len() as u32;
+        for (a, b) in [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+            positions.push([
+                g.mean[0] + u[0] * su * a + v[0] * sv * b,
+                g.mean[1] + u[1] * su * a + v[1] * sv * b,
+                g.mean[2] + u[2] * su * a + v[2] * sv * b,
+            ]);
+            normals.push(n);
+        }
+        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+
+    // 缝合：相邻面片角点落进同一格即共用顶点。
+    let (positions, normals, indices) = weld_quantize(positions, normals, indices, weld_cell);
+
+    let mut area = 0.0f32;
+    for t in indices.as_chunks::<3>().0 {
+        let a = positions[t[0] as usize];
+        let b = positions[t[1] as usize];
+        let c = positions[t[2] as usize];
+        let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+        let cr = [
+            ab[1] * ac[2] - ab[2] * ac[1],
+            ab[2] * ac[0] - ab[0] * ac[2],
+            ab[0] * ac[1] - ab[1] * ac[0],
+        ];
+        area += 0.5 * (cr[0] * cr[0] + cr[1] * cr[1] + cr[2] * cr[2]).sqrt();
+    }
+
+    let stats = MeshStats {
+        vertices: positions.len(),
+        triangles: indices.len() / 3,
+        components: 0,
+        chi: 0,
+        volume: 0.0,
+        boundary_touch: false,
+        hash: 0,
+        bounds: Some(Aabb::from_points(&positions)),
+    };
+    (
+        Mesh {
+            positions,
+            normals,
+            indices,
+            stats,
+        },
+        area,
+    )
+}
+
+fn run_patch(cfg: &Config, input: &Path) -> Result<(), String> {
+    let t0 = Instant::now();
+    let bytes = fs::read(input).map_err(|e| format!("读不了 {}：{e}", input.display()))?;
+    let data = parse_ply_with(
+        &bytes,
+        &PlyReadOptions {
+            scales_are_log: !cfg.raw_scale,
+            opacity_is_logit: !cfg.raw_opacity,
+        },
+    )?;
+    let load_ms = t0.elapsed().as_secs_f64() * 1e3;
+    let (kept, _prune_stats) = prune(
+        &data.gaussians,
+        &PruneOptions {
+            min_opacity: cfg.prune_opacity,
+            min_radius: cfg.min_radius,
+            max_radius: cfg.max_radius,
+        },
+    );
+    if kept.is_empty() {
+        return Err("剪枝后没有高斯：降低 --prune-opacity 或 --min-radius".into());
+    }
+    let t = Instant::now();
+    let (mesh, area) = surfel_patches(&kept, cfg.patch_scale, cfg.weld_cell);
+    let build_ms = t.elapsed().as_secs_f64() * 1e3;
+    let obj = cfg
+        .out
+        .clone()
+        .unwrap_or_else(|| input.with_extension("obj"));
+    if let Some(parent) = obj.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).map_err(|e| format!("建目录失败：{e}"))?;
+    }
+    write_obj(&mesh, &obj).map_err(|e| format!("写 OBJ 失败：{e}"))?;
+    println!(
+        "{{\"mode\":\"patch\",\"gaussians\":{},\"kept\":{},\"verts\":{},\"tris\":{},\"area\":{:.6},\"patch_scale\":{},\"load_ms\":{:.1},\"build_ms\":{:.1}}}",
+        data.gaussians.len(),
+        kept.len(),
+        mesh.stats.vertices,
+        mesh.stats.triangles,
+        area,
+        cfg.patch_scale,
+        load_ms,
+        build_ms
+    );
+    println!("输出 {}", obj.display());
+    Ok(())
 }
 
 fn run_batch(cfg: &Config, inputs: &[String]) -> Result<(), String> {

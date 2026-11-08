@@ -92,6 +92,10 @@ pub(crate) struct Config {
     pub(crate) shell_thickness: Option<f32>,
     /// 双面重建器：每个面元沿法向偏移 ±t/2 拆成两层，各自独立建场/取面后合并。
     pub(crate) double_layer: Option<f32>,
+    /// 显式面片重建：四边形半宽 = patch_scale × 该轴 σ（默认 2.0 ≈ 2σ 覆盖）。
+    pub(crate) patch_scale: f32,
+    /// 面片缝合格边长（世界单位；0 = 不缝合）。
+    pub(crate) weld_cell: f32,
     pub(crate) normal_band: Option<f32>,
     pub(crate) largest_component: bool,
     pub(crate) kernel_clamp_world: Option<f32>,
@@ -132,6 +136,8 @@ impl Default for Config {
             seal: true,
             shell_thickness: None,
             double_layer: None,
+            patch_scale: 2.0,
+            weld_cell: 0.0,
             normal_band: None,
             largest_component: false,
             kernel_clamp_world: None,
@@ -196,6 +202,8 @@ pub(crate) fn parse_config(
         "padding",
         "shell-thickness",
         "double-layer",
+        "patch-scale",
+        "weld-cell",
         "normal-band",
         "out",
         "out-dir",
@@ -268,6 +276,20 @@ pub(crate) fn parse_config(
             return Err("--double-layer 必须 > 0".into());
         }
         cfg.double_layer = Some(x);
+    }
+    if let Some(v) = flags.get("patch-scale") {
+        let x: f32 = v.parse().map_err(|_| format!("--patch-scale 不是数值：{v}"))?;
+        if !(x > 0.0) {
+            return Err("--patch-scale 必须 > 0".into());
+        }
+        cfg.patch_scale = x;
+    }
+    if let Some(v) = flags.get("weld-cell") {
+        let x: f32 = v.parse().map_err(|_| format!("--weld-cell 不是数值：{v}"))?;
+        if x < 0.0 {
+            return Err("--weld-cell 必须 ≥ 0".into());
+        }
+        cfg.weld_cell = x;
     }
     if let Some(v) = flags.get("normal-band") {
         let x: f32 = v.parse().map_err(|_| format!("--normal-band 不是数值：{v}"))?;
