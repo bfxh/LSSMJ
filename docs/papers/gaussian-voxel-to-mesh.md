@@ -963,11 +963,41 @@ CARGO_INCREMENTAL=0 cargo test --release --test largest_component -- --test-thre
 LSSMJ_NO_AVX2=1 CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- demo blobs --grid 128
 # 打开 out/sphere.html（自包含，无外部依赖）
 
+# 显式面片重建（不经体素场；两档交付配置见 §8.1）
+CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- patch scene.ply --out out/clean.obj \
+  --patch-scale 1.15 --weld-cell 0.04 --weld-nearest --weld-angle 30
+CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- patch scene.ply --out out/balanced.obj \
+  --patch-scale 1.0 --weld-cell 0.04 --weld-nearest --weld-angle 30 --cap --cap-min-loop 20
+
 # 真实 PLY
 CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- inspect scene.ply
 CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- convert scene.ply --grid 128 --json out/report.json
 CARGO_INCREMENTAL=0 cargo run --release --bin gauss2mesh -- convert scene.ply --grid 128 --gpu --json out/report-gpu.json
 ```
+
+### 8.1 两档交付配置：patch 面片重建（2026-11-09）
+
+体素路线（surfel TSDF + Surface Nets）在真实薄壁键盘上面积比长期卡在 **3.91×**——根因是面元核宽的膨胀，
+不是零等值面共用（双面拼装 CHG-2026-11-09-G/H/N 只会把膨胀翻倍）。`patch` 子命令绕开体素场：
+每个面元直接出一小块四边形（半宽 = `--patch-scale` × 该轴 σ），再用「吸附到最近顶点 + 法线夹角判据」
+缝合，法线夹角判据是翻转的决定因素（10.94% → 0.095%）。
+
+两档收敛结果（真实键盘 4096 高斯；GT 500,014 三角形、面积 2.3915）：
+
+| 档位 | 关键参数 | 三角形 | Chamfer² | 法线 | 面积比 | 体积比 | 翻转 | 折叠 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| **A 干净几何** | `--patch-scale 1.15 --weld-cell 0.04 --weld-nearest --weld-angle 30` | 5,255 | **0.008053** | 0.4685 | **2.8162** | 3.1634 | **0.095%** | **0.27%** |
+| **B 面积/法线兼顾** | `--patch-scale 1.0 --weld-cell 0.04 --weld-nearest --weld-angle 30 --cap --cap-min-loop 20` | 2,354 | 0.009698 | **0.5473** | **1.4440** | **1.6866** | 3.10% | 11.31% |
+| 体素基线（对照） | `convert --mode surfel --grid 128` | 130,980 | 0.008462 | 0.516 | 3.91 | 2.49 | — | — |
+
+- **A 档**：翻转/折叠接近零，Chamfer² 与面积比都优于体素基线；代价是法线 0.4685、体积比 3.16 退步
+  （合并变严后覆盖不足、法线平均化变差）。
+- **B 档**：法线 0.5473 优于基线、体积比 1.6866 最接近 1；代价是翻转 3.10%、折叠 11.31%、面积 1.44（覆盖不足）。
+- **没有单档能同时满足「翻转 <0.5% + 面积 ≈2 + 法线 >0.55 + 体积 ≈2」**；加大 `--patch-scale`
+  会同时抬高面积/体积（1.5 时体积比 5.49）且法线继续下降。要同时满足需把角点投影到对边（真 T-junction），
+  而非当前「并入顶点」的缝合机制。
+- 判据：`mesh_compare`（`trit-cap` 的 trit-3d example）给 Chamfer/法线/面积/体积；
+  `mesh_fold_check` 给退化/翻转/折叠。两档读数已复跑一致。
 
 ## 9. 参考与锚
 
