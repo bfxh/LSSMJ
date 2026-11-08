@@ -390,7 +390,7 @@ fn convert_and_write(
         cfg.threads
     };
     let gpu_dense_512 = cfg.grid > 256 && cfg.gpu && mode == VoxelMode::Surfel;
-    let mut sparse = cfg.grid > 256 && !gpu_dense_512;
+    let mut sparse = (cfg.grid > 256 || cfg.shell_thickness.is_some()) && !gpu_dense_512;
     let mut gpu_fallback = None;
     let want_gpu = if cfg.grid > 256 && !gpu_dense_512 {
         if cfg.gpu || cfg.gpu_mesh {
@@ -467,6 +467,7 @@ fn convert_and_write(
         iso_frac: 0.65,
         iso_abs: cfg.iso,
         seal: cfg.seal,
+        shell_thickness: cfg.shell_thickness,
         normal_band_cells: cfg.normal_band.unwrap_or(1.0),
         kernel_clamp_world: cfg.kernel_clamp_world,
         kernel_clamp_ref,

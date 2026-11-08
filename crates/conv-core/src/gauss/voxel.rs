@@ -135,6 +135,7 @@ pub struct VoxelizeOptions {
     pub density_norm_ref: Option<u32>,
     /// 面元融合在最薄轴（法线方向）上的标准差下限（格）。
     pub normal_band_cells: f32,
+    pub shell_thickness: Option<f32>,
     /// 面元 TSDF 累积的最小权重；低于它的体素视为未观测。
     pub min_weight: f32,
     /// 未知区封闭：从域边界泛洪标记外部，被围住的未知区填成内部。
@@ -167,6 +168,7 @@ impl Default for VoxelizeOptions {
             splat_integrate: false,
             density_norm_ref: None,
             normal_band_cells: 1.0,
+            shell_thickness: None,
             min_weight: 0.02,
             seal: true,
             threads: 1,
@@ -306,6 +308,7 @@ pub(crate) struct Prepared {
     pub(crate) lam: [f32; 3],
     pub(crate) radius: [f32; 3],
     pub(crate) normal: [f32; 3],
+    pub(crate) side: i8,
 }
 
 #[derive(Clone, Copy)]
@@ -387,6 +390,7 @@ fn prepare_density_one(g: &Gaussian, min_var: f32) -> Prepared {
         world_sigma(&eigen, lam, 2),
     ];
     Prepared {
+        side: 0,
         mean: g.mean,
         opacity: g.opacity.clamp(0.0, 1.0),
         eigen,
@@ -414,6 +418,7 @@ fn prepare_density_integrated_one(g: &Gaussian, cell_var: f32) -> Prepared {
         world_sigma(&eigen, lam, 2),
     ];
     Prepared {
+        side: 0,
         mean: g.mean,
         opacity: g.opacity.clamp(0.0, 1.0) * norm,
         eigen,
@@ -462,6 +467,7 @@ fn prepare_surfel_one(
         world_sigma(&eigen, lam, 2),
     ];
     Prepared {
+        side: 0,
         mean: g.mean,
         opacity: g.opacity.clamp(0.0, 1.0),
         eigen,
@@ -519,6 +525,7 @@ fn simd_prepared_density(filtered: &[&Gaussian], min_var: f32) -> Vec<Prepared> 
             world_sigma(&eigen, lam, 2),
         ];
         out.push(Prepared {
+            side: 0,
             mean: g.mean,
             opacity: g.opacity.clamp(0.0, 1.0),
             eigen,
@@ -579,6 +586,7 @@ fn simd_prepared_surfel(
             world_sigma(&eigen, lam, 2),
         ];
         out.push(Prepared {
+            side: 0,
             mean: g.mean,
             opacity: g.opacity.clamp(0.0, 1.0),
             eigen,
@@ -694,6 +702,27 @@ pub(crate) fn prepare_surfel(
     let normal_sigma = (opts.normal_band_cells.max(0.25) * grid.h).powi(2);
     let tangent_floor = (0.25 * grid.h).powi(2);
     let clamp_abs = 3.0 * grid.h;
+    if let Some(t) = opts.shell_thickness {
+        let t = t.max(0.0);
+        let mut out = Vec::with_capacity(gaussians.len() * 2);
+        for g in gaussians.iter().filter(|g| g.is_finite() && g.opacity > 0.0) {
+            let mut a = prepare_surfel_one(g, centroid, normal_sigma, tangent_floor);
+            let n = a.normal;
+            a.side = 1;
+            for k in 0..3 {
+                a.mean[k] += n[k] * t * 0.5;
+            }
+            out.push(a);
+            let mut b = prepare_surfel_one(g, centroid, normal_sigma, tangent_floor);
+            b.side = -1;
+            for k in 0..3 {
+                b.mean[k] -= n[k] * t * 0.5;
+                b.normal[k] = -n[k];
+            }
+            out.push(b);
+        }
+        return (out, clamp_abs);
+    }
     if opts.simd_prep {
         return (
             prepare_surfel_simd(
