@@ -12,7 +12,6 @@ mod avx2;
 pub mod quant;
 pub mod sparse_density;
 pub mod sparse_surfel;
-pub mod quant;
 pub mod surface_blocks;
 pub mod ternary;
 pub mod trisign;
@@ -427,6 +426,7 @@ fn prepare_density_integrated_one(g: &Gaussian, cell_var: f32) -> Prepared {
         lam,
         radius,
         normal: [0.0; 3],
+        side: 0,
     }
 }
 
