@@ -12,11 +12,14 @@ pub mod ir;
 pub mod material;
 pub mod plan;
 pub mod splat;
+pub mod uv;
+pub mod uv_lscm;
 
 pub use csg::{boolean, fillet};
 pub use export::{compose_design, totals, write_obj};
 pub use eval::{build_part, compose, extrude, transform, Mesh};
 pub use splat::surfels;
+pub use uv::{unwrap as unwrap_uv, write_obj_uv, Axis as UvAxis, Island as UvIsland, TriState as UvTriState, UvLayout};
 pub use ir::*;
 pub use material::{bindings, validate as validate_materials, write_obj_mtl, Material, MaterialLib};
 pub use plan::{validate, Diag, Plan, State, Step, Summary, MAX_ASM_DEPTH};
