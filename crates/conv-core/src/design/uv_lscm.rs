@@ -20,7 +20,13 @@ pub fn seam_islands(mesh: &Mesh, angle_deg: f32) -> Vec<Vec<usize>> {
         return Vec::new();
     }
     let normals: Vec<[f32; 3]> = (0..n).map(|t| tri_normal(mesh, t)).collect();
-    let cos_th = angle_deg.to_radians().cos();
+    let areas: Vec<f32> = (0..n).map(|t| tri_area(mesh, t)).collect();
+    let mut sorted = areas.clone();
+    sorted.sort_by(|a, b| a.total_cmp(b));
+    let median = sorted[n / 2];
+    // 曲率自适应：小于中位面积的细节三角形用更小阈值（35°），大面保持 angle_deg。
+    let cos_fine = 35f32.to_radians().cos();
+    let cos_coarse = angle_deg.to_radians().cos();
 
     // 边 → 相邻三角形。
     let mut edges: HashMap<(u32, u32), Vec<usize>> = HashMap::new();
@@ -42,7 +48,12 @@ pub fn seam_islands(mesh: &Mesh, angle_deg: f32) -> Vec<Vec<usize>> {
         }
         let (a, b) = (tris[0], tris[1]);
         let d = dot3(normals[a], normals[b]);
-        if d < cos_th {
+        let th = if areas[a].min(areas[b]) < median {
+            cos_fine
+        } else {
+            cos_coarse
+        };
+        if d < th {
             seams.insert(*key);
         }
     }
@@ -144,6 +155,59 @@ fn split_by_axis(mesh: &Mesh, comp: &[usize]) -> Vec<Vec<usize>> {
                 }
             }
             out.push(sub);
+        }
+    }
+    out
+}
+
+/// 大 mesh 分块：按三角形质心的 3D 网格切块，每块再按八分体 + 连通性分岛。
+/// 这是 >50k 三角形的参数化入口，替代“每三角形独立展开”的保底路径。
+pub fn block_islands(mesh: &Mesh, grid: usize, max_tris: usize) -> Vec<Vec<usize>> {
+    let n = mesh.tris.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let grid = grid.max(1);
+    let (mut min, mut max) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
+    for v in &mesh.verts {
+        for k in 0..3 {
+            min[k] = min[k].min(v[k]);
+            max[k] = max[k].max(v[k]);
+        }
+    }
+    let span = [
+        (max[0] - min[0]).max(1e-9),
+        (max[1] - min[1]).max(1e-9),
+        (max[2] - min[2]).max(1e-9),
+    ];
+    let mut cells: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (ti, t) in mesh.tris.iter().enumerate() {
+        let c = [
+            (mesh.verts[t[0] as usize][0]
+                + mesh.verts[t[1] as usize][0]
+                + mesh.verts[t[2] as usize][0])
+                / 3.0,
+            (mesh.verts[t[0] as usize][1]
+                + mesh.verts[t[1] as usize][1]
+                + mesh.verts[t[2] as usize][1])
+                / 3.0,
+            (mesh.verts[t[0] as usize][2]
+                + mesh.verts[t[1] as usize][2]
+                + mesh.verts[t[2] as usize][2])
+                / 3.0,
+        ];
+        let ix = (((c[0] - min[0]) / span[0] * grid as f32).floor() as usize).min(grid - 1);
+        let iy = (((c[1] - min[1]) / span[1] * grid as f32).floor() as usize).min(grid - 1);
+        let iz = (((c[2] - min[2]) / span[2] * grid as f32).floor() as usize).min(grid - 1);
+        cells.entry((iz * grid + iy) * grid + ix).or_default().push(ti);
+    }
+    let mut out = Vec::new();
+    for (_, tris) in cells {
+        if tris.len() > max_tris {
+            out.extend(split_by_axis(mesh, &tris));
+        } else {
+            // 小块直接按八分体 + 连通性分，保证 LSCM 岛可展开。
+            out.extend(split_by_axis(mesh, &tris));
         }
     }
     out
@@ -297,6 +361,16 @@ fn matvec(rows: &[Vec<(usize, f32)>], x: &[f32], n: usize) -> Vec<f32> {
 
 fn dot_slice(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b).map(|(&x, &y)| x * y).sum()
+}
+
+fn tri_area(mesh: &Mesh, ti: usize) -> f32 {
+    let t = mesh.tris[ti];
+    let a = mesh.verts[t[0] as usize];
+    let b = mesh.verts[t[1] as usize];
+    let c = mesh.verts[t[2] as usize];
+    let cr = cross3(sub3(b, a), sub3(c, a));
+    let l = norm3(cr);
+    0.5 * l
 }
 
 fn tri_normal(mesh: &Mesh, ti: usize) -> [f32; 3] {

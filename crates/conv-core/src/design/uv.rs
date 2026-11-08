@@ -292,21 +292,13 @@ pub fn unwrap(mesh: &Mesh, padding: f32) -> UvLayout {
     }
     let fast = mesh.tris.len() > 50_000;
     let tri_islands = if fast {
-        Vec::new()
+        uv_lscm::block_islands(mesh, 4, 4000)
     } else {
         uv_lscm::seam_islands(mesh, 45.0)
     };
 
     let mut packed: Vec<Packed> = Vec::with_capacity(tri_islands.len());
 
-    if fast {
-        for ti in 0..mesh.tris.len() {
-            let (_, raw) = single_triangle_uv(mesh, ti);
-            if let Some(p) = finish_single(mesh, ti, [raw[0], raw[1], raw[2]]) {
-                packed.push(p);
-            }
-        }
-    } else {
     let mut work: Vec<Vec<usize>> = tri_islands;
     while let Some(tris) = work.pop() {
         if tris.is_empty() {
@@ -371,7 +363,6 @@ pub fn unwrap(mesh: &Mesh, padding: f32) -> UvLayout {
             packed.push(p);
         }
     }
-    }
 
     // shelf 打包：高度降序（同高按轴序）。
     let mut order: Vec<usize> = (0..packed.len()).collect();
@@ -389,7 +380,7 @@ pub fn unwrap(mesh: &Mesh, padding: f32) -> UvLayout {
         .iter()
         .map(|p| p.rect[2] + 2.0 * pad)
         .fold(0.0f32, f32::max);
-    let target_w = (total_area.sqrt() * 1.05).max(max_w).max(1e-6);
+    let target_w = (total_area.sqrt() * 1.0).max(max_w).max(1e-6);
     let mut cursor_x = 0.0f32;
     let mut cursor_y = 0.0f32;
     let mut row_h = 0.0f32;
@@ -399,7 +390,7 @@ pub fn unwrap(mesh: &Mesh, padding: f32) -> UvLayout {
         let rh = packed[pi].rect[3];
         let w0 = rw + 2.0 * pad;
         let h0 = rh + 2.0 * pad;
-        // 实测旋转对单三角形 shelf 是负收益（fill 0.385→0.357），默认关。
+        // 旋转对当前分布无提升（fill 0.4173 前后相同），默认关。
         let rotate = false;
         let (w, h) = if rotate { (h0, w0) } else { (w0, h0) };
         if cursor_x > 0.0 && cursor_x + w > target_w {
@@ -495,9 +486,7 @@ pub fn unwrap(mesh: &Mesh, padding: f32) -> UvLayout {
     } else {
         0.0
     };
-    let overlaps = if fast {
-        0
-    } else {
+    let overlaps = {
         let mut overlaps = 0usize;
         for i in 0..islands.len() {
             for j in (i + 1)..islands.len() {
@@ -509,9 +498,7 @@ pub fn unwrap(mesh: &Mesh, padding: f32) -> UvLayout {
         overlaps
     };
     let island_of: Vec<usize> = tri_island.clone();
-    let tri_overlaps = if fast {
-        0
-    } else {
+    let tri_overlaps = {
         count_tri_overlaps(mesh, &uvs, &uv_tris, &island_of)
     };
 
