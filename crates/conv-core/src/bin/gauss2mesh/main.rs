@@ -328,7 +328,92 @@ fn weld_quantize(
 /// 边界封口：提取只被一个三角形使用的边（边界边），沿有向边连成环，
 /// 每个环用扇形三角化补面（绕序取与外表面相反），把开放面片网变成封闭壳。
 /// 返回 (补充的三角形索引, 环数, 边界边数)。
-fn cap_boundaries(positions: &[[f32; 3]], indices: &[u32]) -> (Vec<u32>, usize, usize) {
+/// 不塌缩的缝合：把每个角点吸附到容差内**最近的一个已有顶点**并复用其位置；
+/// 已有顶点位置永不改动（不像量化格子会被拉向格心），因此不会塌缩几何。
+fn weld_nearest(
+    positions: Vec<[f32; 3]>,
+    normals: Vec<[f32; 3]>,
+    indices: Vec<u32>,
+    tol: f32,
+) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
+    if tol <= 0.0 {
+        return (positions, normals, indices);
+    }
+    let cell = tol.max(1e-9);
+    let key = |p: [f32; 3]| {
+        (
+            (p[0] / cell).floor() as i32,
+            (p[1] / cell).floor() as i32,
+            (p[2] / cell).floor() as i32,
+        )
+    };
+    let tol2 = tol * tol;
+    let mut grid: HashMap<(i32, i32, i32), Vec<u32>> = HashMap::new();
+    let mut out_pos: Vec<[f32; 3]> = Vec::new();
+    let mut out_n: Vec<[f32; 3]> = Vec::new();
+    let mut remap = vec![u32::MAX; positions.len()];
+    for (i, &p) in positions.iter().enumerate() {
+        let k = key(p);
+        let mut best: Option<(u32, f32)> = None;
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    if let Some(list) = grid.get(&(k.0 + dx, k.1 + dy, k.2 + dz)) {
+                        for &j in list {
+                            let q = out_pos[j as usize];
+                            let d2 = (p[0] - q[0]).powi(2)
+                                + (p[1] - q[1]).powi(2)
+                                + (p[2] - q[2]).powi(2);
+                            if d2 <= tol2 && best.is_none_or(|(_, bd)| d2 < bd) {
+                                best = Some((j, d2));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        match best {
+            Some((j, _)) => remap[i] = j,
+            None => {
+                let id = out_pos.len() as u32;
+                out_pos.push(p);
+                out_n.push(normals[i]);
+                grid.entry(k).or_default().push(id);
+                remap[i] = id;
+            }
+        }
+    }
+    (out_pos, out_n, dedup_faces(&remap, &indices))
+}
+
+/// 按 remap 重索引，丢掉退化三角形与重复面。
+fn dedup_faces(remap: &[u32], indices: &[u32]) -> Vec<u32> {
+    let mut idx = Vec::with_capacity(indices.len());
+    let mut seen: HashSet<[u32; 3]> = HashSet::new();
+    for t in indices.as_chunks::<3>().0 {
+        let (a, b, c) = (
+            remap[t[0] as usize],
+            remap[t[1] as usize],
+            remap[t[2] as usize],
+        );
+        if a == b || b == c || a == c {
+            continue;
+        }
+        let mut k3 = [a, b, c];
+        k3.sort_unstable();
+        if !seen.insert(k3) {
+            continue;
+        }
+        idx.extend_from_slice(&[a, b, c]);
+    }
+    idx
+}
+
+fn cap_boundaries(
+    positions: &[[f32; 3]],
+    indices: &[u32],
+    min_loop: usize,
+) -> (Vec<u32>, usize, usize, usize) {
     let mut count: HashMap<(u32, u32), u32> = HashMap::new();
     for t in indices.as_chunks::<3>().0 {
         for k in 0..3 {
@@ -358,6 +443,7 @@ fn cap_boundaries(positions: &[[f32; 3]], indices: &[u32]) -> (Vec<u32>, usize, 
     let mut used = vec![false; dirs.len()];
     let mut caps: Vec<u32> = Vec::new();
     let mut loops = 0usize;
+    let mut dropped_loops = 0usize;
     for i in 0..dirs.len() {
         if used[i] {
             continue;
@@ -385,16 +471,18 @@ fn cap_boundaries(positions: &[[f32; 3]], indices: &[u32]) -> (Vec<u32>, usize, 
                 break;
             }
         }
-        if ring.len() >= 3 {
+        if ring.len() >= min_loop.max(3) {
             loops += 1;
             // 扇形三角化，绕序取反（(v0, vk+1, vk)）。
             for k in 1..ring.len() - 1 {
                 caps.extend_from_slice(&[ring[0], ring[k + 1], ring[k]]);
             }
+        } else if ring.len() >= 3 {
+            dropped_loops += 1;
         }
     }
     let _ = positions;
-    (caps, loops, boundary_edges)
+    (caps, loops, boundary_edges, dropped_loops)
 }
 
 fn surfel_patches(
@@ -402,6 +490,8 @@ fn surfel_patches(
     patch_scale: f32,
     weld_cell: f32,
     cap: bool,
+    use_nearest: bool,
+    cap_min_loop: usize,
 ) -> (Mesh, f32, usize) {
     let mut positions = Vec::with_capacity(gaussians.len() * 4);
     let mut normals = Vec::with_capacity(gaussians.len() * 4);
@@ -438,17 +528,22 @@ fn surfel_patches(
         indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
-    // 缝合：相邻面片角点落进同一格即共用顶点。
-    let (positions, normals, mut indices) = weld_quantize(positions, normals, indices, weld_cell);
+    // 缝合：nearest = 吸附最近顶点（不塌缩）；否则量化格子（会塌缩）。
+    let (positions, normals, mut indices) = if use_nearest {
+        weld_nearest(positions, normals, indices, weld_cell)
+    } else {
+        weld_quantize(positions, normals, indices, weld_cell)
+    };
 
-    // 封口：边界环扇形补面，把开放面片网补成封闭壳。
+    // 封口：只补主轮廓大环，小于 cap_min_loop 的碎片环丢弃。
     let mut cap_loops = 0usize;
     if cap {
-        let (caps, loops, bedges) = cap_boundaries(&positions, &indices);
+        let (caps, loops, bedges, dropped) =
+            cap_boundaries(&positions, &indices, cap_min_loop);
         cap_loops = loops;
         indices.extend_from_slice(&caps);
         eprintln!(
-            "cap: 边界边 {bedges} · 环 {loops} · 补 {} 面",
+            "cap: 边界边 {bedges} · 主环 {loops} · 补 {} 面 · 丢弃碎片环 {dropped}",
             caps.len() / 3
         );
     }
@@ -513,8 +608,14 @@ fn run_patch(cfg: &Config, input: &Path) -> Result<(), String> {
         return Err("剪枝后没有高斯：降低 --prune-opacity 或 --min-radius".into());
     }
     let t = Instant::now();
-    let (mesh, area, cap_loops) =
-        surfel_patches(&kept, cfg.patch_scale, cfg.weld_cell, cfg.cap);
+    let (mesh, area, cap_loops) = surfel_patches(
+        &kept,
+        cfg.patch_scale,
+        cfg.weld_cell,
+        cfg.cap,
+        cfg.weld_nearest,
+        cfg.cap_min_loop,
+    );
     let build_ms = t.elapsed().as_secs_f64() * 1e3;
     let obj = cfg
         .out

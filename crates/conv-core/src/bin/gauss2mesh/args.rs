@@ -98,6 +98,10 @@ pub(crate) struct Config {
     pub(crate) weld_cell: f32,
     /// 边界封口：提取面片网的边界环并扇形三角化，补成封闭壳。
     pub(crate) cap: bool,
+    /// 缝合方式：true = 吸附最近顶点（不塌缩）；false = 量化格子（会塌缩）。
+    pub(crate) weld_nearest: bool,
+    /// 封口只补顶点数 ≥ cap_min_loop 的主轮廓环（默认 3 = 不过滤）。
+    pub(crate) cap_min_loop: usize,
     pub(crate) normal_band: Option<f32>,
     pub(crate) largest_component: bool,
     pub(crate) kernel_clamp_world: Option<f32>,
@@ -141,6 +145,8 @@ impl Default for Config {
             patch_scale: 2.0,
             weld_cell: 0.0,
             cap: false,
+            weld_nearest: false,
+            cap_min_loop: 3,
             normal_band: None,
             largest_component: false,
             kernel_clamp_world: None,
@@ -183,6 +189,7 @@ pub(crate) fn is_bool_flag(name: &str) -> bool {
             | "largest-component"
             | "splat-integrate"
             | "cap"
+            | "weld-nearest"
     )
 }
 
@@ -208,6 +215,7 @@ pub(crate) fn parse_config(
         "double-layer",
         "patch-scale",
         "weld-cell",
+        "cap-min-loop",
         "normal-band",
         "out",
         "out-dir",
@@ -295,6 +303,15 @@ pub(crate) fn parse_config(
         }
         cfg.weld_cell = x;
     }
+    if let Some(v) = flags.get("cap-min-loop") {
+        let x: usize = v
+            .parse()
+            .map_err(|_| format!("--cap-min-loop 不是整数：{v}"))?;
+        if x < 3 {
+            return Err("--cap-min-loop 必须 ≥ 3".into());
+        }
+        cfg.cap_min_loop = x;
+    }
     if let Some(v) = flags.get("normal-band") {
         let x: f32 = v.parse().map_err(|_| format!("--normal-band 不是数值：{v}"))?;
         if !(x > 0.0) {
@@ -371,6 +388,7 @@ pub(crate) fn parse_config(
     cfg.quiet = bools.contains("quiet");
     cfg.no_html = bools.contains("no-html");
     cfg.cap = bools.contains("cap");
+    cfg.weld_nearest = bools.contains("weld-nearest");
     cfg.out = flags.get("out").map(PathBuf::from);
     cfg.out_dir = flags
         .get("out-dir")
