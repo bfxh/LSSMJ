@@ -110,6 +110,8 @@ pub(crate) struct Config {
     pub(crate) remesh_radius: f32,
     /// 三态符号场的薄壳带半宽（世界单位；None = 1 个体素边长）。
     pub(crate) trisign_band: Option<f32>,
+    /// 符号/距离解耦：保留距离用于插值（平滑），符号只决定断路（单层）。
+    pub(crate) mixed: bool,
     /// 封口只补顶点数 ≥ cap_min_loop 的主轮廓环（默认 3 = 不过滤）。
     pub(crate) cap_min_loop: usize,
     pub(crate) normal_band: Option<f32>,
@@ -161,6 +163,7 @@ impl Default for Config {
             remesh: false,
             remesh_radius: 3.0,
             trisign_band: None,
+            mixed: false,
             cap_min_loop: 3,
             normal_band: None,
             largest_component: false,
@@ -207,6 +210,7 @@ pub(crate) fn is_bool_flag(name: &str) -> bool {
             | "weld-nearest"
             | "tjunction"
             | "remesh"
+            | "mixed"
     )
 }
 
@@ -436,6 +440,7 @@ pub(crate) fn parse_config(
     cfg.weld_nearest = bools.contains("weld-nearest");
     cfg.tj = bools.contains("tjunction");
     cfg.remesh = bools.contains("remesh");
+    cfg.mixed = bools.contains("mixed");
     cfg.out = flags.get("out").map(PathBuf::from);
     cfg.out_dir = flags
         .get("out-dir")

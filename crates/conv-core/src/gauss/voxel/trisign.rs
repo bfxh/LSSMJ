@@ -10,7 +10,7 @@
 
 use super::{Grid, VoxelizeOptions, splat_range};
 use crate::gauss::{Gaussian, bounds_of};
-use trit_core::signfield::{SignField3D, TriSign};
+use trit_core::signfield::{MixedSignField, SignField3D, TriSign};
 
 /// 由高斯面元朝向投票生成三态符号场。
 ///
@@ -92,6 +92,98 @@ pub fn tri_sign_field(
         field.set(x, y, z, s);
     }
 
+    Ok((field, grid))
+}
+
+/// 三态符号 + 距离的混合场：符号由面元朝向投票决定，距离取投票的**平均有符号距离**。
+///
+/// 与 [`tri_sign_field`] 的差别只有一点：**同时保留距离**，供
+/// [`trit_core::signfield::extract_surface_mixed`] 插值。
+/// 分工是：平滑来自距离（不再碎片化），单层来自符号断路（薄壳不被当成实体）。
+pub fn mixed_sign_field(
+    gaussians: &[Gaussian],
+    opts: &VoxelizeOptions,
+    band: Option<f32>,
+) -> Result<(MixedSignField, Grid), String> {
+    if gaussians.is_empty() {
+        return Err("没有高斯可体素化".into());
+    }
+    let bounds = opts.aabb.unwrap_or_else(|| bounds_of(gaussians));
+    let grid = Grid::fit(bounds, opts.n, opts.padding)?;
+    let band = band.unwrap_or(grid.h).max(1e-9);
+    let n = grid.n as usize;
+    let n2 = n * n;
+    let vox = n * n * n;
+    let mut votes = vec![[0u32; 3]; vox];
+    let mut dsum = vec![0.0f32; vox];
+    let mut dcnt = vec![0u32; vox];
+
+    for g in gaussians {
+        let eig = g.eigen();
+        let raw = g.normal.unwrap_or(eig.vectors[0]);
+        let ln = (raw[0] * raw[0] + raw[1] * raw[1] + raw[2] * raw[2])
+            .sqrt()
+            .max(1e-9);
+        let nrm = [raw[0] / ln, raw[1] / ln, raw[2] / ln];
+        let r = g.axis_radius();
+        let range = splat_range(
+            &grid,
+            g.mean,
+            [r[0] + band, r[1] + band, r[2] + band],
+        );
+        if range.empty {
+            continue;
+        }
+        for z in range.lo[2]..=range.hi[2] {
+            for y in range.lo[1]..=range.hi[1] {
+                for x in range.lo[0]..=range.hi[0] {
+                    let p = grid.world_of(x, y, z);
+                    let d = (p[0] - g.mean[0]) * nrm[0]
+                        + (p[1] - g.mean[1]) * nrm[1]
+                        + (p[2] - g.mean[2]) * nrm[2];
+                    let k = if d > band {
+                        2
+                    } else if d < -band {
+                        0
+                    } else {
+                        1
+                    };
+                    let idx = z as usize * n2 + y as usize * n + x as usize;
+                    votes[idx][k] += 1;
+                    // 距离对**所有票**累加：Null 带内的 d≈0，插值时正好把顶点贴在壳面上。
+                    dsum[idx] += d;
+                    dcnt[idx] += 1;
+                }
+            }
+        }
+    }
+
+    let mut field = MixedSignField::new(grid.n);
+    for i in 0..vox {
+        let x = (i % n) as u32;
+        let y = ((i / n) % n) as u32;
+        let z = (i / n2) as u32;
+        let v = votes[i];
+        if v[0] + v[1] + v[2] == 0 {
+            // 无票：按 Outside 处理（开放场景），距离缺失（NaN 不参与插值）。
+            field.set(x, y, z, TriSign::Outside, f32::NAN);
+            continue;
+        }
+        let max = v[0].max(v[1]).max(v[2]);
+        let s = if v[1] == max {
+            TriSign::Null
+        } else if v[2] == max {
+            TriSign::Outside
+        } else {
+            TriSign::Inside
+        };
+        let d = if dcnt[i] > 0 {
+            dsum[i] / dcnt[i] as f32
+        } else {
+            f32::NAN
+        };
+        field.set(x, y, z, s, d);
+    }
     Ok((field, grid))
 }
 

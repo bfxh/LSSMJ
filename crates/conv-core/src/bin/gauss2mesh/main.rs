@@ -14,11 +14,11 @@ use conv_core::gauss::mesh::{
 };
 use conv_core::gauss::ply::{PlyReadOptions, parse_ply_with};
 use conv_core::gauss::voxel::{
-    Backend, Field, Grid, VoxelMode, VoxelizeOptions, sparse_density::SparseDensity,
-    sparse_surfel::SparseSurfel, surface_blocks::SurfaceBlocks, tri_sign_field, voxelize,
-    voxelize_gpu_with,
+    Backend, Field, Grid, VoxelMode, VoxelizeOptions, mixed_sign_field,
+    sparse_density::SparseDensity, sparse_surfel::SparseSurfel, surface_blocks::SurfaceBlocks,
+    tri_sign_field, voxelize, voxelize_gpu_with,
 };
-use trit_core::signfield::extract_surface;
+use trit_core::signfield::{extract_surface, extract_surface_mixed};
 use conv_core::gauss::{
     Aabb, Gaussian, PruneOptions, add_floaters, blob_sphere_gaussians, bounds_of, median_flatness,
     prune, sphere_gaussians, torus_gaussians,
@@ -1198,14 +1198,28 @@ fn run_trisign(cfg: &Config, input: &Path) -> Result<(), String> {
         backend: Backend::Cpu,
         ..VoxelizeOptions::default()
     };
-    let t = Instant::now();
-    let (field, grid) = tri_sign_field(&kept, &opts, cfg.trisign_band)?;
-    let voxel_ms = t.elapsed().as_secs_f64() * 1e3;
-    let band = cfg.trisign_band.unwrap_or(grid.h);
-
-    let t = Instant::now();
-    let sm = extract_surface(&field, grid.origin, grid.h);
-    let mesh_ms = t.elapsed().as_secs_f64() * 1e3;
+    let mut voxel_ms = 0.0f64;
+    let mut mesh_ms = 0.0f64;
+    let (sm, counts, grid, band) = if cfg.mixed {
+        // 符号/距离解耦：符号决定断路（单层），距离负责插值（平滑）。
+        let t = Instant::now();
+        let (field, grid) = mixed_sign_field(&kept, &opts, cfg.trisign_band)?;
+        voxel_ms = t.elapsed().as_secs_f64() * 1e3;
+        let t = Instant::now();
+        let sm = extract_surface_mixed(&field, grid.origin, grid.h);
+        mesh_ms = t.elapsed().as_secs_f64() * 1e3;
+        let band = cfg.trisign_band.unwrap_or(grid.h);
+        (sm, field.counts(), grid, band)
+    } else {
+        let t = Instant::now();
+        let (field, grid) = tri_sign_field(&kept, &opts, cfg.trisign_band)?;
+        voxel_ms = t.elapsed().as_secs_f64() * 1e3;
+        let t = Instant::now();
+        let sm = extract_surface(&field, grid.origin, grid.h);
+        mesh_ms = t.elapsed().as_secs_f64() * 1e3;
+        let band = cfg.trisign_band.unwrap_or(grid.h);
+        (sm, field.counts(), grid, band)
+    };
     if sm.indices.is_empty() {
         return Err("三态提取没有生成三角形：加大 --grid 或调 --trisign-band".into());
     }
@@ -1230,7 +1244,6 @@ fn run_trisign(cfg: &Config, input: &Path) -> Result<(), String> {
         *v = [v[0] / l, v[1] / l, v[2] / l];
     }
 
-    let counts = field.counts();
     let stats = MeshStats {
         vertices: sm.positions.len(),
         triangles: sm.indices.len() / 3,
