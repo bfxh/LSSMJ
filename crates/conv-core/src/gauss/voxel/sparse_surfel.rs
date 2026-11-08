@@ -23,6 +23,9 @@ pub struct SparseSurfel {
     pub sealed_interior: usize,
     data: Vec<Option<Vec<f32>>>,
     knowns: Vec<Option<Vec<u8>>>,
+    data_in: Vec<Option<Vec<f32>>>,
+    knowns_in: Vec<Option<Vec<u8>>>,
+    double_sided: bool,
 }
 
 impl SparseSurfel {
@@ -126,17 +129,12 @@ impl SparseSurfel {
                 }
             }
         }
-        if let Some(_) = opts.shell_thickness {
-        }
         if observed == 0 {
             return Err("面元融合没有观测到任何体素（法线不可信或带宽太小）".into());
         }
         let sealed_interior = if seal {
             let t = std::time::Instant::now();
             let mut sealed = seal_blocks(&mut data, Some(&knowns), &grid, block, per, blocks, outside);
-            if opts.shell_thickness.is_some() {
-                sealed += seal_blocks(&mut data_in, Some(&knowns_in), &grid, block, per, blocks, outside);
-            }
             if opts.shell_thickness.is_some() {
                 sealed += seal_blocks(&mut data_in, Some(&knowns_in), &grid, block, per, blocks, outside);
             }
@@ -159,6 +157,9 @@ impl SparseSurfel {
             sealed_interior,
             data,
             knowns,
+            data_in,
+            knowns_in,
+            double_sided: opts.shell_thickness.is_some(),
         })
     }
 
@@ -171,7 +172,31 @@ impl SparseSurfel {
     }
 
     pub fn mesh(&self) -> Result<Mesh, String> {
-        mesh_blocks(&self.data, &self.grid, self.block, self.per)
+        if !self.double_sided {
+            return mesh_blocks(&self.data, &self.grid, self.block, self.per);
+        }
+        // 双面 zero-crossing：外场只在薄壳外侧（d_in > 0）保留，内场只在薄壳内侧（d_out < 0）保留，
+        // 避免两场在外部/内部各生成伪面。
+        let mut dout = self.data.clone();
+        let mut din = self.data_in.clone();
+        for id in 0..dout.len() {
+            if let (Some(a), Some(b)) = (dout[id].as_mut(), din[id].as_mut()) {
+                for (x, y) in a.iter_mut().zip(b.iter_mut()) {
+                    if *x != self.outside && *y != self.outside {
+                        let (xo, yi) = (*x, *y);
+                        if yi <= 0.0 {
+                            *x = self.outside;
+                        }
+                        if xo >= 0.0 {
+                            *y = self.outside;
+                        }
+                    }
+                }
+            }
+        }
+        let out = mesh_blocks(&dout, &self.grid, self.block, self.per)?;
+        let inn = mesh_blocks(&din, &self.grid, self.block, self.per)?;
+        Ok(merge_mesh(out, inn))
     }
 }
 
