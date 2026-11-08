@@ -490,18 +490,18 @@ fn cap_boundaries(
     (caps, loops, boundary_edges, dropped_loops)
 }
 
-fn surfel_patches(
+/// 真 T-junction 缝合：角点位置一律不动，只把「落在某条边上的外来角点」插入该边（分割边），
+/// 再对扩充后的多边形做质心扇形三角化；最后按**精确坐标**合并重合顶点
+/// （重合来自插入点与源角点是同一坐标，不是把两个顶点拉到中间 ⇒ 不塌缩）。
+fn build_tjunction(
     gaussians: &[Gaussian],
     patch_scale: f32,
-    weld_cell: f32,
-    cap: bool,
-    use_nearest: bool,
-    weld_angle: f32,
-    cap_min_loop: usize,
-) -> (Mesh, f32, usize) {
-    let mut positions = Vec::with_capacity(gaussians.len() * 4);
-    let mut normals = Vec::with_capacity(gaussians.len() * 4);
-    let mut indices = Vec::with_capacity(gaussians.len() * 6);
+    tol: f32,
+    cos_min: f32,
+) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
+    let nq = gaussians.len();
+    let mut quads: Vec<[[f32; 3]; 4]> = Vec::with_capacity(nq);
+    let mut qnorm: Vec<[f32; 3]> = Vec::with_capacity(nq);
     for g in gaussians {
         let eig = g.eigen();
         let raw = g.normal.unwrap_or(eig.vectors[0]);
@@ -511,7 +511,6 @@ fn surfel_patches(
         let n = [raw[0] / ln, raw[1] / ln, raw[2] / ln];
         let mut u = eig.vectors[1];
         let mut v = eig.vectors[2];
-        // u × v 必须与 n 同向，四边形绕序才朝外。
         let cr = [
             u[1] * v[2] - u[2] * v[1],
             u[2] * v[0] - u[0] * v[2],
@@ -522,29 +521,199 @@ fn surfel_patches(
         }
         let su = patch_scale * eig.values[1].max(0.0).sqrt();
         let sv = patch_scale * eig.values[2].max(0.0).sqrt();
-        let base = positions.len() as u32;
-        for (a, b) in [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
-            positions.push([
+        let mut q = [[0.0f32; 3]; 4];
+        for (i, (a, b)) in [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+            .into_iter()
+            .enumerate()
+        {
+            q[i] = [
                 g.mean[0] + u[0] * su * a + v[0] * sv * b,
                 g.mean[1] + u[1] * su * a + v[1] * sv * b,
                 g.mean[2] + u[2] * su * a + v[2] * sv * b,
-            ]);
-            normals.push(n);
+            ];
         }
-        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        quads.push(q);
+        qnorm.push(n);
     }
 
-    // 缝合：nearest = 吸附最近顶点（不塌缩）；否则量化格子（会塌缩）。
-    let (positions, normals, mut indices) = if use_nearest {
-        weld_nearest(
-            positions,
-            normals,
-            indices,
+    // 角点空间索引：找落在边上的外来角点。
+    let cell = tol.max(1e-9);
+    let key = |p: [f32; 3]| {
+        (
+            (p[0] / cell).floor() as i32,
+            (p[1] / cell).floor() as i32,
+            (p[2] / cell).floor() as i32,
+        )
+    };
+    let mut grid: HashMap<(i32, i32, i32), Vec<usize>> = HashMap::new();
+    for (qi, q) in quads.iter().enumerate() {
+        for c in 0..4 {
+            grid.entry(key(q[c])).or_default().push(qi * 4 + c);
+        }
+    }
+
+    let mut tris: Vec<([[f32; 3]; 3], [f32; 3])> = Vec::with_capacity(nq * 2);
+    for (qi, q) in quads.iter().enumerate() {
+        let n = qnorm[qi];
+        let mut poly: Vec<[f32; 3]> = Vec::with_capacity(8);
+        for e in 0..4 {
+            let a = q[e];
+            let b = q[(e + 1) % 4];
+            poly.push(a);
+            let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            let len2 = (ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2]).max(1e-18);
+            let mut cuts: Vec<(f32, [f32; 3])> = Vec::new();
+            let ka = key(a);
+            for dx in -1..=1 {
+                for dy in -1..=1 {
+                    for dz in -1..=1 {
+                        if let Some(list) = grid.get(&(ka.0 + dx, ka.1 + dy, ka.2 + dz)) {
+                            for &id in list {
+                                let (oq, oc) = (id / 4, id % 4);
+                                if oq == qi {
+                                    continue;
+                                }
+                                let p = quads[oq][oc];
+                                if qnorm[oq][0] * n[0] + qnorm[oq][1] * n[1] + qnorm[oq][2] * n[2]
+                                    < cos_min
+                                {
+                                    continue;
+                                }
+                                let ap = [p[0] - a[0], p[1] - a[1], p[2] - a[2]];
+                                let t =
+                                    (ap[0] * ab[0] + ap[1] * ab[1] + ap[2] * ab[2]) / len2;
+                                if t <= 0.02 || t >= 0.98 {
+                                    continue;
+                                }
+                                let proj = [
+                                    a[0] + ab[0] * t,
+                                    a[1] + ab[1] * t,
+                                    a[2] + ab[2] * t,
+                                ];
+                                let d2 = (p[0] - proj[0]).powi(2)
+                                    + (p[1] - proj[1]).powi(2)
+                                    + (p[2] - proj[2]).powi(2);
+                                if d2 <= tol * tol {
+                                    cuts.push((t, p));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            cuts.sort_by(|x, y| x.0.total_cmp(&y.0));
+            let mut last_t = f32::NEG_INFINITY;
+            for (t, p) in cuts {
+                if (t - last_t).abs() > 1e-4 {
+                    poly.push(p);
+                    last_t = t;
+                }
+            }
+        }
+        // 质心扇形三角化（quad + 边内插入点 ⇒ 星形，安全）。
+        let mut c = [0.0f32; 3];
+        for p in &poly {
+            c[0] += p[0];
+            c[1] += p[1];
+            c[2] += p[2];
+        }
+        let inv = 1.0 / poly.len() as f32;
+        let center = [c[0] * inv, c[1] * inv, c[2] * inv];
+        for i in 0..poly.len() {
+            let p0 = poly[i];
+            let p1 = poly[(i + 1) % poly.len()];
+            tris.push(([center, p0, p1], n));
+        }
+    }
+
+    // 按精确坐标合并顶点：插入点与源角点坐标一致，合并后仍停在原位。
+    let mut positions: Vec<[f32; 3]> = Vec::new();
+    let mut normals: Vec<[f32; 3]> = Vec::new();
+    let mut indices: Vec<u32> = Vec::with_capacity(tris.len() * 3);
+    let mut map: HashMap<[u32; 3], u32> = HashMap::new();
+    for (t, n) in &tris {
+        for p in t {
+            let b = [p[0].to_bits(), p[1].to_bits(), p[2].to_bits()];
+            let id = match map.get(&b) {
+                Some(&id) => id,
+                None => {
+                    let id = positions.len() as u32;
+                    positions.push(*p);
+                    normals.push(*n);
+                    map.insert(b, id);
+                    id
+                }
+            };
+            indices.push(id);
+        }
+    }
+    (positions, normals, indices)
+}
+
+fn surfel_patches(
+    gaussians: &[Gaussian],
+    patch_scale: f32,
+    weld_cell: f32,
+    cap: bool,
+    use_nearest: bool,
+    tj: bool,
+    weld_angle: f32,
+    cap_min_loop: usize,
+) -> (Mesh, f32, usize) {
+    let (positions, normals, mut indices) = if tj {
+        build_tjunction(
+            gaussians,
+            patch_scale,
             weld_cell,
             weld_angle.to_radians().cos(),
         )
     } else {
-        weld_quantize(positions, normals, indices, weld_cell)
+        let mut positions = Vec::with_capacity(gaussians.len() * 4);
+        let mut normals = Vec::with_capacity(gaussians.len() * 4);
+        let mut indices = Vec::with_capacity(gaussians.len() * 6);
+        for g in gaussians {
+            let eig = g.eigen();
+            let raw = g.normal.unwrap_or(eig.vectors[0]);
+            let ln = (raw[0] * raw[0] + raw[1] * raw[1] + raw[2] * raw[2])
+                .sqrt()
+                .max(1e-9);
+            let n = [raw[0] / ln, raw[1] / ln, raw[2] / ln];
+            let mut u = eig.vectors[1];
+            let mut v = eig.vectors[2];
+            // u × v 必须与 n 同向，四边形绕序才朝外。
+            let cr = [
+                u[1] * v[2] - u[2] * v[1],
+                u[2] * v[0] - u[0] * v[2],
+                u[0] * v[1] - u[1] * v[0],
+            ];
+            if cr[0] * n[0] + cr[1] * n[1] + cr[2] * n[2] < 0.0 {
+                std::mem::swap(&mut u, &mut v);
+            }
+            let su = patch_scale * eig.values[1].max(0.0).sqrt();
+            let sv = patch_scale * eig.values[2].max(0.0).sqrt();
+            let base = positions.len() as u32;
+            for (a, b) in [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+                positions.push([
+                    g.mean[0] + u[0] * su * a + v[0] * sv * b,
+                    g.mean[1] + u[1] * su * a + v[1] * sv * b,
+                    g.mean[2] + u[2] * su * a + v[2] * sv * b,
+                ]);
+                normals.push(n);
+            }
+            indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
+        // 缝合：nearest = 吸附最近顶点（不塌缩）；否则量化格子（会塌缩）。
+        if use_nearest {
+            weld_nearest(
+                positions,
+                normals,
+                indices,
+                weld_cell,
+                weld_angle.to_radians().cos(),
+            )
+        } else {
+            weld_quantize(positions, normals, indices, weld_cell)
+        }
     };
 
     // 封口：只补主轮廓大环，小于 cap_min_loop 的碎片环丢弃。
@@ -626,6 +795,7 @@ fn run_patch(cfg: &Config, input: &Path) -> Result<(), String> {
         cfg.weld_cell,
         cfg.cap,
         cfg.weld_nearest,
+        cfg.tj,
         cfg.weld_angle,
         cfg.cap_min_loop,
     );

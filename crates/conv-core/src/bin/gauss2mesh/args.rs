@@ -102,6 +102,8 @@ pub(crate) struct Config {
     pub(crate) weld_nearest: bool,
     /// 吸附式缝合的法线夹角阈值（度）：只合并夹角小于它的顶点。
     pub(crate) weld_angle: f32,
+    /// 真 T-junction 缝合：角点不动，只把落在边上的外来角点插入该边。
+    pub(crate) tj: bool,
     /// 封口只补顶点数 ≥ cap_min_loop 的主轮廓环（默认 3 = 不过滤）。
     pub(crate) cap_min_loop: usize,
     pub(crate) normal_band: Option<f32>,
@@ -149,6 +151,7 @@ impl Default for Config {
             cap: false,
             weld_nearest: false,
             weld_angle: 30.0,
+            tj: false,
             cap_min_loop: 3,
             normal_band: None,
             largest_component: false,
@@ -193,6 +196,7 @@ pub(crate) fn is_bool_flag(name: &str) -> bool {
             | "splat-integrate"
             | "cap"
             | "weld-nearest"
+            | "tjunction"
     )
 }
 
@@ -400,6 +404,7 @@ pub(crate) fn parse_config(
     cfg.no_html = bools.contains("no-html");
     cfg.cap = bools.contains("cap");
     cfg.weld_nearest = bools.contains("weld-nearest");
+    cfg.tj = bools.contains("tjunction");
     cfg.out = flags.get("out").map(PathBuf::from);
     cfg.out_dir = flags
         .get("out-dir")
