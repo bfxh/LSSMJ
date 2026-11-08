@@ -755,6 +755,7 @@ fn delaunay2d(pts: &[[f32; 2]]) -> Vec<[u32; 3]> {
 fn build_remesh(
     gaussians: &[Gaussian],
     radius_k: f32,
+    cos_min: f32,
 ) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
     let n = gaussians.len();
     let mut pos: Vec<[f32; 3]> = Vec::with_capacity(n);
@@ -863,7 +864,13 @@ fn build_remesh(
                             let d2 = (p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2)
                                 + (p[2] - q[2]).powi(2);
                             if d2 <= r2 {
-                                local.push(j);
+                                // 法线判据：只收法线相近的邻点，曲率大处不跨面连接。
+                                let nj = nrm[j];
+                                let ndot =
+                                    ni[0] * nj[0] + ni[1] * nj[1] + ni[2] * nj[2];
+                                if ndot >= cos_min {
+                                    local.push(j);
+                                }
                             }
                         }
                     }
@@ -977,7 +984,11 @@ fn surfel_patches(
     cap_min_loop: usize,
 ) -> (Mesh, f32, usize) {
     let (positions, normals, mut indices) = if remesh {
-        build_remesh(gaussians, remesh_radius)
+        build_remesh(
+            gaussians,
+            remesh_radius,
+            weld_angle.to_radians().cos(),
+        )
     } else if tj {
         build_tjunction(
             gaussians,
