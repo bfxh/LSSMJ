@@ -9,14 +9,16 @@ mod report;
 
 use args::{Config, HELP, ModeSel, is_bool_flag, parse_config};
 use conv_core::gauss::mesh::{
-    Mesh, MeshStats, field_to_mesh, field_to_mesh_gpu, finish_mesh, keep_largest_component,
-    write_obj,
+    Mesh, MeshStats, face_normal, field_to_mesh, field_to_mesh_gpu, finish_mesh,
+    keep_largest_component, write_obj,
 };
 use conv_core::gauss::ply::{PlyReadOptions, parse_ply_with};
 use conv_core::gauss::voxel::{
     Backend, Field, Grid, VoxelMode, VoxelizeOptions, sparse_density::SparseDensity,
-    sparse_surfel::SparseSurfel, surface_blocks::SurfaceBlocks, voxelize, voxelize_gpu_with,
+    sparse_surfel::SparseSurfel, surface_blocks::SurfaceBlocks, tri_sign_field, voxelize,
+    voxelize_gpu_with,
 };
+use trit_core::signfield::extract_surface;
 use conv_core::gauss::{
     Aabb, Gaussian, PruneOptions, add_floaters, blob_sphere_gaussians, bounds_of, median_flatness,
     prune, sphere_gaussians, torus_gaussians,
@@ -130,6 +132,12 @@ fn run() -> Result<(), String> {
                 .first()
                 .ok_or("patch 需要输入 PLY：gauss2mesh patch <input.ply>")?;
             run_patch(&cfg, Path::new(input))
+        }
+        "trisign" => {
+            let input = positional
+                .first()
+                .ok_or("trisign 需要输入 PLY：gauss2mesh trisign <input.ply>")?;
+            run_trisign(&cfg, Path::new(input))
         }
         "inspect" => {
             let input = positional
@@ -1153,6 +1161,118 @@ fn run_patch(cfg: &Config, input: &Path) -> Result<(), String> {
         cap_loops,
         load_ms,
         build_ms
+    );
+    println!("输出 {}", obj.display());
+    Ok(())
+}
+
+/// 三态符号场重建：面元朝向投票 → Inside/Null/Outside → 三态 Dual Contouring。
+/// 与二值 iso 路径的根本差别：薄壳不被解释成「有体积的实体」，Null 层充当断路开关。
+fn run_trisign(cfg: &Config, input: &Path) -> Result<(), String> {
+    let t0 = Instant::now();
+    let bytes = fs::read(input).map_err(|e| format!("读不了 {}：{e}", input.display()))?;
+    let data = parse_ply_with(
+        &bytes,
+        &PlyReadOptions {
+            scales_are_log: !cfg.raw_scale,
+            opacity_is_logit: !cfg.raw_opacity,
+        },
+    )?;
+    let load_ms = t0.elapsed().as_secs_f64() * 1e3;
+    let (kept, _prune) = prune(
+        &data.gaussians,
+        &PruneOptions {
+            min_opacity: cfg.prune_opacity,
+            min_radius: cfg.min_radius,
+            max_radius: cfg.max_radius,
+        },
+    );
+    if kept.is_empty() {
+        return Err("剪枝后没有高斯：降低 --prune-opacity 或 --min-radius".into());
+    }
+
+    let opts = VoxelizeOptions {
+        n: cfg.grid,
+        padding: cfg.padding,
+        mode: VoxelMode::Surfel,
+        backend: Backend::Cpu,
+        ..VoxelizeOptions::default()
+    };
+    let t = Instant::now();
+    let (field, grid) = tri_sign_field(&kept, &opts, cfg.trisign_band)?;
+    let voxel_ms = t.elapsed().as_secs_f64() * 1e3;
+    let band = cfg.trisign_band.unwrap_or(grid.h);
+
+    let t = Instant::now();
+    let sm = extract_surface(&field, grid.origin, grid.h);
+    let mesh_ms = t.elapsed().as_secs_f64() * 1e3;
+    if sm.indices.is_empty() {
+        return Err("三态提取没有生成三角形：加大 --grid 或调 --trisign-band".into());
+    }
+
+    // 顶点法线 = 邻接面法线平均
+    let mut normals = vec![[0.0f32; 3]; sm.positions.len()];
+    for tri in sm.indices.chunks(3) {
+        let n = face_normal(
+            sm.positions[tri[0] as usize],
+            sm.positions[tri[1] as usize],
+            sm.positions[tri[2] as usize],
+        );
+        for k in 0..3 {
+            let v = &mut normals[tri[k] as usize];
+            v[0] += n[0];
+            v[1] += n[1];
+            v[2] += n[2];
+        }
+    }
+    for v in &mut normals {
+        let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-12);
+        *v = [v[0] / l, v[1] / l, v[2] / l];
+    }
+
+    let counts = field.counts();
+    let stats = MeshStats {
+        vertices: sm.positions.len(),
+        triangles: sm.indices.len() / 3,
+        components: 0,
+        chi: 0,
+        volume: 0.0,
+        boundary_touch: false,
+        hash: 0,
+        bounds: Some(Aabb::from_points(&sm.positions)),
+    };
+    let mesh = Mesh {
+        positions: sm.positions,
+        normals,
+        indices: sm.indices,
+        stats,
+    };
+    let obj = cfg
+        .out
+        .clone()
+        .unwrap_or_else(|| input.with_extension("obj"));
+    if let Some(parent) = obj.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).map_err(|e| format!("建目录失败：{e}"))?;
+    }
+    write_obj(&mesh, &obj).map_err(|e| format!("写 OBJ 失败：{e}"))?;
+    println!(
+        "{{\"mode\":\"trisign\",\"gaussians\":{},\"kept\":{},\"grid\":{},\"h\":{:.6},\"band\":{:.6},\"inside\":{},\"null\":{},\"outside\":{},\"quads\":{},\"verts\":{},\"tris\":{},\"load_ms\":{:.1},\"voxel_ms\":{:.1},\"mesh_ms\":{:.1}}}",
+        data.gaussians.len(),
+        kept.len(),
+        grid.n,
+        grid.h,
+        band,
+        counts[0],
+        counts[1],
+        counts[2],
+        sm.quads,
+        mesh.stats.vertices,
+        mesh.stats.triangles,
+        load_ms,
+        voxel_ms,
+        mesh_ms
     );
     println!("输出 {}", obj.display());
     Ok(())

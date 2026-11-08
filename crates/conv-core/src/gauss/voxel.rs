@@ -14,6 +14,7 @@ pub mod sparse_surfel;
 pub mod quant;
 pub mod surface_blocks;
 pub mod ternary;
+pub mod trisign;
 mod tiles;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -215,6 +216,7 @@ pub use quant::{
     QuantField, quantize_auto_quantfield, quantize_field_auto, scale_for_iso, voxelize_quant,
 };
 pub use ternary::{TritField, voxelize_ternary, voxelize_ternary_with};
+pub use trisign::{tri_sign_counts, tri_sign_field};
 
 pub fn voxelize(gaussians: &[Gaussian], opts: &VoxelizeOptions) -> Result<Field, String> {
     let (grid, bounds) = fit_inputs(gaussians, opts)?;

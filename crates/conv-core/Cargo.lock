@@ -124,6 +124,7 @@ dependencies = [
  "bytemuck",
  "fast-surface-nets",
  "pollster",
+ "trit-core",
  "wgpu",
 ]
 
@@ -834,6 +835,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e95f91fcc7a621e8b030f6aa23c71fe9838ae2fb4d8118b75602a328f5144044"
 dependencies = [
  "pin-project-lite",
+]
+
+[[package]]
+name = "trit-core"
+version = "0.12.0"
+dependencies = [
+ "serde",
+ "thiserror",
 ]
 
 [[package]]

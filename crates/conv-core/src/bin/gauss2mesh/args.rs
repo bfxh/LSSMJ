@@ -108,6 +108,8 @@ pub(crate) struct Config {
     pub(crate) remesh: bool,
     /// 局部邻域半径 = remesh_radius × 最近邻距离中位数（默认 3.0）。
     pub(crate) remesh_radius: f32,
+    /// 三态符号场的薄壳带半宽（世界单位；None = 1 个体素边长）。
+    pub(crate) trisign_band: Option<f32>,
     /// 封口只补顶点数 ≥ cap_min_loop 的主轮廓环（默认 3 = 不过滤）。
     pub(crate) cap_min_loop: usize,
     pub(crate) normal_band: Option<f32>,
@@ -158,6 +160,7 @@ impl Default for Config {
             tj: false,
             remesh: false,
             remesh_radius: 3.0,
+            trisign_band: None,
             cap_min_loop: 3,
             normal_band: None,
             largest_component: false,
@@ -232,6 +235,7 @@ pub(crate) fn parse_config(
         "cap-min-loop",
         "weld-angle",
         "remesh-radius",
+        "trisign-band",
         "normal-band",
         "out",
         "out-dir",
@@ -343,6 +347,15 @@ pub(crate) fn parse_config(
             return Err("--remesh-radius 必须 > 0".into());
         }
         cfg.remesh_radius = x;
+    }
+    if let Some(v) = flags.get("trisign-band") {
+        let x: f32 = v
+            .parse()
+            .map_err(|_| format!("--trisign-band 不是数值：{v}"))?;
+        if !(x > 0.0) {
+            return Err("--trisign-band 必须 > 0".into());
+        }
+        cfg.trisign_band = Some(x);
     }
     if let Some(v) = flags.get("normal-band") {
         let x: f32 = v.parse().map_err(|_| format!("--normal-band 不是数值：{v}"))?;
