@@ -100,6 +100,8 @@ pub(crate) struct Config {
     pub(crate) cap: bool,
     /// 缝合方式：true = 吸附最近顶点（不塌缩）；false = 量化格子（会塌缩）。
     pub(crate) weld_nearest: bool,
+    /// 吸附式缝合的法线夹角阈值（度）：只合并夹角小于它的顶点。
+    pub(crate) weld_angle: f32,
     /// 封口只补顶点数 ≥ cap_min_loop 的主轮廓环（默认 3 = 不过滤）。
     pub(crate) cap_min_loop: usize,
     pub(crate) normal_band: Option<f32>,
@@ -146,6 +148,7 @@ impl Default for Config {
             weld_cell: 0.0,
             cap: false,
             weld_nearest: false,
+            weld_angle: 30.0,
             cap_min_loop: 3,
             normal_band: None,
             largest_component: false,
@@ -216,6 +219,7 @@ pub(crate) fn parse_config(
         "patch-scale",
         "weld-cell",
         "cap-min-loop",
+        "weld-angle",
         "normal-band",
         "out",
         "out-dir",
@@ -311,6 +315,13 @@ pub(crate) fn parse_config(
             return Err("--cap-min-loop 必须 ≥ 3".into());
         }
         cfg.cap_min_loop = x;
+    }
+    if let Some(v) = flags.get("weld-angle") {
+        let x: f32 = v.parse().map_err(|_| format!("--weld-angle 不是数值：{v}"))?;
+        if !(0.0..=180.0).contains(&x) {
+            return Err("--weld-angle 必须在 0..=180".into());
+        }
+        cfg.weld_angle = x;
     }
     if let Some(v) = flags.get("normal-band") {
         let x: f32 = v.parse().map_err(|_| format!("--normal-band 不是数值：{v}"))?;

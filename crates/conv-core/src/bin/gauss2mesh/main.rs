@@ -335,6 +335,7 @@ fn weld_nearest(
     normals: Vec<[f32; 3]>,
     indices: Vec<u32>,
     tol: f32,
+    cos_min: f32,
 ) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
     if tol <= 0.0 {
         return (positions, normals, indices);
@@ -364,7 +365,11 @@ fn weld_nearest(
                             let d2 = (p[0] - q[0]).powi(2)
                                 + (p[1] - q[1]).powi(2)
                                 + (p[2] - q[2]).powi(2);
-                            if d2 <= tol2 && best.is_none_or(|(_, bd)| d2 < bd) {
+                            // 法线判据：切线方向不同的面片顶点不得并到一起（这正是残余翻转的来源）。
+                            let nj = out_n[j as usize];
+                            let ni = normals[i];
+                            let ndot = ni[0] * nj[0] + ni[1] * nj[1] + ni[2] * nj[2];
+                            if d2 <= tol2 && ndot >= cos_min && best.is_none_or(|(_, bd)| d2 < bd) {
                                 best = Some((j, d2));
                             }
                         }
@@ -491,6 +496,7 @@ fn surfel_patches(
     weld_cell: f32,
     cap: bool,
     use_nearest: bool,
+    weld_angle: f32,
     cap_min_loop: usize,
 ) -> (Mesh, f32, usize) {
     let mut positions = Vec::with_capacity(gaussians.len() * 4);
@@ -530,7 +536,13 @@ fn surfel_patches(
 
     // 缝合：nearest = 吸附最近顶点（不塌缩）；否则量化格子（会塌缩）。
     let (positions, normals, mut indices) = if use_nearest {
-        weld_nearest(positions, normals, indices, weld_cell)
+        weld_nearest(
+            positions,
+            normals,
+            indices,
+            weld_cell,
+            weld_angle.to_radians().cos(),
+        )
     } else {
         weld_quantize(positions, normals, indices, weld_cell)
     };
@@ -614,6 +626,7 @@ fn run_patch(cfg: &Config, input: &Path) -> Result<(), String> {
         cfg.weld_cell,
         cfg.cap,
         cfg.weld_nearest,
+        cfg.weld_angle,
         cfg.cap_min_loop,
     );
     let build_ms = t.elapsed().as_secs_f64() * 1e3;
