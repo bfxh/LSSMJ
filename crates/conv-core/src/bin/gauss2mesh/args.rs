@@ -89,6 +89,7 @@ pub(crate) struct Config {
     pub(crate) max_radius: f32,
     pub(crate) padding: u32,
     pub(crate) seal: bool,
+    pub(crate) normal_band: Option<f32>,
     pub(crate) largest_component: bool,
     pub(crate) kernel_clamp_world: Option<f32>,
     pub(crate) kernel_clamp_ref: Option<u32>,
@@ -126,6 +127,7 @@ impl Default for Config {
             max_radius: 0.0,
             padding: 3,
             seal: true,
+            normal_band: None,
             largest_component: false,
             kernel_clamp_world: None,
             kernel_clamp_ref: None,
@@ -187,6 +189,7 @@ pub(crate) fn parse_config(
         "min-radius",
         "max-radius",
         "padding",
+        "normal-band",
         "out",
         "out-dir",
         "html",
@@ -244,6 +247,13 @@ pub(crate) fn parse_config(
             return Err("--density-norm 必须 ≥ 8".into());
         }
         cfg.density_norm_ref = Some(x);
+    }
+    if let Some(v) = flags.get("normal-band") {
+        let x: f32 = v.parse().map_err(|_| format!("--normal-band 不是数值：{v}"))?;
+        if !(x > 0.0) {
+            return Err("--normal-band 必须 > 0".into());
+        }
+        cfg.normal_band = Some(x);
     }
     if let Some(v) = flags.get("kernel-clamp-world") {
         let x: f32 = v

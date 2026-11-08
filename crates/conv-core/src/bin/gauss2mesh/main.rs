@@ -467,6 +467,7 @@ fn convert_and_write(
         iso_frac: 0.65,
         iso_abs: cfg.iso,
         seal: cfg.seal,
+        normal_band_cells: cfg.normal_band.unwrap_or(1.0),
         kernel_clamp_world: cfg.kernel_clamp_world,
         kernel_clamp_ref,
         density_norm_ref: cfg.density_norm_ref,
