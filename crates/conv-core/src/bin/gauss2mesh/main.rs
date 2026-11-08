@@ -9,7 +9,7 @@ mod report;
 
 use args::{Config, HELP, ModeSel, is_bool_flag, parse_config};
 use conv_core::gauss::mesh::{
-    Mesh, field_to_mesh, field_to_mesh_gpu, keep_largest_component, write_obj,
+    Mesh, field_to_mesh, field_to_mesh_gpu, finish_mesh, keep_largest_component, write_obj,
 };
 use conv_core::gauss::ply::{PlyReadOptions, parse_ply_with};
 use conv_core::gauss::voxel::{
@@ -17,8 +17,8 @@ use conv_core::gauss::voxel::{
     sparse_surfel::SparseSurfel, surface_blocks::SurfaceBlocks, voxelize, voxelize_gpu_with,
 };
 use conv_core::gauss::{
-    Gaussian, PruneOptions, add_floaters, blob_sphere_gaussians, bounds_of, median_flatness, prune,
-    sphere_gaussians, torus_gaussians,
+    Aabb, Gaussian, PruneOptions, add_floaters, blob_sphere_gaussians, bounds_of, median_flatness,
+    prune, sphere_gaussians, torus_gaussians,
 };
 use conv_core::jfa::{Headless, try_headless_device_sized};
 use html::write_html;
@@ -519,7 +519,20 @@ fn convert_and_write(
     let mut sparse_note = None;
     let mut acc_vox = 0.0;
     let mut acc_mesh = 0.0;
-    let (mut field, mut mesh) = if sparse {
+    let (mut field, mut mesh) = if let Some(dl) = cfg.double_layer {
+        if !cfg.quiet {
+            stage(
+                3,
+                5,
+                "双面重建",
+                &format!("±{:.4} 两层独立建场（不共用零等值面）", dl * 0.5),
+            );
+        }
+        let (f, m, v, mm) = run_double_layer(&kept, &voxel_opts, dl)?;
+        acc_vox += v;
+        acc_mesh += mm;
+        (f, m)
+    } else if sparse {
         let (f, m, v, mm, note) = run_sparse_leg(&kept, &voxel_opts)?;
         acc_vox = v;
         acc_mesh = mm;
@@ -887,6 +900,63 @@ fn run_leg(
     let mesh = field_to_mesh(&field);
     let mesh_ms = t.elapsed().as_secs_f64() * 1e3;
     Ok((field, mesh, voxel_ms, mesh_ms))
+}
+
+/// 双面重建器：把每个面元沿法向偏移 ±t/2 拆成两层，两层各自用**独立标量场**配 Surface Nets
+/// 取面，再把内层翻转绕序与外层合并。两层的等值面互不相干，不再共用同一个零等值面，
+/// 因此不会出现「同一个场里两层叠加」导致的双层重叠/褶皱。
+fn run_double_layer(
+    gaussians: &[Gaussian],
+    opts: &VoxelizeOptions,
+    thickness: f32,
+) -> Result<(Field, Mesh, f64, f64), String> {
+    // 同一包围盒（含 ±t/2 外扩），两层落在同一世界坐标系，合并后不会错位。
+    let mut bounds = opts.aabb.unwrap_or_else(|| bounds_of(gaussians));
+    for k in 0..3 {
+        bounds.min[k] -= thickness * 0.5;
+        bounds.max[k] += thickness * 0.5;
+    }
+
+    let mut outer = gaussians.to_vec();
+    let mut inner = gaussians.to_vec();
+    for (i, g) in gaussians.iter().enumerate() {
+        let n = match g.normal {
+            Some(n) => n,
+            None => g.eigen().vectors[0],
+        };
+        for k in 0..3 {
+            outer[i].mean[k] = g.mean[k] + n[k] * thickness * 0.5;
+            inner[i].mean[k] = g.mean[k] - n[k] * thickness * 0.5;
+        }
+    }
+
+    let mut o = opts.clone();
+    o.aabb = Some(bounds);
+    o.shell_thickness = None;
+    o.mode = VoxelMode::Surfel;
+    o.backend = Backend::Cpu;
+
+    let (field, m_out, vox_ms, mesh_ms) = run_leg(&outer, &o, None)?;
+    let (_, m_in, _, _) = run_leg(&inner, &o, None)?;
+    if m_out.indices.is_empty() || m_in.indices.is_empty() {
+        return Err(
+            "双面重建：某一层没有生成三角形（加大 --grid、减小 --double-layer，或提高 --prune-opacity）"
+                .into(),
+        );
+    }
+
+    // 合并：外层保持绕序（朝外），内层反转绕序（朝内）。
+    let mut positions = m_out.positions.clone();
+    let mut normals = m_out.normals.clone();
+    let mut indices = m_out.indices.clone();
+    let base = positions.len() as u32;
+    positions.extend_from_slice(&m_in.positions);
+    normals.extend_from_slice(&m_in.normals);
+    for tri in m_in.indices.as_chunks::<3>().0 {
+        indices.extend_from_slice(&[base + tri[0], base + tri[2], base + tri[1]]);
+    }
+    let merged = finish_mesh(positions, normals, indices, &field.grid);
+    Ok((field, merged, vox_ms * 2.0, mesh_ms * 2.0))
 }
 
 /// 核宽/密度是否已钉在世界单位（此时密度近似分辨率无关，探针 iso 不再按 n⁻² 换算）。

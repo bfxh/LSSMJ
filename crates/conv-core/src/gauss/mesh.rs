@@ -170,7 +170,7 @@ pub(crate) fn mesh_from_parts(
     finish_mesh(positions, normals, indices, grid)
 }
 
-fn finish_mesh(
+pub fn finish_mesh(
     positions: Vec<[f32; 3]>,
     mut normals: Vec<[f32; 3]>,
     mut indices: Vec<u32>,

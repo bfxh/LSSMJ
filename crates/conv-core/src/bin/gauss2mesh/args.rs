@@ -90,6 +90,8 @@ pub(crate) struct Config {
     pub(crate) padding: u32,
     pub(crate) seal: bool,
     pub(crate) shell_thickness: Option<f32>,
+    /// 双面重建器：每个面元沿法向偏移 ±t/2 拆成两层，各自独立建场/取面后合并。
+    pub(crate) double_layer: Option<f32>,
     pub(crate) normal_band: Option<f32>,
     pub(crate) largest_component: bool,
     pub(crate) kernel_clamp_world: Option<f32>,
@@ -129,6 +131,7 @@ impl Default for Config {
             padding: 3,
             seal: true,
             shell_thickness: None,
+            double_layer: None,
             normal_band: None,
             largest_component: false,
             kernel_clamp_world: None,
@@ -192,6 +195,7 @@ pub(crate) fn parse_config(
         "max-radius",
         "padding",
         "shell-thickness",
+        "double-layer",
         "normal-band",
         "out",
         "out-dir",
@@ -257,6 +261,13 @@ pub(crate) fn parse_config(
             return Err("--shell-thickness 必须 > 0".into());
         }
         cfg.shell_thickness = Some(x);
+    }
+    if let Some(v) = flags.get("double-layer") {
+        let x: f32 = v.parse().map_err(|_| format!("--double-layer 不是数值：{v}"))?;
+        if !(x > 0.0) {
+            return Err("--double-layer 必须 > 0".into());
+        }
+        cfg.double_layer = Some(x);
     }
     if let Some(v) = flags.get("normal-band") {
         let x: f32 = v.parse().map_err(|_| format!("--normal-band 不是数值：{v}"))?;

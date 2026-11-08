@@ -167,6 +167,7 @@ mod tests {
             lam: eigen.values.map(|v| v.max(1e-6)),
             radius: [0.1; 3],
             normal: eigen.vectors[0],
+            side: 0,
         }
     }
 
