@@ -104,6 +104,10 @@ pub(crate) struct Config {
     pub(crate) weld_angle: f32,
     /// 真 T-junction 缝合：角点不动，只把落在边上的外来角点插入该边。
     pub(crate) tj: bool,
+    /// 重网格化：把面片集合当带法线点集，逐点切平面局部 Delaunay 重建统一拓扑网格。
+    pub(crate) remesh: bool,
+    /// 局部邻域半径 = remesh_radius × 最近邻距离中位数（默认 3.0）。
+    pub(crate) remesh_radius: f32,
     /// 封口只补顶点数 ≥ cap_min_loop 的主轮廓环（默认 3 = 不过滤）。
     pub(crate) cap_min_loop: usize,
     pub(crate) normal_band: Option<f32>,
@@ -152,6 +156,8 @@ impl Default for Config {
             weld_nearest: false,
             weld_angle: 30.0,
             tj: false,
+            remesh: false,
+            remesh_radius: 3.0,
             cap_min_loop: 3,
             normal_band: None,
             largest_component: false,
@@ -197,6 +203,7 @@ pub(crate) fn is_bool_flag(name: &str) -> bool {
             | "cap"
             | "weld-nearest"
             | "tjunction"
+            | "remesh"
     )
 }
 
@@ -224,6 +231,7 @@ pub(crate) fn parse_config(
         "weld-cell",
         "cap-min-loop",
         "weld-angle",
+        "remesh-radius",
         "normal-band",
         "out",
         "out-dir",
@@ -327,6 +335,15 @@ pub(crate) fn parse_config(
         }
         cfg.weld_angle = x;
     }
+    if let Some(v) = flags.get("remesh-radius") {
+        let x: f32 = v
+            .parse()
+            .map_err(|_| format!("--remesh-radius 不是数值：{v}"))?;
+        if !(x > 0.0) {
+            return Err("--remesh-radius 必须 > 0".into());
+        }
+        cfg.remesh_radius = x;
+    }
     if let Some(v) = flags.get("normal-band") {
         let x: f32 = v.parse().map_err(|_| format!("--normal-band 不是数值：{v}"))?;
         if !(x > 0.0) {
@@ -405,6 +422,7 @@ pub(crate) fn parse_config(
     cfg.cap = bools.contains("cap");
     cfg.weld_nearest = bools.contains("weld-nearest");
     cfg.tj = bools.contains("tjunction");
+    cfg.remesh = bools.contains("remesh");
     cfg.out = flags.get("out").map(PathBuf::from);
     cfg.out_dir = flags
         .get("out-dir")
