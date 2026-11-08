@@ -87,7 +87,6 @@ pub(super) unsafe fn density_row(
     }
 }
 
-
 /// u8/u16 定点量化行内核：与标量 `splat_quant_chunk` 逐位一致（只向量化 maha，无 FMA/无重排）。
 #[allow(clippy::too_many_arguments)]
 #[target_feature(enable = "avx2")]
@@ -250,7 +249,6 @@ mod tests {
 
     #[test]
     fn avx2_quant_row_matches_scalar_bitwise() {
-        use super::super::quant::Acc;
         if !available() {
             eprintln!("AVX2 unavailable; skip");
             return;

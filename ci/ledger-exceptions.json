@@ -1,0 +1,526 @@
+{
+ "schema_version": 1,
+ "comment": "ledger 例外登记（F07 迁移期，2026-10-10）。每条含 id/reason(含 owner)/expires；过期不豁免；被豁免条目不计入「通过校验」总数（EXCEPT 行可见）。evidence_roots 是账本当前引用的外部分析工作区（阶段 2 路径迁移后应收窄）。",
+ "evidence_roots": [
+  "D:/KF/GN_SDK1e",
+  "D:/KF/qingjian-gates",
+  "D:/KF/BSHSQ"
+ ],
+ "exceptions": [
+  {
+   "id": "W1F-093",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W2G-009",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W2G-066",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W2G-074",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W3H-053",
+   "reason": "F02 迁移期：仓外证据根（BSHSQ）文档随上游演进，引文待对齐新版本（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W3H-060",
+   "reason": "F02 迁移期：仓外证据根（BSHSQ）文档随上游演进，引文待对齐新版本（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W3H-061",
+   "reason": "F02 迁移期：仓外证据根（BSHSQ）文档随上游演进，引文待对齐新版本（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W3H-072",
+   "reason": "F02 迁移期：仓外证据根（BSHSQ）文档随上游演进，引文待对齐新版本（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W3H-073",
+   "reason": "F02 迁移期：仓外证据根（BSHSQ）文档随上游演进，引文待对齐新版本（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W3H-094",
+   "reason": "F07 迁移期：source 锚不在允许证据根内，待重锚或扩登记（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-001",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-002",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-003",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-004",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-005",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-006",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-007",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-008",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-009",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-010",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-011",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-012",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-013",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-014",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-015",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-016",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-017",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-018",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-019",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-020",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-021",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-022",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-023",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-024",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-025",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-026",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-027",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-028",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-029",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-030",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-031",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-032",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-033",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-034",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-035",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-036",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-037",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-038",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-039",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-040",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-041",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-042",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-043",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-044",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-045",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-046",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-047",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-048",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-049",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-050",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-051",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-052",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-053",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-054",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-055",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-056",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-057",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-058",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-059",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-060",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-061",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W4A-062",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6A-013",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6B-012",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6B-013",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6B-014",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6C-002",
+   "reason": "F07 迁移期：锚文件非 UTF-8/GBK 可无损解码，待重锚或转码（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6C-012",
+   "reason": "F07 迁移期：锚文件非 UTF-8/GBK 可无损解码，待重锚或转码（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6E-006",
+   "reason": "F07 迁移期：锚文件非 UTF-8/GBK 可无损解码，待重锚或转码（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6E-011",
+   "reason": "F07 迁移期：锚文件非 UTF-8/GBK 可无损解码，待重锚或转码（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6E-012",
+   "reason": "F07 迁移期：锚文件非 UTF-8/GBK 可无损解码，待重锚或转码（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6G-006",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6G-007",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6G-008",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6G-009",
+   "reason": "F02 迁移期：证据源 D:/KF/GN_SDK1e 已压缩为 D:/KF/GN_SDK1e.zip（100MB，本机 2026-10-10 清理），复算待解压或重锚（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6G-010",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6G-011",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6G-012",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6H-012",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6H-013",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6J-005",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6J-006",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6J-007",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6J-008",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6K-005",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W6K-006",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W8A-028",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W8A-069",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W8B-075",
+   "reason": "F07 迁移期：历史 doc/paper/web 条目缺 >=10 字符逐字 quote，待人工补全证据（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W9A-093",
+   "reason": "F07 迁移期：锚文件非 UTF-8/GBK 可无损解码，待重锚或转码（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W9A-094",
+   "reason": "F07 迁移期：锚文件非 UTF-8/GBK 可无损解码，待重锚或转码（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W9A-095",
+   "reason": "F07 迁移期：锚文件非 UTF-8/GBK 可无损解码，待重锚或转码（owner: lbx13）",
+   "expires": "2027-04-30"
+  },
+  {
+   "id": "W9A-096",
+   "reason": "F07 迁移期：锚文件非 UTF-8/GBK 可无损解码，待重锚或转码（owner: lbx13）",
+   "expires": "2027-04-30"
+  }
+ ]
+}

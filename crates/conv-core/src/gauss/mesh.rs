@@ -9,6 +9,42 @@ use crate::mesh_hash;
 use fast_surface_nets::ndshape::RuntimeShape;
 use fast_surface_nets::{SurfaceNetsBuffer, surface_nets};
 use std::collections::HashSet;
+use std::hash::{BuildHasherDefault, Hasher};
+
+/// 乘-旋散列：整数键比默认 SipHash 快一个量级（集合只做 insert/len，不迭代 ⇒ 顺序无关）。
+#[derive(Default)]
+pub(crate) struct FxHasher {
+    hash: u64,
+}
+
+impl Hasher for FxHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        // 数组键（[u32;4]）走 Hash::hash_slice ⇒ 全是字节流，按 8 字节混一次即可。
+        let (chunks, rem) = bytes.as_chunks::<8>();
+        for c in chunks {
+            self.write_u64(u64::from_le_bytes(*c));
+        }
+        if !rem.is_empty() {
+            let mut b = [0u8; 8];
+            b[..rem.len()].copy_from_slice(rem);
+            self.write_u64(u64::from_le_bytes(b));
+        }
+    }
+    fn write_u64(&mut self, i: u64) {
+        self.hash = (self.hash.rotate_left(5) ^ i).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+    fn write_u32(&mut self, i: u32) {
+        self.write_u64(i as u64);
+    }
+    fn write_usize(&mut self, i: usize) {
+        self.write_u64(i as u64);
+    }
+    fn finish(&self) -> u64 {
+        self.hash
+    }
+}
+
+pub(crate) type FxSet<T> = HashSet<T, BuildHasherDefault<FxHasher>>;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
@@ -36,7 +72,7 @@ pub struct Mesh {
 /// GPU Surface Nets（`crate::gsn`）网格化。四边形槽位在 GPU 上按 atomicAdd 写入、顺序不定，
 /// 这里按三角形规范序排序后再算统计/哈希 ⇒ 同输入逐位一致。
 pub fn field_to_mesh_gpu(hd: &crate::jfa::Headless, field: &Field) -> Result<Mesh, String> {
-    let gsn = crate::gsn::surface_nets_gpu(hd, &field.values, field.grid.n)?;
+    let gsn = crate::gsn::surface_nets_gpu(hd, &field.values, field.grid.n, None)?;
     Ok(mesh_from_gsn(&gsn, &field.grid))
 }
 
@@ -267,7 +303,10 @@ fn topo_stats(
         }
         x
     }
-    let mut edges: HashSet<(u32, u32)> = HashSet::new();
+    // 闭合四边形网格每条边恰好被两个三角形共用 ⇒ 唯一边数 = 1.5 × 三角形数 = indices.len()/2。
+    // 一次预分配到位，避免 1460 万条边走二十多次扩容重哈希（1024³ 实测该段 1525→886 ms）。
+    let mut edges: FxSet<u64> =
+        FxSet::with_capacity_and_hasher(indices.len() / 2, Default::default());
     let mut used = vec![false; positions.len()];
     for t in indices.as_chunks::<3>().0 {
         for e in 0..3 {
@@ -280,7 +319,8 @@ fn topo_stats(
             if ra != rb {
                 parent[ra as usize] = rb;
             }
-            edges.insert(if a < b { (a, b) } else { (b, a) });
+            let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+            edges.insert((lo as u64) << 32 | hi as u64);
         }
     }
     let mut roots = HashSet::new();
@@ -323,15 +363,24 @@ pub fn write_obj(mesh: &Mesh, path: &Path) -> std::io::Result<()> {
         mesh.stats.chi,
         mesh.stats.components
     )?;
-    for p in &mesh.positions {
-        writeln!(w, "v {:.6} {:.6} {:.6}", p[0], p[1], p[2])?;
-    }
-    for n in &mesh.normals {
-        writeln!(w, "vn {:.6} {:.6} {:.6}", n[0], n[1], n[2])?;
-    }
-    for t in mesh.indices.as_chunks::<3>().0 {
-        writeln!(
-            w,
+    // 写出是纯格式化（同一张 1024³ 网格到 C:/E: 两块盘都是 ~2.1 s ⇒ 不是 I/O）：分块多线程格式化、
+    // 按原顺序落盘，逐行内容与串行版完全相同。
+    write_lines(&mut w, mesh.positions.len(), |i, buf| {
+        let p = mesh.positions[i];
+        let _ = writeln!(buf, "v {:.6} {:.6} {:.6}", p[0], p[1], p[2]);
+    })?;
+    write_lines(&mut w, mesh.normals.len(), |i, buf| {
+        let n = mesh.normals[i];
+        let _ = writeln!(buf, "vn {:.6} {:.6} {:.6}", n[0], n[1], n[2]);
+    })?;
+    write_lines(&mut w, mesh.indices.len() / 3, |i, buf| {
+        let t = [
+            mesh.indices[3 * i],
+            mesh.indices[3 * i + 1],
+            mesh.indices[3 * i + 2],
+        ];
+        let _ = writeln!(
+            buf,
             "f {}//{} {}//{} {}//{}",
             t[0] + 1,
             t[0] + 1,
@@ -339,7 +388,61 @@ pub fn write_obj(mesh: &Mesh, path: &Path) -> std::io::Result<()> {
             t[1] + 1,
             t[2] + 1,
             t[2] + 1
-        )?;
+        );
+    })?;
+    Ok(())
+}
+
+/// 分块并行格式化 `[0, n)` 行，按顺序写盘（每行内容由 `f` 决定，输出顺序不变）。
+fn write_lines<F>(w: &mut impl Write, n: usize, f: F) -> std::io::Result<()>
+where
+    F: Fn(usize, &mut Vec<u8>) + Sync,
+{
+    if n == 0 {
+        return Ok(());
+    }
+    const CHUNK: usize = 1 << 18;
+    let workers = std::thread::available_parallelism()
+        .map(|v| v.get())
+        .unwrap_or(4)
+        .clamp(1, 8);
+    let mut start = 0;
+    while start < n {
+        let end = (start + CHUNK).min(n);
+        if workers == 1 {
+            let mut buf = Vec::with_capacity((end - start) * 48);
+            for i in start..end {
+                f(i, &mut buf);
+            }
+            w.write_all(&buf)?;
+        } else {
+            let per = (end - start).div_ceil(workers);
+            let bufs: Vec<Vec<u8>> = std::thread::scope(|s| {
+                let mut hs = Vec::new();
+                for k in 0..workers {
+                    let a = start + k * per;
+                    let b = (a + per).min(end);
+                    if a >= b {
+                        continue;
+                    }
+                    let f = &f;
+                    hs.push(s.spawn(move || {
+                        let mut buf = Vec::with_capacity((b - a) * 48);
+                        for i in a..b {
+                            f(i, &mut buf);
+                        }
+                        buf
+                    }));
+                }
+                hs.into_iter()
+                    .map(|h| h.join().expect("obj writer panicked"))
+                    .collect()
+            });
+            for b in &bufs {
+                w.write_all(b)?;
+            }
+        }
+        start = end;
     }
     Ok(())
 }

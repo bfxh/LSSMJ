@@ -9,6 +9,7 @@ use super::{Aabb, Gaussian, bounds_of, dot, normalize_vec};
 
 #[cfg(target_arch = "x86_64")]
 mod avx2;
+pub mod quant;
 pub mod sparse_density;
 pub mod sparse_surfel;
 pub mod quant;
@@ -420,7 +421,6 @@ fn prepare_density_integrated_one(g: &Gaussian, cell_var: f32) -> Prepared {
         world_sigma(&eigen, lam, 2),
     ];
     Prepared {
-        side: 0,
         mean: g.mean,
         opacity: g.opacity.clamp(0.0, 1.0) * norm,
         eigen,
@@ -812,9 +812,7 @@ fn splat_density_chunk(
                 #[cfg(target_arch = "x86_64")]
                 if simd {
                     unsafe {
-                        avx2::density_row(
-                            g, grid, y, z, range.lo[0], range.hi[0], 0, op, out, row,
-                        );
+                        avx2::density_row(g, grid, y, z, range.lo[0], range.hi[0], 0, op, out, row);
                     }
                     continue;
                 }
@@ -1106,11 +1104,10 @@ pub(crate) fn seal_unknown(values: &mut [f32], known: &[bool], grid: &Grid, outs
         n: usize,
         y: usize,
         z: usize,
-        x0: usize,
-        x1: usize,
+        xr: std::ops::RangeInclusive<usize>,
     ) {
         let row = z * n * n + y * n;
-        let mut x = x0;
+        let (mut x, x1) = (*xr.start(), *xr.end());
         while x <= x1 {
             while x <= x1 && (known[row + x] || mask[row + x]) {
                 x += 1;
@@ -1130,10 +1127,10 @@ pub(crate) fn seal_unknown(values: &mut [f32], known: &[bool], grid: &Grid, outs
     for z in 0..n {
         for y in 0..n {
             if z == 0 || z + 1 == n || y == 0 || y + 1 == n {
-                push_row(&mut outside_mask, known, &mut stack, n, y, z, 0, n - 1);
+                push_row(&mut outside_mask, known, &mut stack, n, y, z, 0..=n - 1);
             } else {
-                push_row(&mut outside_mask, known, &mut stack, n, y, z, 0, 0);
-                push_row(&mut outside_mask, known, &mut stack, n, y, z, n - 1, n - 1);
+                push_row(&mut outside_mask, known, &mut stack, n, y, z, 0..=0);
+                push_row(&mut outside_mask, known, &mut stack, n, y, z, n - 1..=n - 1);
             }
         }
     }
@@ -1155,16 +1152,16 @@ pub(crate) fn seal_unknown(values: &mut [f32], known: &[bool], grid: &Grid, outs
             outside_mask[row + x] = true;
         }
         if y > 0 {
-            push_row(&mut outside_mask, known, &mut stack, n, y - 1, z, x0, x1);
+            push_row(&mut outside_mask, known, &mut stack, n, y - 1, z, x0..=x1);
         }
         if y + 1 < n {
-            push_row(&mut outside_mask, known, &mut stack, n, y + 1, z, x0, x1);
+            push_row(&mut outside_mask, known, &mut stack, n, y + 1, z, x0..=x1);
         }
         if z > 0 {
-            push_row(&mut outside_mask, known, &mut stack, n, y, z - 1, x0, x1);
+            push_row(&mut outside_mask, known, &mut stack, n, y, z - 1, x0..=x1);
         }
         if z + 1 < n {
-            push_row(&mut outside_mask, known, &mut stack, n, y, z + 1, x0, x1);
+            push_row(&mut outside_mask, known, &mut stack, n, y, z + 1, x0..=x1);
         }
     }
 
@@ -1380,17 +1377,22 @@ mod norm_tests {
     #[test]
     fn density_norm_is_identity_at_reference_grid() {
         let g = grid(256, 3);
-        let mut o = VoxelizeOptions::default();
-        assert_eq!(density_weight_scale(&g, &o), 1.0);
-        o.density_norm_ref = Some(256);
+        let o0 = VoxelizeOptions::default();
+        assert_eq!(density_weight_scale(&g, &o0), 1.0);
+        let o = VoxelizeOptions {
+            density_norm_ref: Some(256),
+            ..Default::default()
+        };
         // 参考网格 == 当前网格 ⇒ 因子恰为 1（默认输出逐位不变的前提）
         assert_eq!(density_weight_scale(&g, &o), 1.0);
     }
 
     #[test]
     fn density_norm_scales_with_h_squared() {
-        let mut o = VoxelizeOptions::default();
-        o.density_norm_ref = Some(256);
+        let o = VoxelizeOptions {
+            density_norm_ref: Some(256),
+            ..Default::default()
+        };
         let k = density_weight_scale(&grid(128, 3), &o);
         // h_128/h_256 = 249/121 ⇒ 因子 = (121/249)²
         let want = (121.0f32 / 249.0).powi(2);

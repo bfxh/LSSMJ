@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "comment": "ref_gate 显式例外登记。每条必须含 id / reason（含 owner）/ expires（ISO 日期）。过期例外会使门失败，不会静默放行。当前 main 7,683 处引用 0 悬空（2026-10-08 实测），故为空。",
+  "exceptions": []
+}

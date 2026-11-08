@@ -18,17 +18,29 @@ pub trait Acc: Copy + Default + Send + 'static {
 impl Acc for u8 {
     const MAX: f32 = 255.0;
     const LEVELS: usize = 256;
-    fn add_sat(self, q: u32) -> Self { self.saturating_add(q.min(255) as u8) }
-    fn to_f32(self) -> f32 { self as f32 }
-    fn raw(self) -> usize { self as usize }
+    fn add_sat(self, q: u32) -> Self {
+        self.saturating_add(q.min(255) as u8)
+    }
+    fn to_f32(self) -> f32 {
+        self as f32
+    }
+    fn raw(self) -> usize {
+        self as usize
+    }
 }
 
 impl Acc for u16 {
     const MAX: f32 = 65535.0;
     const LEVELS: usize = 65536;
-    fn add_sat(self, q: u32) -> Self { self.saturating_add(q.min(65535) as u16) }
-    fn to_f32(self) -> f32 { self as f32 }
-    fn raw(self) -> usize { self as usize }
+    fn add_sat(self, q: u32) -> Self {
+        self.saturating_add(q.min(65535) as u16)
+    }
+    fn to_f32(self) -> f32 {
+        self as f32
+    }
+    fn raw(self) -> usize {
+        self as usize
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -74,7 +86,15 @@ fn splat_quant_chunk<T: Acc>(
                 if simd && range.hi[0] - range.lo[0] >= 15 {
                     unsafe {
                         super::avx2::quant_row(
-                            g, grid, y, z, range.lo[0], range.hi[0], scale, out, row,
+                            g,
+                            grid,
+                            y,
+                            z,
+                            range.lo[0],
+                            range.hi[0],
+                            scale,
+                            out,
+                            row,
                         );
                     }
                     continue;
@@ -182,7 +202,11 @@ pub fn voxelize_quant<T: Acc>(
     let workers = opts.threads.clamp(1, n.max(1));
     let mut values = vec![T::default(); n * n * n];
 
-    let chunk_count = if workers <= 1 { 1 } else { (workers * 2).min(n).max(1) };
+    let chunk_count = if workers <= 1 {
+        1
+    } else {
+        (workers * 2).min(n).max(1)
+    };
     let chunks: Vec<Chunk> = (0..chunk_count)
         .map(|i| {
             let z0 = (i * n / chunk_count) as u32;
@@ -213,7 +237,13 @@ pub fn voxelize_quant<T: Acc>(
         }
     });
 
-    Ok(QuantField { grid, values, scale, workers, bounds })
+    Ok(QuantField {
+        grid,
+        values,
+        scale,
+        workers,
+        bounds,
+    })
 }
 
 /// 自动定标：先 1/4 分辨率探针拿 iso 与峰值密度，再按 `25000/峰值` 定 scale；
@@ -236,7 +266,9 @@ pub fn quantize_auto_quantfield(
 ) -> Result<(QuantField<u16>, f32), String> {
     // iso 必须由调用方给（同一分辨率的 f32 阈值）。密度是「每体素质量」，随体素尺寸变化，
     // 所以低分辨率探针得到的 iso 不能直接用于全分辨率。
-    let iso = opts.iso_abs.ok_or("quant16 需要显式 iso（用 f32 跑一次拿 iso，再复用到批量）")?;
+    let iso = opts
+        .iso_abs
+        .ok_or("quant16 需要显式 iso（用 f32 跑一次拿 iso，再复用到批量）")?;
 
     // 定标：必须先知道峰值密度。饱和会把内部体素夹平，直接改变等值面附近的插值，
     // 体积能偏 ±11%~−26% —— 所以宁可多花一次 n/4 探针（约 1/64 成本），
@@ -259,7 +291,10 @@ pub fn quantize_auto_quantfield(
 
     let mut scale = 60000.0 / dmax;
     if std::env::var_os("LSSMJ_QUANT_DEBUG").is_some() {
-        eprintln!("  quant16 probe: n={} dmax={dmax:.2} iso={iso:.2} scale={scale:.1}", probe.n);
+        eprintln!(
+            "  quant16 probe: n={} dmax={dmax:.2} iso={iso:.2} scale={scale:.1}",
+            probe.n
+        );
     }
     let mut last_sat = 0usize;
     for _ in 0..3 {
