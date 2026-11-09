@@ -331,6 +331,112 @@ fn shelf_pack(
     )
 }
 
+/// MaxRects 装箱核心（纯函数，便于单测）：把 `sizes` 逐个放进 `bin×bin` 正方形，
+/// 返回每个的 `[x, y, w, h]`（含 `pad` 偏移）。任一个放不下返回 `None`。
+fn maxrects_place(
+    sizes: &[(f32, f32)],
+    bin: f32,
+    pad: f32,
+) -> Option<(Vec<[f32; 4]>, Vec<bool>)> {
+    let mut free: Vec<[f32; 4]> = vec![[0.0, 0.0, bin, bin]];
+    let mut out = vec![[0.0f32; 4]; sizes.len()];
+    let mut rots = vec![false; sizes.len()];
+    for (i, &(rw, rh)) in sizes.iter().enumerate() {
+        let mut best: Option<(f32, f32, usize, [f32; 2], bool)> = None;
+        for (fi, f) in free.iter().enumerate() {
+            for rot in [false, true] {
+                let (w, h) = if rot { (rh, rw) } else { (rw, rh) };
+                let (w0, h0) = (w + 2.0 * pad, h + 2.0 * pad);
+                if f[2] >= w0 && f[3] >= h0 {
+                    let short = (f[2] - w0).min(f[3] - h0);
+                    let long = (f[2] - w0).max(f[3] - h0);
+                    let better = best.is_none_or(|(bs, bl, _, _, _)| {
+                        short < bs - 1e-9 || ((short - bs).abs() <= 1e-9 && long < bl)
+                    });
+                    if better {
+                        best = Some((short, long, fi, [f[0], f[1]], rot));
+                    }
+                }
+            }
+        }
+        let (_, _, _fi, pos, rot) = best?;
+        let (w, h) = if rot { (rh, rw) } else { (rw, rh) };
+        let (w0, h0) = (w + 2.0 * pad, h + 2.0 * pad);
+        // 自检：选中的 free rect 左上角不得与已放置的岛重叠（maxrects 的正确性不变量）。
+        debug_assert!(
+            out[..i]
+                .iter()
+                .all(|r| !rects_overlap(*r, [pos[0] + pad, pos[1] + pad, w, h])),
+            "maxrects 放置 {i} 与已放置岛重叠：pos={pos:?} size=({w},{h})"
+        );
+        out[i] = [pos[0] + pad, pos[1] + pad, w, h];
+        rots[i] = rot;
+        // 标准 MaxRects：放置矩形占 [pos, pos+(w0,h0)]，**所有与它相交**的 free rect 都要裁剪——
+        // 包括刚被选中的那个：它的剩余空间（上/下/左/右四条带）必须在这里重新生成，否则会丢失。
+        let occ = [pos[0], pos[1], w0, h0];
+        let mut next: Vec<[f32; 4]> = Vec::with_capacity(free.len() + 4);
+        for r in free.iter().copied() {
+            if !rects_intersect(r, occ) {
+                next.push(r);
+                continue;
+            }
+            // 上 / 下 / 左 / 右 四条剩余带（互不重叠）
+            if r[1] < occ[1] {
+                next.push([r[0], r[1], r[2], occ[1] - r[1]]);
+            }
+            if r[1] + r[3] > occ[1] + occ[3] {
+                let ny = occ[1] + occ[3];
+                next.push([r[0], ny, r[2], r[1] + r[3] - ny]);
+            }
+            if r[0] < occ[0] {
+                next.push([r[0], r[1], occ[0] - r[0], r[3]]);
+            }
+            if r[0] + r[2] > occ[0] + occ[2] {
+                let nx = occ[0] + occ[2];
+                next.push([nx, r[1], r[0] + r[2] - nx, r[3]]);
+            }
+        }
+        free = next;
+        prune_free(&mut free);
+    }
+    Some((out, rots))
+}
+
+/// 两个矩形是否相交（贴边不算）。
+fn rects_intersect(a: [f32; 4], b: [f32; 4]) -> bool {
+    a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3]
+}
+
+/// 裁剪 free 列表：移除被其他 free rect 包含者（`b ⊆ a ⇒ 删 b`）。
+fn prune_free(free: &mut Vec<[f32; 4]>) {
+    let n = free.len();
+    if n < 2 {
+        return;
+    }
+    let mut keep = vec![true; n];
+    for i in 0..n {
+        for j in 0..n {
+            if i == j || !keep[i] || !keep[j] {
+                continue;
+            }
+            let (a, b) = (free[i], free[j]);
+            if b[0] >= a[0] - 1e-9
+                && b[1] >= a[1] - 1e-9
+                && b[0] + b[2] <= a[0] + a[2] + 1e-9
+                && b[1] + b[3] <= a[1] + a[3] + 1e-9
+            {
+                keep[j] = false;
+            }
+        }
+    }
+    let mut k = 0;
+    free.retain(|_| {
+        let r = keep[k];
+        k += 1;
+        r
+    });
+}
+
 /// 展开：接缝 → LSCM → shelf 打包。
 pub fn unwrap(mesh: &Mesh, padding: f32) -> UvLayout {
     let pad = padding.max(0.0);
@@ -437,6 +543,34 @@ pub fn unwrap(mesh: &Mesh, padding: f32) -> UvLayout {
             let area = aw * ah;
             if best.as_ref().is_none_or(|b| area < b.0) {
                 best = Some((area, rects, rots, aw, ah));
+            }
+        }
+    }
+    // maxrects：正确性已由单测锁定，但复杂度是 O(岛数 × free)，31k 岛实测 10+ 分钟未完成。
+    // 因此只在岛数较少时启用（大 mesh 走 shelf，fill 0.3665）。
+    const MAXRECTS_MAX_ISLANDS: usize = 10000;
+    if packed.len() <= MAXRECTS_MAX_ISLANDS {
+        for k in [0.9f32, 1.05, 1.2, 1.4] {
+            let bin = (total_area.sqrt() * k).max(max_w).max(1e-6);
+            let sizes: Vec<(f32, f32)> = order
+                .iter()
+                .map(|&pi| (packed[pi].rect[2], packed[pi].rect[3]))
+                .collect();
+            if let Some((placed, rots_by_order)) = maxrects_place(&sizes, bin, pad) {
+                let mut rects = vec![[0.0f32; 4]; packed.len()];
+                let mut rots = vec![false; packed.len()];
+                let mut aw = 0.0f32;
+                let mut ah = 0.0f32;
+                for (oi, &pi) in order.iter().enumerate() {
+                    rects[pi] = placed[oi];
+                    rots[pi] = rots_by_order[oi];
+                    aw = aw.max(placed[oi][0] + placed[oi][2] + pad);
+                    ah = ah.max(placed[oi][1] + placed[oi][3] + pad);
+                }
+                let area = aw * ah;
+                if best.as_ref().is_none_or(|b| area < b.0) {
+                    best = Some((area, rects, rots, aw, ah));
+                }
             }
         }
     }
@@ -861,13 +995,61 @@ mod tests {
     }
 
     #[test]
+    fn maxrects_places_without_overlap() {
+        // 纯函数隔离：4 个 1×1 放进 2.5×2.5，两两不得重叠且都在 bin 内。
+        let sizes = vec![(1.0f32, 1.0f32); 4];
+        let (out, _) = maxrects_place(&sizes, 2.5, 0.0).expect("4 个 1x1 应能放进 2.5x2.5");
+        for i in 0..out.len() {
+            for j in (i + 1)..out.len() {
+                assert!(
+                    !rects_overlap(out[i], out[j]),
+                    "岛 {i} 与 {j} 重叠：{:?} {:?}",
+                    out[i],
+                    out[j]
+                );
+            }
+            assert!(out[i][0] >= -1e-6 && out[i][1] >= -1e-6, "越界：{:?}", out[i]);
+            assert!(out[i][0] + out[i][2] <= 2.5 + 1e-6, "越界：{:?}", out[i]);
+            assert!(out[i][1] + out[i][3] <= 2.5 + 1e-6, "越界：{:?}", out[i]);
+        }
+    }
+
+    #[test]
+    fn maxrects_handles_mixed_sizes_with_pad() {
+        // 混合尺寸 + pad：验证分割后 free rect 不会把后来的岛放回已占用区域。
+        let sizes = vec![
+            (0.5f32, 1.2f32),
+            (1.0, 0.4),
+            (0.7, 0.7),
+            (1.1, 0.9),
+            (0.3, 1.5),
+        ];
+        let (out, _) = maxrects_place(&sizes, 3.0, 0.01).expect("应能放下");
+        for i in 0..out.len() {
+            for j in (i + 1)..out.len() {
+                assert!(
+                    !rects_overlap(out[i], out[j]),
+                    "重叠：{i} {:?} vs {j} {:?}",
+                    out[i],
+                    out[j]
+                );
+            }
+        }
+    }
+
+    #[test]
     fn cube_has_six_islands_no_overlap() {
         let m = cube();
         let layout = unwrap(&m, 0.01);
         assert_eq!(layout.islands.len(), 6, "立方体应有 6 个面岛");
         assert_eq!(layout.uvs.len(), 36);
         assert_eq!(layout.uv_tris.len(), 12);
-        assert_eq!(layout.overlaps, 0, "岛 AABB 不得相交");
+        assert_eq!(
+            layout.overlaps,
+            0,
+            "岛 AABB 不得相交：{:?}",
+            layout.islands.iter().map(|i| i.uv_rect).collect::<Vec<_>>()
+        );
         assert_eq!(layout.tri_overlaps, 0, "立方体同岛三角形不应重叠");
         assert!(layout.fill > 0.2, "fill 太低: {}", layout.fill);
         for uv in &layout.uvs {
