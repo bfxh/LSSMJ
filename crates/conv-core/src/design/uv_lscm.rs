@@ -292,7 +292,130 @@ pub fn block_islands(mesh: &Mesh, grid: usize, max_tris: usize) -> Vec<Vec<usize
             }
         }
     }
-    out
+    // 跨块合并（实测正结果，CHG-2026-11-10-AW，50 万三角键盘 GT）：
+    // 块边界会无条件切断连通性，把两侧本属同一曲面的分量并回一个岛后，
+    // 岛 21,392→11,540（−46%）、fill 0.4486→0.4609（+2.7%）、耗时 8.5s→6.1s
+    // （碎岛少了，LSCM 调用与打包项同步减少）。
+    //
+    // 上限是**峰值而非越大越好**：50→0.4498、120→0.4597、180→0.4609（峰）、
+    // 300→0.4480、800→0.4285、20000→0.4062。超过约 200 后，大岛 LSCM 自重叠
+    // 被 `island_overlaps` 拆成单三角形，fill 反向下降、耗时也回升。
+    const MERGE_MAX_TRIS: usize = 180;
+    merge_across_blocks(mesh, out, CONE_DEG, MERGE_MAX_TRIS)
+}
+
+/// 跨块合并：把空间块边界两侧、本属同一连续曲面的分量并回一个岛。
+///
+/// 块切分会在块边界处无条件断开连通性，产生大量“本可连续展开”的碎岛；
+/// 这里按共享边从长到短尝试合并，判据（保守上界）：
+/// 合并后法线锥 ≤ `cone_deg`，且三角形数 ≤ `max_tris`（控制 LSCM 规模）。
+fn merge_across_blocks(
+    mesh: &Mesh,
+    comps: Vec<Vec<usize>>,
+    cone_deg: f32,
+    max_tris: usize,
+) -> Vec<Vec<usize>> {
+    let nc = comps.len();
+    if nc < 2 {
+        return comps;
+    }
+    let mut comp_of = vec![usize::MAX; mesh.tris.len()];
+    for (ci, c) in comps.iter().enumerate() {
+        for &t in c {
+            comp_of[t] = ci;
+        }
+    }
+    // 每岛统计：三角形数、面积加权法线和、自身法线锥。
+    let mut tris: Vec<usize> = comps.iter().map(Vec::len).collect();
+    let mut norms: Vec<[f32; 3]> = comps
+        .iter()
+        .map(|c| {
+            let mut s = [0.0f32; 3];
+            for &t in c {
+                let a = tri_area(mesh, t);
+                let n = tri_normal(mesh, t);
+                for k in 0..3 {
+                    s[k] += n[k] * a;
+                }
+            }
+            s
+        })
+        .collect();
+    let mut cones: Vec<f32> = comps.iter().map(|c| normal_cone_deg(mesh, c)).collect();
+
+    // 跨岛共享边：岛对 → 共享边长合计（长边优先合，先合大面片）。
+    let mut edges: HashMap<(u32, u32), Vec<usize>> = HashMap::new();
+    for (ti, t) in mesh.tris.iter().enumerate() {
+        for k in 0..3 {
+            let a = t[k];
+            let b = t[(k + 1) % 3];
+            let key = if a < b { (a, b) } else { (b, a) };
+            edges.entry(key).or_default().push(ti);
+        }
+    }
+    let mut pairs: HashMap<(usize, usize), f32> = HashMap::new();
+    for (key, ts) in &edges {
+        if ts.len() != 2 {
+            continue;
+        }
+        let (ca, cb) = (comp_of[ts[0]], comp_of[ts[1]]);
+        if ca == cb {
+            continue;
+        }
+        let len = norm3(sub3(
+            mesh.verts[key.1 as usize],
+            mesh.verts[key.0 as usize],
+        ));
+        let k = if ca < cb { (ca, cb) } else { (cb, ca) };
+        *pairs.entry(k).or_insert(0.0) += len;
+    }
+    let mut cand: Vec<((usize, usize), f32)> = pairs.into_iter().collect();
+    cand.sort_by(|a, b| b.1.total_cmp(&a.1));
+
+    fn find(parent: &mut [usize], x: usize) -> usize {
+        let mut r = x;
+        while parent[r] != r {
+            r = parent[r];
+        }
+        let mut c = x;
+        while parent[c] != c {
+            let nxt = parent[c];
+            parent[c] = r;
+            c = nxt;
+        }
+        r
+    }
+
+    let mut parent: Vec<usize> = (0..nc).collect();
+    for ((a, b), _len) in cand {
+        let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
+        if ra == rb || tris[ra] + tris[rb] > max_tris {
+            continue;
+        }
+        let la = norm3(norms[ra]).max(1e-12);
+        let lb = norm3(norms[rb]).max(1e-12);
+        let dot = (dot3(norms[ra], norms[rb]) / (la * lb)).clamp(-1.0, 1.0);
+        let sep = dot.acos().to_degrees();
+        // 合并后锥角上界：两岛平均法线夹角 + 较大的自身锥角。
+        let cone = (sep + cones[ra].max(cones[rb])).min(180.0);
+        if cone > cone_deg {
+            continue;
+        }
+        parent[rb] = ra;
+        tris[ra] += tris[rb];
+        for k in 0..3 {
+            norms[ra][k] += norms[rb][k];
+        }
+        cones[ra] = cone;
+    }
+
+    // 按根合并输出。
+    let mut groups: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (ci, c) in comps.into_iter().enumerate() {
+        let r = find(&mut parent, ci);
+        groups.entry(r).or_default().extend(c);
+    }
+    groups.into_values().collect()
 }
 
 /// LSCM：返回 `(全局顶点索引, 每顶点 UV)`。
@@ -652,5 +775,52 @@ mod tests {
         }
         let islands = block_islands(&m, 1, 10_000);
         assert!(islands.len() >= 2, "正反面共存必须切分，实得 {}", islands.len());
+    }
+
+    /// 细长平面：x 方向 `nx` 格、y 方向 1 格（法线 +Z）。
+    /// 用 `grid=nx` 可精确切成 `nx` 个相邻小块，每块 2 个三角形。
+    fn strip_plane(nx: usize) -> Mesh {
+        let mut verts = Vec::new();
+        for i in 0..=nx {
+            verts.push([i as f32, 0.0, 0.0]);
+            verts.push([i as f32, 1.0, 0.0]);
+        }
+        let mut tris = Vec::new();
+        for i in 0..nx {
+            let a = (2 * i) as u32;
+            let b = (2 * i + 2) as u32;
+            let c = (2 * i + 3) as u32;
+            let d = (2 * i + 1) as u32;
+            tris.push([a, b, c]);
+            tris.push([a, c, d]);
+        }
+        Mesh { verts, tris }
+    }
+
+    #[test]
+    fn block_merge_rejoins_across_cells() {
+        // grid=8 把细长平面切成 8 个相邻块；跨块合并应并回 1 个岛。
+        let m = strip_plane(8);
+        let islands = block_islands(&m, 8, 10_000);
+        assert_eq!(
+            islands.len(),
+            1,
+            "同向连续平面应跨块合并为单岛，实得 {}（{} 三角形）",
+            islands.len(),
+            m.tris.len()
+        );
+        assert_eq!(islands[0].len(), m.tris.len());
+    }
+
+    #[test]
+    fn block_merge_refuses_folded_patch() {
+        // 后半顶点反向 ⇒ 正反面共存（锥角 180°），跨块合并不得把它们并成一个岛。
+        let mut m = strip_plane(8);
+        let half = m.tris.len() / 2;
+        for t in m.tris.iter_mut().skip(half) {
+            t.swap(1, 2);
+        }
+        let islands = block_islands(&m, 8, 10_000);
+        assert!(islands.len() >= 2, "正反面共存不得合并，实得 {}", islands.len());
     }
 }
