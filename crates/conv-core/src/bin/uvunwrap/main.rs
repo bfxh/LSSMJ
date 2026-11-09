@@ -105,17 +105,23 @@ fn write_obj_uv(mesh: &Mesh, layout: &uv::UvLayout, path: &Path) -> std::io::Res
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() != 3 {
-        eprintln!("用法: uvunwrap <in.obj> <out.obj>");
+    if args.len() < 3 || args.len() > 4 {
+        eprintln!("用法: uvunwrap <in.obj> <out.obj> [padding=0.0002]");
         std::process::exit(2);
     }
+    // 0.0002 是实测甜点：比原来的 0.001 高 14.9% fill（0.3197→0.3673），
+    // 再往下收益饱和（0.0001→0.3737、0.00005→0.3755），但渗色边距会变薄。
+    let padding: f32 = args
+        .get(3)
+        .map(|s| s.parse().expect("padding 是数值"))
+        .unwrap_or(0.0002);
     let input = Path::new(&args[1]);
     let output = Path::new(&args[2]);
     let mesh = read_obj(input).unwrap_or_else(|e| {
         eprintln!("{e}");
         std::process::exit(1);
     });
-    let layout = uv::unwrap(&mesh, 0.001);
+    let layout = uv::unwrap(&mesh, padding);
     write_obj_uv(&mesh, &layout, output).unwrap_or_else(|e| {
         eprintln!("写不了 {}：{e}", output.display());
         std::process::exit(1);

@@ -284,6 +284,53 @@ fn finish_single(mesh: &Mesh, ti: usize, uvs: [[f32; 2]; 3]) -> Option<Packed> {
     })
 }
 
+/// 单次 shelf 打包：按高度降序的 `order` 逐个放入，返回 (uv_rects, rotated, atlas_w, atlas_h)。
+///
+/// `rotate_all` 为真时每个岛旋转 90°——岛形状差异大时这会改变 atlas 长宽比，
+/// 与外层的宽度扫描一起决定最终 fill。
+fn shelf_pack(
+    packed: &[Packed],
+    order: &[usize],
+    target_w: f32,
+    rotate_all: bool,
+    pad: f32,
+) -> (Vec<[f32; 4]>, Vec<bool>, f32, f32) {
+    let mut rects = vec![[0.0f32; 4]; packed.len()];
+    let mut rots = vec![false; packed.len()];
+    let mut cursor_x = 0.0f32;
+    let mut cursor_y = 0.0f32;
+    let mut row_h = 0.0f32;
+    let mut used_w = 0.0f32;
+    for &pi in order {
+        let rw = packed[pi].rect[2];
+        let rh = packed[pi].rect[3];
+        let w0 = rw + 2.0 * pad;
+        let h0 = rh + 2.0 * pad;
+        let (w, h) = if rotate_all { (h0, w0) } else { (w0, h0) };
+        if cursor_x > 0.0 && cursor_x + w > target_w {
+            cursor_y += row_h;
+            cursor_x = 0.0;
+            row_h = 0.0;
+        }
+        rots[pi] = rotate_all;
+        rects[pi] = [
+            cursor_x + pad,
+            cursor_y + pad,
+            if rotate_all { rh } else { rw },
+            if rotate_all { rw } else { rh },
+        ];
+        cursor_x += w;
+        row_h = row_h.max(h);
+        used_w = used_w.max(cursor_x);
+    }
+    (
+        rects,
+        rots,
+        used_w.max(1e-6),
+        (cursor_y + row_h).max(1e-6),
+    )
+}
+
 /// 展开：接缝 → LSCM → shelf 打包。
 pub fn unwrap(mesh: &Mesh, padding: f32) -> UvLayout {
     let pad = padding.max(0.0);
@@ -380,37 +427,24 @@ pub fn unwrap(mesh: &Mesh, padding: f32) -> UvLayout {
         .iter()
         .map(|p| p.rect[2] + 2.0 * pad)
         .fold(0.0f32, f32::max);
-    let target_w = (total_area.sqrt() * 1.0).max(max_w).max(1e-6);
-    let mut cursor_x = 0.0f32;
-    let mut cursor_y = 0.0f32;
-    let mut row_h = 0.0f32;
-    let mut used_w = 0.0f32;
-    for &pi in &order {
-        let rw = packed[pi].rect[2];
-        let rh = packed[pi].rect[3];
-        let w0 = rw + 2.0 * pad;
-        let h0 = rh + 2.0 * pad;
-        // 旋转对当前分布无提升（fill 0.4173 前后相同），默认关。
-        let rotate = false;
-        let (w, h) = if rotate { (h0, w0) } else { (w0, h0) };
-        if cursor_x > 0.0 && cursor_x + w > target_w {
-            cursor_y += row_h;
-            cursor_x = 0.0;
-            row_h = 0.0;
+    // 多宽度 × 旋转 尝试，取 atlas 面积最小者（fill = uv_area / (aw*ah)，uv_area 固定）。
+    // 单一 target_w = sqrt(total_area) 在大 mesh（岛多且碎）上会浪费大量 atlas 空间。
+    let mut best: Option<(f32, Vec<[f32; 4]>, Vec<bool>, f32, f32)> = None;
+    for wf in [0.55f32, 0.7, 0.85, 1.0, 1.15, 1.3, 1.5] {
+        for rotate_all in [false, true] {
+            let target_w = (total_area.sqrt() * wf).max(max_w).max(1e-6);
+            let (rects, rots, aw, ah) = shelf_pack(&packed, &order, target_w, rotate_all, pad);
+            let area = aw * ah;
+            if best.as_ref().is_none_or(|b| area < b.0) {
+                best = Some((area, rects, rots, aw, ah));
+            }
         }
-        packed[pi].rotated = rotate;
-        packed[pi].uv_rect = [
-            cursor_x + pad,
-            cursor_y + pad,
-            if rotate { rh } else { rw },
-            if rotate { rw } else { rh },
-        ];
-        cursor_x += w;
-        row_h = row_h.max(h);
-        used_w = used_w.max(cursor_x);
     }
-    let atlas_w = used_w.max(1e-6);
-    let atlas_h = (cursor_y + row_h).max(1e-6);
+    let (_, rects, rots, atlas_w, atlas_h) = best.expect("打包尝试至少一个");
+    for (pi, r) in rects.iter().enumerate() {
+        packed[pi].uv_rect = *r;
+        packed[pi].rotated = rots[pi];
+    }
     let scale = 1.0 / atlas_w.max(atlas_h);
 
     // 写 UV（每三角形角一个）。
