@@ -338,6 +338,8 @@ fn maxrects_place(
     bin: f32,
     pad: f32,
 ) -> Option<(Vec<[f32; 4]>, Vec<bool>)> {
+    // free 列表上限：越大 fill 越好但查找越慢（O(岛数 × free)）。256 是 31k 岛可跑完的折中。
+    const MAX_FREE: usize = 256;
     let mut free: Vec<[f32; 4]> = vec![[0.0, 0.0, bin, bin]];
     let mut out = vec![[0.0f32; 4]; sizes.len()];
     let mut rots = vec![false; sizes.len()];
@@ -397,7 +399,11 @@ fn maxrects_place(
             }
         }
         free = next;
-        prune_free(&mut free);
+        // 控制 free 规模：每 4 次或超限时裁剪（prune 只影响效率，不影响正确性）。
+        // 上限 256 是性能与 fill 的折中：free 越大查找越慢，截断会丢一些碎空隙。
+        if i % 4 == 3 || free.len() > MAX_FREE * 4 {
+            prune_free(&mut free, MAX_FREE);
+        }
     }
     Some((out, rots))
 }
@@ -407,8 +413,12 @@ fn rects_intersect(a: [f32; 4], b: [f32; 4]) -> bool {
     a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3]
 }
 
-/// 裁剪 free 列表：移除被其他 free rect 包含者（`b ⊆ a ⇒ 删 b`）。
-fn prune_free(free: &mut Vec<[f32; 4]>) {
+/// 裁剪 free 列表：超过 `max_free` 时先按面积保留前 N（丢碎空隙换速度），再移除被包含者。
+fn prune_free(free: &mut Vec<[f32; 4]>, max_free: usize) {
+    if free.len() > max_free {
+        free.sort_by(|a, b| (b[2] * b[3]).total_cmp(&(a[2] * a[3])));
+        free.truncate(max_free);
+    }
     let n = free.len();
     if n < 2 {
         return;
@@ -548,7 +558,7 @@ pub fn unwrap(mesh: &Mesh, padding: f32) -> UvLayout {
     }
     // maxrects：正确性已由单测锁定，但复杂度是 O(岛数 × free)，31k 岛实测 10+ 分钟未完成。
     // 因此只在岛数较少时启用（大 mesh 走 shelf，fill 0.3665）。
-    const MAXRECTS_MAX_ISLANDS: usize = 10000;
+    const MAXRECTS_MAX_ISLANDS: usize = 50000;
     if packed.len() <= MAXRECTS_MAX_ISLANDS {
         for k in [0.9f32, 1.05, 1.2, 1.4] {
             let bin = (total_area.sqrt() * k).max(max_w).max(1e-6);
