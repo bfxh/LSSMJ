@@ -338,7 +338,8 @@ fn maxrects_place(
     bin: f32,
     pad: f32,
 ) -> Option<(Vec<[f32; 4]>, Vec<bool>)> {
-    // free 列表上限：越大 fill 越好但查找越慢（O(岛数 × free)）。256 是 31k 岛可跑完的折中。
+    // free 列表上限：越大 fill 越好但查找越慢（O(岛数 × free)）。256 是 31k 岛可跑完的折中；
+    // 实测放到 512/1024 在大 mesh 上 fill 只动 0.0002（0.4363→0.4365），耗时却翻倍到 7s/20s。
     const MAX_FREE: usize = 256;
     let mut free: Vec<[f32; 4]> = vec![[0.0, 0.0, bin, bin]];
     let mut out = vec![[0.0f32; 4]; sizes.len()];
@@ -561,9 +562,10 @@ pub fn unwrap(mesh: &Mesh, padding: f32) -> UvLayout {
             }
         }
     }
-    // maxrects：正确性已由单测锁定，但复杂度是 O(岛数 × free)，31k 岛实测 10+ 分钟未完成。
-    // 因此只在岛数较少时启用（大 mesh 走 shelf，fill 0.3665）。
-    const MAXRECTS_MAX_ISLANDS: usize = 50000;
+    // maxrects：≤10k 岛时赢（小/中 mesh fill 0.4728→0.4851，+2.7%）；11.5k 岛的大 mesh
+    // 实测反而输给 shelf（0.4364 vs 0.4619），放大 free 上限到 512/1024 也救不回
+    // （0.4363/0.4365），且要多花 0.6s。故大 mesh 直接跳过，只跑 shelf。
+    const MAXRECTS_MAX_ISLANDS: usize = 10_000;
     if packed.len() <= MAXRECTS_MAX_ISLANDS {
         for k in [0.9f32, 1.05, 1.2, 1.4] {
             let bin = (total_area.sqrt() * k).max(max_w).max(1e-6);
