@@ -160,7 +160,76 @@ fn split_by_axis(mesh: &Mesh, comp: &[usize]) -> Vec<Vec<usize>> {
     out
 }
 
-/// 大 mesh 分块：按三角形质心的 3D 网格切块，每块再按八分体 + 连通性分岛。
+/// 按共享边连通性把一组三角形分成分量（不做任何法线切分）。
+///
+/// 与 [`split_by_axis`] 的区别：后者先按法线八分体分组，会在连续曲面上人为制造接缝；
+/// 这里只按几何连通性分，供“法线锥可接受时整块共形展开”的判断使用。
+fn connectivity_components(mesh: &Mesh, tris: &[usize]) -> Vec<Vec<usize>> {
+    let set: HashSet<usize> = tris.iter().copied().collect();
+    let mut local: HashMap<(u32, u32), Vec<usize>> = HashMap::new();
+    for &t in tris {
+        for k in 0..3 {
+            let a = mesh.tris[t][k];
+            let b = mesh.tris[t][(k + 1) % 3];
+            let key = if a < b { (a, b) } else { (b, a) };
+            local.entry(key).or_default().push(t);
+        }
+    }
+    let mut adj: HashMap<usize, Vec<usize>> = HashMap::new();
+    for ts in local.values() {
+        if ts.len() == 2 {
+            adj.entry(ts[0]).or_default().push(ts[1]);
+            adj.entry(ts[1]).or_default().push(ts[0]);
+        }
+    }
+    let mut seen: HashSet<usize> = HashSet::new();
+    let mut out = Vec::new();
+    for &start in tris {
+        if !seen.insert(start) {
+            continue;
+        }
+        let mut stack = vec![start];
+        let mut comp = Vec::new();
+        while let Some(t) = stack.pop() {
+            comp.push(t);
+            for &u in adj.get(&t).map(Vec::as_slice).unwrap_or(&[]) {
+                if set.contains(&u) && seen.insert(u) {
+                    stack.push(u);
+                }
+            }
+        }
+        out.push(comp);
+    }
+    out
+}
+
+/// 分量法线锥半角（度）：面积加权平均法线与分量内任一三角形法线的最大夹角。
+///
+/// 锥角小 = 该分量近似单片，可整块 LSCM 展开而不翻面；锥角大 = 正反面共存，
+/// 必须切缝，否则展开后自重叠。
+fn normal_cone_deg(mesh: &Mesh, comp: &[usize]) -> f32 {
+    let mut avg = [0.0f32; 3];
+    for &t in comp {
+        let a = tri_area(mesh, t);
+        let n = tri_normal(mesh, t);
+        for k in 0..3 {
+            avg[k] += n[k] * a;
+        }
+    }
+    let len = norm3(avg);
+    if len < 1e-9 {
+        return 180.0;
+    }
+    let mut worst = 0.0f32;
+    for &t in comp {
+        let d = (dot3(tri_normal(mesh, t), avg) / len).clamp(-1.0, 1.0);
+        worst = worst.max(d.acos().to_degrees());
+    }
+    worst
+}
+
+/// 大 mesh 分块：按三角形质心的 3D 网格切块，每块再按连通性分岛；
+/// 只有法线锥过宽或三角形数超上限时才退回八分体切分。
 /// 这是 >50k 三角形的参数化入口，替代“每三角形独立展开”的保底路径。
 pub fn block_islands(mesh: &Mesh, grid: usize, max_tris: usize) -> Vec<Vec<usize>> {
     let n = mesh.tris.len();
@@ -201,13 +270,26 @@ pub fn block_islands(mesh: &Mesh, grid: usize, max_tris: usize) -> Vec<Vec<usize
         let iz = (((c[2] - min[2]) / span[2] * grid as f32).floor() as usize).min(grid - 1);
         cells.entry((iz * grid + iy) * grid + ix).or_default().push(ti);
     }
+    // 法线锥阈值（度）：经实测扫描（CHG-2026-11-10-AV，50 万三角键盘 GT）：
+    // · cone 20/40/60 → fill 0.4207/0.4222/0.4237，岛 26.1k/25.7k/25.3k；
+    // · cone 90 起始把正反面塞进同岛，被重叠检测拆碎，岛数与 fill 同时上升；
+    // · 取 90 配 grid=16：岛 21.4k、fill 0.4486，且失真谱宽(p99/p1)=1.252、
+    //   UV 翻转 2351，均优于旧路径（八分体无条件切：fill 0.3893、谱宽 1.347、翻转 3123）。
+    // 阈值放宽是安全的：整块展开若自重叠，uv.rs 的 island_overlaps 会递归拆掉重叠三角形。
+    const CONE_DEG: f32 = 90.0;
     let mut out = Vec::new();
     for (_, tris) in cells {
-        if tris.len() > max_tris {
-            out.extend(split_by_axis(mesh, &tris));
-        } else {
-            // 小块直接按八分体 + 连通性分，保证 LSCM 岛可展开。
-            out.extend(split_by_axis(mesh, &tris));
+        // 先按共享边连通性分：不再无条件按法线八分体劈开连续曲面（那会人为制造接缝）。
+        // 只有“法线锥过宽（正反面共存，整块展开会自重叠）”或“三角形数超 LSCM 上限”
+        // 才退回八分体切分。
+        for comp in connectivity_components(mesh, &tris) {
+            if comp.len() <= 1 {
+                out.push(comp);
+            } else if comp.len() <= max_tris && normal_cone_deg(mesh, &comp) <= CONE_DEG {
+                out.push(comp);
+            } else {
+                out.extend(split_by_axis(mesh, &comp));
+            }
         }
     }
     out
@@ -526,5 +608,49 @@ mod tests {
         let m = Mesh { verts, tris };
         let islands = seam_islands(&m, 45.0);
         assert!(islands.len() > 1, "封闭曲面必须被补切，实得 {}", islands.len());
+    }
+
+    /// XY 平面上的 `n×n` 方格，法线全 +Z。
+    fn grid_plane(n: usize) -> Mesh {
+        let mut verts = Vec::new();
+        for j in 0..=n {
+            for i in 0..=n {
+                verts.push([i as f32, j as f32, 0.0]);
+            }
+        }
+        let mut tris = Vec::new();
+        let w = n + 1;
+        for j in 0..n {
+            for i in 0..n {
+                let a = (j * w + i) as u32;
+                let b = (j * w + i + 1) as u32;
+                let c = ((j + 1) * w + i + 1) as u32;
+                let d = ((j + 1) * w + i) as u32;
+                tris.push([a, b, c]);
+                tris.push([a, c, d]);
+            }
+        }
+        Mesh { verts, tris }
+    }
+
+    #[test]
+    fn block_islands_keeps_flat_patch_whole() {
+        // 平坦连续面片：法线锥 0°，必须整块作为**一个**岛（旧逻辑会按八分体劈成多个）。
+        let m = grid_plane(4);
+        let islands = block_islands(&m, 1, 10_000);
+        assert_eq!(islands.len(), 1, "平坦面片应为单岛，实得 {}", islands.len());
+        assert_eq!(islands[0].len(), m.tris.len());
+    }
+
+    #[test]
+    fn block_islands_splits_folded_patch() {
+        // 后半三角形顶点反向 ⇒ 正反面共存，法线锥 180° > 90°，必须切缝。
+        let mut m = grid_plane(3);
+        let half = m.tris.len() / 2;
+        for t in m.tris.iter_mut().skip(half) {
+            t.swap(1, 2);
+        }
+        let islands = block_islands(&m, 1, 10_000);
+        assert!(islands.len() >= 2, "正反面共存必须切分，实得 {}", islands.len());
     }
 }

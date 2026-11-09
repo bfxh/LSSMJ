@@ -454,11 +454,13 @@ pub fn unwrap(mesh: &Mesh, padding: f32) -> UvLayout {
         return UvLayout::default();
     }
     let tri_islands = if mesh.tris.len() > 50_000 {
-        // 大 mesh 分块参数经实测扫描（CHG-2026-11-09-AU）：
-        // · grid=8 是**双赢点**：岛 31,671→28,129（−11%）、fill 0.3674→0.3900（+6.4%）；
-        // · grid=32 的 fill 最高（0.4242，+15.8%）但岛数涨到 72k，接缝代价大，暂不作默认；
-        // · grid=2 反而更差（0.3614）；max_tris 在 4000→20000 之间几乎不影响 fill。
-        uv_lscm::block_islands(mesh, 8, 20_000)
+        // 大 mesh 分块 + 分岛参数经实测扫描（CHG-2026-11-09-AU / CHG-2026-11-10-AV）：
+        // · 分岛改为“连通性优先，法线锥 >90° 或超 max_tris 才按八分体切”，不再无条件劈开
+        //   连续曲面——这是 fill 的主要来源；
+        // · grid × cone 扫描（50 万三角键盘 GT，fill）：16/90 → 0.4486（岛 21.4k，最优）；
+        //   8/90 → 0.4324；16/20 → 0.4293；32/120 → 0.4519 但岛数翻倍到 42k，不取；
+        // · 旧路径（grid=8 + 无条件八分体切）为 0.3893 / 岛 28.1k。
+        uv_lscm::block_islands(mesh, 16, 20_000)
     } else {
         uv_lscm::seam_islands(mesh, 45.0)
     };
