@@ -23,6 +23,7 @@
 use std::collections::{HashMap, HashSet};
 use std::f32::consts::PI;
 
+pub mod design;
 pub mod budget;
 pub mod gauss;
 pub mod gaussian;

@@ -23,6 +23,9 @@ pub struct SparseSurfel {
     pub sealed_interior: usize,
     data: Vec<Option<Vec<f32>>>,
     knowns: Vec<Option<Vec<u8>>>,
+    data_in: Vec<Option<Vec<f32>>>,
+    knowns_in: Vec<Option<Vec<u8>>>,
+    double_sided: bool,
 }
 
 impl SparseSurfel {
@@ -53,10 +56,21 @@ impl SparseSurfel {
             let (x0, y0, z0) = (bx * block, by * block, bz * block);
             let mut num = vec![0f32; l * l * l];
             let mut den = vec![0f32; l * l * l];
+            let mut num_in = vec![0f32; l * l * l];
+            let mut den_in = vec![0f32; l * l * l];
             splat_surfel_block(
-                &prepared, &bins[id], &grid, x0, y0, z0, block, n, l, clamp_abs, &mut num, &mut den,
+                &prepared, &bins[id], &grid, x0, y0, z0, block, n, l, clamp_abs, 1, &mut num,
+                &mut den,
             );
-            post_surfel_block(
+            splat_surfel_block(
+                &prepared, &bins[id], &grid, x0, y0, z0, block, n, l, clamp_abs, 0, &mut num,
+                &mut den,
+            );
+            splat_surfel_block(
+                &prepared, &bins[id], &grid, x0, y0, z0, block, n, l, clamp_abs, -1, &mut num_in,
+                &mut den_in,
+            );
+            let out = post_surfel_block(
                 &num,
                 &den,
                 &grid,
@@ -67,22 +81,63 @@ impl SparseSurfel {
                 z0,
                 block,
                 l,
-            )
+            );
+            let inn = if opts.shell_thickness.is_some() {
+                Some(post_surfel_block(
+                    &num_in,
+                    &den_in,
+                    &grid,
+                    opts.min_weight,
+                    outside,
+                    x0,
+                    y0,
+                    z0,
+                    block,
+                    l,
+                ))
+            } else {
+                None
+            };
+            (out, inn)
         });
         let mut data: Vec<Option<Vec<f32>>> = (0..per * per * per).map(|_| None).collect();
         let mut knowns: Vec<Option<Vec<u8>>> = (0..per * per * per).map(|_| None).collect();
+        let mut data_in: Vec<Option<Vec<f32>>> = (0..per * per * per).map(|_| None).collect();
+        let mut knowns_in: Vec<Option<Vec<u8>>> = (0..per * per * per).map(|_| None).collect();
         let mut observed = 0usize;
-        for (id, (values, known, obs)) in parts {
-            observed += obs;
-            data[id] = Some(values);
-            knowns[id] = Some(known);
+        for (id, (out, inn)) in parts {
+            observed += out.2;
+            data[id] = Some(out.0);
+            knowns[id] = Some(out.1);
+            if let Some(inn) = inn {
+                observed += inn.2;
+                data_in[id] = Some(inn.0);
+                knowns_in[id] = Some(inn.1);
+            }
+        }
+            if let Some(t) = opts.shell_thickness {
+            let half = 0.0; // DEBUG: disable offset
+            for id in 0..data.len() {
+                if let (Some(dout), Some(din)) = (data[id].as_mut(), data_in[id].as_mut()) {
+                    for (a, b) in dout.iter_mut().zip(din.iter_mut()) {
+                        if *a != outside && *b != outside {
+                            let mid = (*a + *b) * 0.5;
+                            *a = mid + half;
+                            *b = mid - half;
+                        }
+                    }
+                }
+            }
         }
         if observed == 0 {
             return Err("面元融合没有观测到任何体素（法线不可信或带宽太小）".into());
         }
         let sealed_interior = if seal {
             let t = std::time::Instant::now();
-            let sealed = seal_blocks(&mut data, Some(&knowns), &grid, block, per, blocks, outside);
+            let mut sealed = seal_blocks(&mut data, Some(&knowns), &grid, block, per, blocks, outside);
+            if opts.shell_thickness.is_some() {
+                sealed += seal_blocks(&mut data_in, Some(&knowns_in), &grid, block, per, blocks, outside);
+            }
             if std::env::var_os("LSSMJ_STAGE_DEBUG").is_some() {
                 eprintln!(
                     "[sparse] surfel seal {:.1} ms",
@@ -102,6 +157,9 @@ impl SparseSurfel {
             sealed_interior,
             data,
             knowns,
+            data_in,
+            knowns_in,
+            double_sided: opts.shell_thickness.is_some(),
         })
     }
 
@@ -114,7 +172,31 @@ impl SparseSurfel {
     }
 
     pub fn mesh(&self) -> Result<Mesh, String> {
-        mesh_blocks(&self.data, &self.grid, self.block, self.per)
+        if !self.double_sided {
+            return mesh_blocks(&self.data, &self.grid, self.block, self.per);
+        }
+        // 双面 zero-crossing：外场只在薄壳外侧（d_in > 0）保留，内场只在薄壳内侧（d_out < 0）保留，
+        // 避免两场在外部/内部各生成伪面。
+        let mut dout = self.data.clone();
+        let mut din = self.data_in.clone();
+        for id in 0..dout.len() {
+            if let (Some(a), Some(b)) = (dout[id].as_mut(), din[id].as_mut()) {
+                for (x, y) in a.iter_mut().zip(b.iter_mut()) {
+                    if *x != self.outside && *y != self.outside {
+                        let (xo, yi) = (*x, *y);
+                        if yi <= 0.0 {
+                            *x = self.outside;
+                        }
+                        if xo >= 0.0 {
+                            *y = self.outside;
+                        }
+                    }
+                }
+            }
+        }
+        let out = mesh_blocks(&dout, &self.grid, self.block, self.per)?;
+        let inn = mesh_blocks(&din, &self.grid, self.block, self.per)?;
+        Ok(merge_mesh(out, inn))
     }
 }
 
@@ -130,6 +212,7 @@ fn splat_surfel_block(
     n: u32,
     l: usize,
     clamp_abs: f32,
+    filter: i8,
     num: &mut [f32],
     den: &mut [f32],
 ) {
@@ -138,6 +221,9 @@ fn splat_surfel_block(
     let gz0 = z0 as i32 - 1;
     for &gi in indices {
         let g = &prepared[gi as usize];
+        if g.side != filter {
+            continue;
+        }
         let r = splat_range(grid, g.mean, g.radius);
         if r.empty {
             continue;
@@ -385,4 +471,14 @@ mod tests {
         assert!(rel < 1e-3, "volume rel {rel}");
         assert_eq!(dm.stats.chi, sm.stats.chi);
     }
+}
+
+fn merge_mesh(mut a: Mesh, b: Mesh) -> Mesh {
+    let base = a.positions.len() as u32;
+    a.positions.extend(b.positions);
+    a.normals.extend(b.normals);
+    a.indices.extend(b.indices.into_iter().map(|i| i + base));
+    a.stats.vertices = a.positions.len();
+    a.stats.triangles = a.indices.len() / 3;
+    a
 }

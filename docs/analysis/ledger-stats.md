@@ -13,7 +13,7 @@
 | source | 2365 |
 | doc | 1377 |
 | paper | 713 |
-| web | 38 |
+| web | 37 |
 
 ## 波次文件分布
 
@@ -21,15 +21,14 @@
 | --- | --- |
 | w10a.jsonl | 81 |
 | w10b.jsonl | 64 |
-| w11a.jsonl | 60 |
+| w11a.jsonl | 59 |
 | w12a.jsonl | 54 |
 | w13a.jsonl | 49 |
 | w14a.jsonl | 29 |
 | w15a.jsonl | 48 |
-| w15b.jsonl | 15 |
+| w15b.jsonl | 14 |
 | w15c.jsonl | 11 |
-| w1a.jsonl | 176 |
-| w1b.jsonl | 115 |
+| w1b.jsonl | 106 |
 | w1c.jsonl | 99 |
 | w1d.jsonl | 124 |
 | w1e.jsonl | 143 |
@@ -54,7 +53,6 @@
 | w4d.jsonl | 90 |
 | w4e.jsonl | 122 |
 | w4f.jsonl | 86 |
-| w5a.jsonl | 125 |
 | w6a.jsonl | 13 |
 | w6b.jsonl | 13 |
 | w6c.jsonl | 19 |
@@ -82,11 +80,9 @@
 | target | 条数 |
 | --- | --- |
 | godot | 177 |
-| qingjian | 177 |
 | bevy | 153 |
 | qt-quick-scenegraph | 106 |
 | chromium | 100 |
-| qingjian-render | 98 |
 | avalonia | 86 |
 | gtk4-gsk | 82 |
 | flutter | 78 |
@@ -105,7 +101,6 @@
 | thorvg | 35 |
 | slint | 34 |
 | microsoft-wpf | 29 |
-| qingjian-gates | 29 |
 | unreal-slate-umg | 28 |
 | taa-playdead | 27 |
 | egui | 26 |

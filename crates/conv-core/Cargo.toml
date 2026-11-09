@@ -10,6 +10,8 @@ fast-surface-nets = "0.2.1"
 wgpu = "30.0.0"
 pollster = "1.0"
 bytemuck = "1"
+# 三值场抽象（TriSign / SignField3D / 三态提取）放在 trit-core，本仓只用不重复实现。
+trit-core = { path = "../../../trit-cap/crates/trit-core" }
 flate2 = "1.1.10"
 
 [profile.release]

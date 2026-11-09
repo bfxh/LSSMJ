@@ -89,6 +89,32 @@ pub(crate) struct Config {
     pub(crate) max_radius: f32,
     pub(crate) padding: u32,
     pub(crate) seal: bool,
+    pub(crate) shell_thickness: Option<f32>,
+    /// 双面重建器：每个面元沿法向偏移 ±t/2 拆成两层，各自独立建场/取面后合并。
+    pub(crate) double_layer: Option<f32>,
+    /// 显式面片重建：四边形半宽 = patch_scale × 该轴 σ（默认 2.0 ≈ 2σ 覆盖）。
+    pub(crate) patch_scale: f32,
+    /// 面片缝合格边长（世界单位；0 = 不缝合）。
+    pub(crate) weld_cell: f32,
+    /// 边界封口：提取面片网的边界环并扇形三角化，补成封闭壳。
+    pub(crate) cap: bool,
+    /// 缝合方式：true = 吸附最近顶点（不塌缩）；false = 量化格子（会塌缩）。
+    pub(crate) weld_nearest: bool,
+    /// 吸附式缝合的法线夹角阈值（度）：只合并夹角小于它的顶点。
+    pub(crate) weld_angle: f32,
+    /// 真 T-junction 缝合：角点不动，只把落在边上的外来角点插入该边。
+    pub(crate) tj: bool,
+    /// 重网格化：把面片集合当带法线点集，逐点切平面局部 Delaunay 重建统一拓扑网格。
+    pub(crate) remesh: bool,
+    /// 局部邻域半径 = remesh_radius × 最近邻距离中位数（默认 3.0）。
+    pub(crate) remesh_radius: f32,
+    /// 三态符号场的薄壳带半宽（世界单位；None = 1 个体素边长）。
+    pub(crate) trisign_band: Option<f32>,
+    /// 符号/距离解耦：保留距离用于插值（平滑），符号只决定断路（单层）。
+    pub(crate) mixed: bool,
+    /// 封口只补顶点数 ≥ cap_min_loop 的主轮廓环（默认 3 = 不过滤）。
+    pub(crate) cap_min_loop: usize,
+    pub(crate) normal_band: Option<f32>,
     pub(crate) largest_component: bool,
     pub(crate) kernel_clamp_world: Option<f32>,
     pub(crate) kernel_clamp_ref: Option<u32>,
@@ -126,6 +152,20 @@ impl Default for Config {
             max_radius: 0.0,
             padding: 3,
             seal: true,
+            shell_thickness: None,
+            double_layer: None,
+            patch_scale: 2.0,
+            weld_cell: 0.0,
+            cap: false,
+            weld_nearest: false,
+            weld_angle: 30.0,
+            tj: false,
+            remesh: false,
+            remesh_radius: 3.0,
+            trisign_band: None,
+            mixed: false,
+            cap_min_loop: 3,
+            normal_band: None,
             largest_component: false,
             kernel_clamp_world: None,
             kernel_clamp_ref: None,
@@ -166,6 +206,11 @@ pub(crate) fn is_bool_flag(name: &str) -> bool {
             | "simd-prep"
             | "largest-component"
             | "splat-integrate"
+            | "cap"
+            | "weld-nearest"
+            | "tjunction"
+            | "remesh"
+            | "mixed"
     )
 }
 
@@ -187,6 +232,15 @@ pub(crate) fn parse_config(
         "min-radius",
         "max-radius",
         "padding",
+        "shell-thickness",
+        "double-layer",
+        "patch-scale",
+        "weld-cell",
+        "cap-min-loop",
+        "weld-angle",
+        "remesh-radius",
+        "trisign-band",
+        "normal-band",
         "out",
         "out-dir",
         "html",
@@ -244,6 +298,75 @@ pub(crate) fn parse_config(
             return Err("--density-norm 必须 ≥ 8".into());
         }
         cfg.density_norm_ref = Some(x);
+    }
+    if let Some(v) = flags.get("shell-thickness") {
+        let x: f32 = v.parse().map_err(|_| format!("--shell-thickness 不是数值：{v}"))?;
+        if !(x > 0.0) {
+            return Err("--shell-thickness 必须 > 0".into());
+        }
+        cfg.shell_thickness = Some(x);
+    }
+    if let Some(v) = flags.get("double-layer") {
+        let x: f32 = v.parse().map_err(|_| format!("--double-layer 不是数值：{v}"))?;
+        if !(x > 0.0) {
+            return Err("--double-layer 必须 > 0".into());
+        }
+        cfg.double_layer = Some(x);
+    }
+    if let Some(v) = flags.get("patch-scale") {
+        let x: f32 = v.parse().map_err(|_| format!("--patch-scale 不是数值：{v}"))?;
+        if !(x > 0.0) {
+            return Err("--patch-scale 必须 > 0".into());
+        }
+        cfg.patch_scale = x;
+    }
+    if let Some(v) = flags.get("weld-cell") {
+        let x: f32 = v.parse().map_err(|_| format!("--weld-cell 不是数值：{v}"))?;
+        if x < 0.0 {
+            return Err("--weld-cell 必须 ≥ 0".into());
+        }
+        cfg.weld_cell = x;
+    }
+    if let Some(v) = flags.get("cap-min-loop") {
+        let x: usize = v
+            .parse()
+            .map_err(|_| format!("--cap-min-loop 不是整数：{v}"))?;
+        if x < 3 {
+            return Err("--cap-min-loop 必须 ≥ 3".into());
+        }
+        cfg.cap_min_loop = x;
+    }
+    if let Some(v) = flags.get("weld-angle") {
+        let x: f32 = v.parse().map_err(|_| format!("--weld-angle 不是数值：{v}"))?;
+        if !(0.0..=180.0).contains(&x) {
+            return Err("--weld-angle 必须在 0..=180".into());
+        }
+        cfg.weld_angle = x;
+    }
+    if let Some(v) = flags.get("remesh-radius") {
+        let x: f32 = v
+            .parse()
+            .map_err(|_| format!("--remesh-radius 不是数值：{v}"))?;
+        if !(x > 0.0) {
+            return Err("--remesh-radius 必须 > 0".into());
+        }
+        cfg.remesh_radius = x;
+    }
+    if let Some(v) = flags.get("trisign-band") {
+        let x: f32 = v
+            .parse()
+            .map_err(|_| format!("--trisign-band 不是数值：{v}"))?;
+        if !(x > 0.0) {
+            return Err("--trisign-band 必须 > 0".into());
+        }
+        cfg.trisign_band = Some(x);
+    }
+    if let Some(v) = flags.get("normal-band") {
+        let x: f32 = v.parse().map_err(|_| format!("--normal-band 不是数值：{v}"))?;
+        if !(x > 0.0) {
+            return Err("--normal-band 必须 > 0".into());
+        }
+        cfg.normal_band = Some(x);
     }
     if let Some(v) = flags.get("kernel-clamp-world") {
         let x: f32 = v
@@ -315,6 +438,11 @@ pub(crate) fn parse_config(
     cfg.raw_opacity = bools.contains("raw-opacity");
     cfg.quiet = bools.contains("quiet");
     cfg.no_html = bools.contains("no-html");
+    cfg.cap = bools.contains("cap");
+    cfg.weld_nearest = bools.contains("weld-nearest");
+    cfg.tj = bools.contains("tjunction");
+    cfg.remesh = bools.contains("remesh");
+    cfg.mixed = bools.contains("mixed");
     cfg.out = flags.get("out").map(PathBuf::from);
     cfg.out_dir = flags
         .get("out-dir")

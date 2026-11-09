@@ -9,16 +9,19 @@ mod report;
 
 use args::{Config, HELP, ModeSel, is_bool_flag, parse_config};
 use conv_core::gauss::mesh::{
-    Mesh, field_to_mesh, field_to_mesh_gpu, keep_largest_component, write_obj,
+    Mesh, MeshStats, face_normal, field_to_mesh, field_to_mesh_gpu, finish_mesh,
+    keep_largest_component, write_obj,
 };
 use conv_core::gauss::ply::{PlyReadOptions, parse_ply_with};
 use conv_core::gauss::voxel::{
-    Backend, Field, Grid, VoxelMode, VoxelizeOptions, sparse_density::SparseDensity,
-    sparse_surfel::SparseSurfel, surface_blocks::SurfaceBlocks, voxelize, voxelize_gpu_with,
+    Backend, Field, Grid, VoxelMode, VoxelizeOptions, mixed_sign_field,
+    sparse_density::SparseDensity, sparse_surfel::SparseSurfel, surface_blocks::SurfaceBlocks,
+    tri_sign_field, voxelize, voxelize_gpu_with,
 };
+use trit_core::signfield::{extract_surface, extract_surface_mixed};
 use conv_core::gauss::{
-    Gaussian, PruneOptions, add_floaters, blob_sphere_gaussians, bounds_of, median_flatness, prune,
-    sphere_gaussians, torus_gaussians,
+    Aabb, Gaussian, PruneOptions, add_floaters, blob_sphere_gaussians, bounds_of, median_flatness,
+    prune, sphere_gaussians, torus_gaussians,
 };
 use conv_core::jfa::{Headless, try_headless_device_sized};
 use html::write_html;
@@ -124,6 +127,18 @@ fn run() -> Result<(), String> {
             run_convert(&cfg, Path::new(input))
         }
         "batch" => run_batch(&cfg, &positional),
+        "patch" => {
+            let input = positional
+                .first()
+                .ok_or("patch 需要输入 PLY：gauss2mesh patch <input.ply>")?;
+            run_patch(&cfg, Path::new(input))
+        }
+        "trisign" => {
+            let input = positional
+                .first()
+                .ok_or("trisign 需要输入 PLY：gauss2mesh trisign <input.ply>")?;
+            run_trisign(&cfg, Path::new(input))
+        }
         "inspect" => {
             let input = positional
                 .first()
@@ -246,6 +261,1034 @@ fn run_convert(cfg: &Config, input: &Path) -> Result<(), String> {
         cfg.json.as_deref(),
         None,
     )
+}
+
+/// 显式面片重建：每个面元直接出一小块四边形（切平面内，半宽 = patch_scale × 该轴 σ），
+/// 完全不经体素场 ⇒ 没有核宽膨胀；朝向由面元法线给定，切向由协方差的两个厚轴给定。
+/// 缝合：把顶点量化到边长 `cell` 的格子（同格合并成同一个顶点），再去掉退化三角形与重复面。
+/// 相邻面片的角点落进同一格即自动共用顶点，分离的面片因此连成一张网。
+fn weld_quantize(
+    positions: Vec<[f32; 3]>,
+    normals: Vec<[f32; 3]>,
+    indices: Vec<u32>,
+    cell: f32,
+) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
+    if cell <= 0.0 {
+        return (positions, normals, indices);
+    }
+    let key = |p: [f32; 3]| {
+        (
+            (p[0] / cell).floor() as i32,
+            (p[1] / cell).floor() as i32,
+            (p[2] / cell).floor() as i32,
+        )
+    };
+    let mut map: HashMap<(i32, i32, i32), u32> = HashMap::new();
+    let mut out_pos: Vec<[f32; 3]> = Vec::new();
+    let mut out_n: Vec<[f32; 3]> = Vec::new();
+    let mut remap = vec![u32::MAX; positions.len()];
+    for (i, &p) in positions.iter().enumerate() {
+        let k = key(p);
+        let id = match map.get(&k) {
+            Some(&id) => id,
+            None => {
+                let id = out_pos.len() as u32;
+                out_pos.push(p);
+                out_n.push(normals[i]);
+                map.insert(k, id);
+                id
+            }
+        };
+        remap[i] = id;
+    }
+    let mut idx = Vec::with_capacity(indices.len());
+    let mut seen: HashSet<[u32; 3]> = HashSet::new();
+    let mut dropped_degenerate = 0usize;
+    let mut dropped_dup = 0usize;
+    for t in indices.as_chunks::<3>().0 {
+        let (a, b, c) = (
+            remap[t[0] as usize],
+            remap[t[1] as usize],
+            remap[t[2] as usize],
+        );
+        if a == b || b == c || a == c {
+            dropped_degenerate += 1;
+            continue;
+        }
+        let mut k3 = [a, b, c];
+        k3.sort_unstable();
+        if !seen.insert(k3) {
+            dropped_dup += 1;
+            continue;
+        }
+        idx.extend_from_slice(&[a, b, c]);
+    }
+    if dropped_degenerate + dropped_dup > 0 {
+        eprintln!(
+            "weld: 合并顶点 {} → {}，丢退化 {dropped_degenerate} / 重复 {dropped_dup} 面",
+            positions.len(),
+            out_pos.len()
+        );
+    }
+    (out_pos, out_n, idx)
+}
+
+/// 边界封口：提取只被一个三角形使用的边（边界边），沿有向边连成环，
+/// 每个环用扇形三角化补面（绕序取与外表面相反），把开放面片网变成封闭壳。
+/// 返回 (补充的三角形索引, 环数, 边界边数)。
+/// 不塌缩的缝合：把每个角点吸附到容差内**最近的一个已有顶点**并复用其位置；
+/// 已有顶点位置永不改动（不像量化格子会被拉向格心），因此不会塌缩几何。
+fn weld_nearest(
+    positions: Vec<[f32; 3]>,
+    normals: Vec<[f32; 3]>,
+    indices: Vec<u32>,
+    tol: f32,
+    cos_min: f32,
+) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
+    if tol <= 0.0 {
+        return (positions, normals, indices);
+    }
+    let cell = tol.max(1e-9);
+    let key = |p: [f32; 3]| {
+        (
+            (p[0] / cell).floor() as i32,
+            (p[1] / cell).floor() as i32,
+            (p[2] / cell).floor() as i32,
+        )
+    };
+    let tol2 = tol * tol;
+    let mut grid: HashMap<(i32, i32, i32), Vec<u32>> = HashMap::new();
+    let mut out_pos: Vec<[f32; 3]> = Vec::new();
+    let mut out_n: Vec<[f32; 3]> = Vec::new();
+    let mut remap = vec![u32::MAX; positions.len()];
+    for (i, &p) in positions.iter().enumerate() {
+        let k = key(p);
+        let mut best: Option<(u32, f32)> = None;
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    if let Some(list) = grid.get(&(k.0 + dx, k.1 + dy, k.2 + dz)) {
+                        for &j in list {
+                            let q = out_pos[j as usize];
+                            let d2 = (p[0] - q[0]).powi(2)
+                                + (p[1] - q[1]).powi(2)
+                                + (p[2] - q[2]).powi(2);
+                            // 法线判据：切线方向不同的面片顶点不得并到一起（这正是残余翻转的来源）。
+                            let nj = out_n[j as usize];
+                            let ni = normals[i];
+                            let ndot = ni[0] * nj[0] + ni[1] * nj[1] + ni[2] * nj[2];
+                            if d2 <= tol2 && ndot >= cos_min && best.is_none_or(|(_, bd)| d2 < bd) {
+                                best = Some((j, d2));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        match best {
+            Some((j, _)) => remap[i] = j,
+            None => {
+                let id = out_pos.len() as u32;
+                out_pos.push(p);
+                out_n.push(normals[i]);
+                grid.entry(k).or_default().push(id);
+                remap[i] = id;
+            }
+        }
+    }
+    (out_pos, out_n, dedup_faces(&remap, &indices))
+}
+
+/// 按 remap 重索引，丢掉退化三角形与重复面。
+fn dedup_faces(remap: &[u32], indices: &[u32]) -> Vec<u32> {
+    let mut idx = Vec::with_capacity(indices.len());
+    let mut seen: HashSet<[u32; 3]> = HashSet::new();
+    for t in indices.as_chunks::<3>().0 {
+        let (a, b, c) = (
+            remap[t[0] as usize],
+            remap[t[1] as usize],
+            remap[t[2] as usize],
+        );
+        if a == b || b == c || a == c {
+            continue;
+        }
+        let mut k3 = [a, b, c];
+        k3.sort_unstable();
+        if !seen.insert(k3) {
+            continue;
+        }
+        idx.extend_from_slice(&[a, b, c]);
+    }
+    idx
+}
+
+fn cap_boundaries(
+    positions: &[[f32; 3]],
+    indices: &[u32],
+    min_loop: usize,
+) -> (Vec<u32>, usize, usize, usize) {
+    let mut count: HashMap<(u32, u32), u32> = HashMap::new();
+    for t in indices.as_chunks::<3>().0 {
+        for k in 0..3 {
+            let a = t[k];
+            let b = t[(k + 1) % 3];
+            let key = if a < b { (a, b) } else { (b, a) };
+            *count.entry(key).or_insert(0) += 1;
+        }
+    }
+    // 边界有向边（三角形内的方向），封口面用其反向 ⇒ 与外表面共同围成封闭体。
+    let mut dirs: Vec<(u32, u32)> = Vec::new();
+    for t in indices.as_chunks::<3>().0 {
+        for k in 0..3 {
+            let a = t[k];
+            let b = t[(k + 1) % 3];
+            let key = if a < b { (a, b) } else { (b, a) };
+            if count.get(&key) == Some(&1) {
+                dirs.push((a, b));
+            }
+        }
+    }
+    let boundary_edges = dirs.len();
+    let mut by_start: HashMap<u32, Vec<usize>> = HashMap::new();
+    for (i, &(a, _)) in dirs.iter().enumerate() {
+        by_start.entry(a).or_default().push(i);
+    }
+    let mut used = vec![false; dirs.len()];
+    let mut caps: Vec<u32> = Vec::new();
+    let mut loops = 0usize;
+    let mut dropped_loops = 0usize;
+    for i in 0..dirs.len() {
+        if used[i] {
+            continue;
+        }
+        let mut ring: Vec<u32> = Vec::new();
+        let mut cur = i;
+        loop {
+            used[cur] = true;
+            let (a, b) = dirs[cur];
+            ring.push(a);
+            let mut nxt = None;
+            if let Some(list) = by_start.get(&b) {
+                for &j in list {
+                    if !used[j] {
+                        nxt = Some(j);
+                        break;
+                    }
+                }
+            }
+            match nxt {
+                Some(j) => cur = j,
+                None => break,
+            }
+            if ring.len() > indices.len() {
+                break;
+            }
+        }
+        if ring.len() >= min_loop.max(3) {
+            loops += 1;
+            // 扇形三角化，绕序取反（(v0, vk+1, vk)）。
+            for k in 1..ring.len() - 1 {
+                caps.extend_from_slice(&[ring[0], ring[k + 1], ring[k]]);
+            }
+        } else if ring.len() >= 3 {
+            dropped_loops += 1;
+        }
+    }
+    let _ = positions;
+    (caps, loops, boundary_edges, dropped_loops)
+}
+
+/// 真 T-junction 缝合：角点位置一律不动，只把「落在某条边上的外来角点」插入该边（分割边），
+/// 再对扩充后的多边形做质心扇形三角化；最后按**精确坐标**合并重合顶点
+/// （重合来自插入点与源角点是同一坐标，不是把两个顶点拉到中间 ⇒ 不塌缩）。
+fn build_tjunction(
+    gaussians: &[Gaussian],
+    patch_scale: f32,
+    tol: f32,
+    cos_min: f32,
+) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
+    let nq = gaussians.len();
+    let mut quads: Vec<[[f32; 3]; 4]> = Vec::with_capacity(nq);
+    let mut qnorm: Vec<[f32; 3]> = Vec::with_capacity(nq);
+    for g in gaussians {
+        let eig = g.eigen();
+        let raw = g.normal.unwrap_or(eig.vectors[0]);
+        let ln = (raw[0] * raw[0] + raw[1] * raw[1] + raw[2] * raw[2])
+            .sqrt()
+            .max(1e-9);
+        let n = [raw[0] / ln, raw[1] / ln, raw[2] / ln];
+        let mut u = eig.vectors[1];
+        let mut v = eig.vectors[2];
+        let cr = [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ];
+        if cr[0] * n[0] + cr[1] * n[1] + cr[2] * n[2] < 0.0 {
+            std::mem::swap(&mut u, &mut v);
+        }
+        let su = patch_scale * eig.values[1].max(0.0).sqrt();
+        let sv = patch_scale * eig.values[2].max(0.0).sqrt();
+        let mut q = [[0.0f32; 3]; 4];
+        for (i, (a, b)) in [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+            .into_iter()
+            .enumerate()
+        {
+            q[i] = [
+                g.mean[0] + u[0] * su * a + v[0] * sv * b,
+                g.mean[1] + u[1] * su * a + v[1] * sv * b,
+                g.mean[2] + u[2] * su * a + v[2] * sv * b,
+            ];
+        }
+        quads.push(q);
+        qnorm.push(n);
+    }
+
+    // 角点空间索引：找落在边上的外来角点。
+    let cell = tol.max(1e-9);
+    let key = |p: [f32; 3]| {
+        (
+            (p[0] / cell).floor() as i32,
+            (p[1] / cell).floor() as i32,
+            (p[2] / cell).floor() as i32,
+        )
+    };
+    let mut grid: HashMap<(i32, i32, i32), Vec<usize>> = HashMap::new();
+    for (qi, q) in quads.iter().enumerate() {
+        for c in 0..4 {
+            grid.entry(key(q[c])).or_default().push(qi * 4 + c);
+        }
+    }
+
+    let mut tris: Vec<([[f32; 3]; 3], [f32; 3])> = Vec::with_capacity(nq * 2);
+    for (qi, q) in quads.iter().enumerate() {
+        let n = qnorm[qi];
+        let mut poly: Vec<[f32; 3]> = Vec::with_capacity(8);
+        for e in 0..4 {
+            let a = q[e];
+            let b = q[(e + 1) % 4];
+            poly.push(a);
+            let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            let len2 = (ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2]).max(1e-18);
+            let mut cuts: Vec<(f32, [f32; 3])> = Vec::new();
+            let ka = key(a);
+            for dx in -1..=1 {
+                for dy in -1..=1 {
+                    for dz in -1..=1 {
+                        if let Some(list) = grid.get(&(ka.0 + dx, ka.1 + dy, ka.2 + dz)) {
+                            for &id in list {
+                                let (oq, oc) = (id / 4, id % 4);
+                                if oq == qi {
+                                    continue;
+                                }
+                                let p = quads[oq][oc];
+                                if qnorm[oq][0] * n[0] + qnorm[oq][1] * n[1] + qnorm[oq][2] * n[2]
+                                    < cos_min
+                                {
+                                    continue;
+                                }
+                                let ap = [p[0] - a[0], p[1] - a[1], p[2] - a[2]];
+                                let t =
+                                    (ap[0] * ab[0] + ap[1] * ab[1] + ap[2] * ab[2]) / len2;
+                                if t <= 0.02 || t >= 0.98 {
+                                    continue;
+                                }
+                                let proj = [
+                                    a[0] + ab[0] * t,
+                                    a[1] + ab[1] * t,
+                                    a[2] + ab[2] * t,
+                                ];
+                                let d2 = (p[0] - proj[0]).powi(2)
+                                    + (p[1] - proj[1]).powi(2)
+                                    + (p[2] - proj[2]).powi(2);
+                                if d2 <= tol * tol {
+                                    cuts.push((t, p));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            cuts.sort_by(|x, y| x.0.total_cmp(&y.0));
+            let mut last_t = f32::NEG_INFINITY;
+            for (t, p) in cuts {
+                if (t - last_t).abs() > 1e-4 {
+                    poly.push(p);
+                    last_t = t;
+                }
+            }
+        }
+        // 质心扇形三角化（quad + 边内插入点 ⇒ 星形，安全）。
+        let mut c = [0.0f32; 3];
+        for p in &poly {
+            c[0] += p[0];
+            c[1] += p[1];
+            c[2] += p[2];
+        }
+        let inv = 1.0 / poly.len() as f32;
+        let center = [c[0] * inv, c[1] * inv, c[2] * inv];
+        for i in 0..poly.len() {
+            let p0 = poly[i];
+            let p1 = poly[(i + 1) % poly.len()];
+            tris.push(([center, p0, p1], n));
+        }
+    }
+
+    // 按精确坐标合并顶点：插入点与源角点坐标一致，合并后仍停在原位。
+    let mut positions: Vec<[f32; 3]> = Vec::new();
+    let mut normals: Vec<[f32; 3]> = Vec::new();
+    let mut indices: Vec<u32> = Vec::with_capacity(tris.len() * 3);
+    let mut map: HashMap<[u32; 3], u32> = HashMap::new();
+    for (t, n) in &tris {
+        for p in t {
+            let b = [p[0].to_bits(), p[1].to_bits(), p[2].to_bits()];
+            let id = match map.get(&b) {
+                Some(&id) => id,
+                None => {
+                    let id = positions.len() as u32;
+                    positions.push(*p);
+                    normals.push(*n);
+                    map.insert(b, id);
+                    id
+                }
+            };
+            indices.push(id);
+        }
+    }
+    (positions, normals, indices)
+}
+
+/// 2D Delaunay（Bowyer-Watson）。返回三角形顶点索引（指向输入点，已剔除超级三角形）。
+fn delaunay2d(pts: &[[f32; 2]]) -> Vec<[u32; 3]> {
+    let n = pts.len();
+    if n < 3 {
+        return Vec::new();
+    }
+    let (mut minx, mut miny, mut maxx, mut maxy) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    for p in pts {
+        minx = minx.min(p[0]);
+        miny = miny.min(p[1]);
+        maxx = maxx.max(p[0]);
+        maxy = maxy.max(p[1]);
+    }
+    let dmax = (maxx - minx).max(maxy - miny).max(1e-9) * 20.0;
+    let midx = (minx + maxx) * 0.5;
+    let midy = (miny + maxy) * 0.5;
+    let mut verts: Vec<[f32; 2]> = pts.to_vec();
+    verts.push([midx - dmax, midy - dmax]);
+    verts.push([midx + dmax, midy - dmax]);
+    verts.push([midx, midy + dmax]);
+
+    #[inline]
+    fn in_circle(a: [f32; 2], b: [f32; 2], c: [f32; 2], p: [f32; 2]) -> bool {
+        let ax = a[0] - p[0];
+        let ay = a[1] - p[1];
+        let bx = b[0] - p[0];
+        let by = b[1] - p[1];
+        let cx = c[0] - p[0];
+        let cy = c[1] - p[1];
+        let det = (ax * ax + ay * ay) * (bx * cy - cx * by)
+            - (bx * bx + by * by) * (ax * cy - cx * ay)
+            + (cx * cx + cy * cy) * (ax * by - bx * ay);
+        det > 0.0
+    }
+
+    let mut tris: Vec<[u32; 3]> = vec![
+        [n as u32, n as u32 + 1, n as u32 + 2],
+    ];
+    for i in 0..n {
+        let p = verts[i];
+        let bad: Vec<usize> = tris
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| {
+                in_circle(
+                    verts[t[0] as usize],
+                    verts[t[1] as usize],
+                    verts[t[2] as usize],
+                    p,
+                )
+            })
+            .map(|(k, _)| k)
+            .collect();
+        if bad.is_empty() {
+            continue;
+        }
+        // 边界边 = 只被一个坏三角形使用的有向边
+        let mut edges: Vec<(u32, u32)> = Vec::new();
+        for &ti in &bad {
+            let t = tris[ti];
+            for k in 0..3 {
+                let (u, v) = (t[k], t[(k + 1) % 3]);
+                let mut shared = false;
+                for &tj in &bad {
+                    if tj == ti {
+                        continue;
+                    }
+                    let s = tris[tj];
+                    for m in 0..3 {
+                        if s[m] == v && s[(m + 1) % 3] == u {
+                            shared = true;
+                        }
+                    }
+                }
+                if !shared {
+                    edges.push((u, v));
+                }
+            }
+        }
+        let mut bad_sorted = bad.clone();
+        bad_sorted.sort_unstable_by(|a, b| b.cmp(a));
+        for ti in bad_sorted {
+            tris.swap_remove(ti);
+        }
+        for (u, v) in edges {
+            if u != v {
+                tris.push([u, v, i as u32]);
+            }
+        }
+    }
+    tris.retain(|t| {
+        let i = t[0] as usize;
+        let j = t[1] as usize;
+        let k = t[2] as usize;
+        i < n && j < n && k < n
+    });
+    tris
+}
+
+/// 重叠面片的重网格化：把面片集合当**带法线的点集**，逐点在其切平面上做局部 Delaunay，
+/// 只保留半径内的三角形并全局去重 ⇒ 得到一张统一拓扑（顶点共享）的网格。
+/// 不经过体素场，因此没有核宽膨胀；顶点位置就是高斯中心，不移动。
+fn build_remesh(
+    gaussians: &[Gaussian],
+    radius_k: f32,
+    cos_min: f32,
+) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
+    let n = gaussians.len();
+    let mut pos: Vec<[f32; 3]> = Vec::with_capacity(n);
+    let mut nrm: Vec<[f32; 3]> = Vec::with_capacity(n);
+    for g in gaussians {
+        let eig = g.eigen();
+        let raw = g.normal.unwrap_or(eig.vectors[0]);
+        let ln = (raw[0] * raw[0] + raw[1] * raw[1] + raw[2] * raw[2])
+            .sqrt()
+            .max(1e-9);
+        pos.push(g.mean);
+        nrm.push([raw[0] / ln, raw[1] / ln, raw[2] / ln]);
+    }
+    if n < 4 {
+        return (pos, nrm, Vec::new());
+    }
+
+    // 粗估格边长：包围盒对角线 / n^(1/3) 的两倍，保证 27 邻域能覆盖最近邻。
+    let b = Aabb::from_points(&pos);
+    let diag = ((b.max[0] - b.min[0]).powi(2)
+        + (b.max[1] - b.min[1]).powi(2)
+        + (b.max[2] - b.min[2]).powi(2))
+    .sqrt()
+    .max(1e-9);
+    let cell = diag / (n as f32).cbrt() * 2.0;
+    let key = |p: [f32; 3]| {
+        (
+            (p[0] / cell).floor() as i32,
+            (p[1] / cell).floor() as i32,
+            (p[2] / cell).floor() as i32,
+        )
+    };
+    let mut grid: HashMap<(i32, i32, i32), Vec<usize>> = HashMap::new();
+    for (i, &p) in pos.iter().enumerate() {
+        grid.entry(key(p)).or_default().push(i);
+    }
+
+    // 最近邻距离中位数 → 邻域半径。
+    let mut nn: Vec<f32> = Vec::with_capacity(n);
+    for (i, &p) in pos.iter().enumerate() {
+        let k = key(p);
+        let mut best = f32::INFINITY;
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    if let Some(list) = grid.get(&(k.0 + dx, k.1 + dy, k.2 + dz)) {
+                        for &j in list {
+                            if j == i {
+                                continue;
+                            }
+                            let q = pos[j];
+                            let d = (p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2)
+                                + (p[2] - q[2]).powi(2);
+                            if d.sqrt() < best {
+                                best = d.sqrt();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if best.is_finite() {
+            nn.push(best);
+        }
+    }
+    nn.sort_by(|a, b| a.total_cmp(b));
+    let median_nn = nn.get(nn.len() / 2).copied().unwrap_or(cell * 0.5);
+    let radius = (radius_k * median_nn).max(1e-6);
+
+    let mut seen: HashSet<[u32; 3]> = HashSet::new();
+    let mut cands: Vec<([u32; 3], u32)> = Vec::new();
+    for i in 0..n {
+        let p = pos[i];
+        let ni = nrm[i];
+        // 切平面基
+        let helper = if ni[0].abs() < 0.9 {
+            [1.0f32, 0.0, 0.0]
+        } else {
+            [0.0f32, 1.0, 0.0]
+        };
+        let mut u = [
+            ni[1] * helper[2] - ni[2] * helper[1],
+            ni[2] * helper[0] - ni[0] * helper[2],
+            ni[0] * helper[1] - ni[1] * helper[0],
+        ];
+        let lu = (u[0] * u[0] + u[1] * u[1] + u[2] * u[2]).sqrt().max(1e-9);
+        u = [u[0] / lu, u[1] / lu, u[2] / lu];
+        let v = [
+            ni[1] * u[2] - ni[2] * u[1],
+            ni[2] * u[0] - ni[0] * u[2],
+            ni[0] * u[1] - ni[1] * u[0],
+        ];
+        // 邻域点（含 i，索引 0）
+        let mut local: Vec<usize> = vec![i];
+        let k = key(p);
+        let r2 = radius * radius;
+        for dx in -2..=2 {
+            for dy in -2..=2 {
+                for dz in -2..=2 {
+                    if let Some(list) = grid.get(&(k.0 + dx, k.1 + dy, k.2 + dz)) {
+                        for &j in list {
+                            if j == i {
+                                continue;
+                            }
+                            let q = pos[j];
+                            let d2 = (p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2)
+                                + (p[2] - q[2]).powi(2);
+                            if d2 <= r2 {
+                                // 法线判据：只收法线相近的邻点，曲率大处不跨面连接。
+                                let nj = nrm[j];
+                                let ndot =
+                                    ni[0] * nj[0] + ni[1] * nj[1] + ni[2] * nj[2];
+                                if ndot >= cos_min {
+                                    local.push(j);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if local.len() < 4 {
+            continue;
+        }
+        let pts2: Vec<[f32; 2]> = local
+            .iter()
+            .map(|&j| {
+                let d = [pos[j][0] - p[0], pos[j][1] - p[1], pos[j][2] - p[2]];
+                [
+                    d[0] * u[0] + d[1] * u[1] + d[2] * u[2],
+                    d[0] * v[0] + d[1] * v[1] + d[2] * v[2],
+                ]
+            })
+            .collect();
+        for t in delaunay2d(&pts2) {
+            // 只保留含种子点 (0) 的三角形，且三条边都在半径内（避免跨面连接）。
+            if t[0] != 0 && t[1] != 0 && t[2] != 0 {
+                continue;
+            }
+            let mut ok = true;
+            for m in 0..3 {
+                let a = pts2[t[m] as usize];
+                let b = pts2[t[(m + 1) % 3] as usize];
+                let d = ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt();
+                if d > radius * 1.6 {
+                    ok = false;
+                }
+            }
+            if !ok {
+                continue;
+            }
+            let mut idx = [
+                local[t[0] as usize] as u32,
+                local[t[1] as usize] as u32,
+                local[t[2] as usize] as u32,
+            ];
+            // 绕序与法线一致（u × v = n）
+            let pa = pos[idx[0] as usize];
+            let pb = pos[idx[1] as usize];
+            let pc = pos[idx[2] as usize];
+            let cr = [
+                (pb[1] - pa[1]) * (pc[2] - pa[2]) - (pb[2] - pa[2]) * (pc[1] - pa[1]),
+                (pb[2] - pa[2]) * (pc[0] - pa[0]) - (pb[0] - pa[0]) * (pc[2] - pa[2]),
+                (pb[0] - pa[0]) * (pc[1] - pa[1]) - (pb[1] - pa[1]) * (pc[0] - pa[0]),
+            ];
+            if cr[0] * ni[0] + cr[1] * ni[1] + cr[2] * ni[2] < 0.0 {
+                idx.swap(1, 2);
+            }
+            let mut s = idx;
+            s.sort_unstable();
+            if seen.insert(s) {
+                cands.push((idx, i as u32));
+            }
+        }
+    }
+    // 冲突消解：只保留「三角形质心最近种子 == 生成者」的三角形（Voronoi 归属），
+    // 削掉各种子点局部 Delaunay 之间的重叠与自交。
+    let mut indices: Vec<u32> = Vec::with_capacity(cands.len() * 3);
+    for (t, seed) in cands {
+        let a = pos[t[0] as usize];
+        let b = pos[t[1] as usize];
+        let c = pos[t[2] as usize];
+        let cen = [
+            (a[0] + b[0] + c[0]) / 3.0,
+            (a[1] + b[1] + c[1]) / 3.0,
+            (a[2] + b[2] + c[2]) / 3.0,
+        ];
+        let k = key(cen);
+        let mut best = f32::INFINITY;
+        let mut best_id = u32::MAX;
+        for dx in -2..=2 {
+            for dy in -2..=2 {
+                for dz in -2..=2 {
+                    if let Some(list) = grid.get(&(k.0 + dx, k.1 + dy, k.2 + dz)) {
+                        for &j in list {
+                            let q = pos[j];
+                            let d = (cen[0] - q[0]).powi(2)
+                                + (cen[1] - q[1]).powi(2)
+                                + (cen[2] - q[2]).powi(2);
+                            if d < best {
+                                best = d;
+                                best_id = j as u32;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if best_id == seed {
+            indices.extend_from_slice(&t);
+        }
+    }
+    (pos, nrm, indices)
+}
+
+fn surfel_patches(
+    gaussians: &[Gaussian],
+    patch_scale: f32,
+    weld_cell: f32,
+    cap: bool,
+    use_nearest: bool,
+    tj: bool,
+    remesh: bool,
+    remesh_radius: f32,
+    weld_angle: f32,
+    cap_min_loop: usize,
+) -> (Mesh, f32, usize) {
+    let (positions, normals, mut indices) = if remesh {
+        build_remesh(
+            gaussians,
+            remesh_radius,
+            weld_angle.to_radians().cos(),
+        )
+    } else if tj {
+        build_tjunction(
+            gaussians,
+            patch_scale,
+            weld_cell,
+            weld_angle.to_radians().cos(),
+        )
+    } else {
+        let mut positions = Vec::with_capacity(gaussians.len() * 4);
+        let mut normals = Vec::with_capacity(gaussians.len() * 4);
+        let mut indices = Vec::with_capacity(gaussians.len() * 6);
+        for g in gaussians {
+            let eig = g.eigen();
+            let raw = g.normal.unwrap_or(eig.vectors[0]);
+            let ln = (raw[0] * raw[0] + raw[1] * raw[1] + raw[2] * raw[2])
+                .sqrt()
+                .max(1e-9);
+            let n = [raw[0] / ln, raw[1] / ln, raw[2] / ln];
+            let mut u = eig.vectors[1];
+            let mut v = eig.vectors[2];
+            // u × v 必须与 n 同向，四边形绕序才朝外。
+            let cr = [
+                u[1] * v[2] - u[2] * v[1],
+                u[2] * v[0] - u[0] * v[2],
+                u[0] * v[1] - u[1] * v[0],
+            ];
+            if cr[0] * n[0] + cr[1] * n[1] + cr[2] * n[2] < 0.0 {
+                std::mem::swap(&mut u, &mut v);
+            }
+            let su = patch_scale * eig.values[1].max(0.0).sqrt();
+            let sv = patch_scale * eig.values[2].max(0.0).sqrt();
+            let base = positions.len() as u32;
+            for (a, b) in [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+                positions.push([
+                    g.mean[0] + u[0] * su * a + v[0] * sv * b,
+                    g.mean[1] + u[1] * su * a + v[1] * sv * b,
+                    g.mean[2] + u[2] * su * a + v[2] * sv * b,
+                ]);
+                normals.push(n);
+            }
+            indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
+        // 缝合：nearest = 吸附最近顶点（不塌缩）；否则量化格子（会塌缩）。
+        if use_nearest {
+            weld_nearest(
+                positions,
+                normals,
+                indices,
+                weld_cell,
+                weld_angle.to_radians().cos(),
+            )
+        } else {
+            weld_quantize(positions, normals, indices, weld_cell)
+        }
+    };
+
+    // 封口：只补主轮廓大环，小于 cap_min_loop 的碎片环丢弃。
+    let mut cap_loops = 0usize;
+    if cap {
+        let (caps, loops, bedges, dropped) =
+            cap_boundaries(&positions, &indices, cap_min_loop);
+        cap_loops = loops;
+        indices.extend_from_slice(&caps);
+        eprintln!(
+            "cap: 边界边 {bedges} · 主环 {loops} · 补 {} 面 · 丢弃碎片环 {dropped}",
+            caps.len() / 3
+        );
+    }
+
+    let mut area = 0.0f32;
+    for t in indices.as_chunks::<3>().0 {
+        let a = positions[t[0] as usize];
+        let b = positions[t[1] as usize];
+        let c = positions[t[2] as usize];
+        let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+        let cr = [
+            ab[1] * ac[2] - ab[2] * ac[1],
+            ab[2] * ac[0] - ab[0] * ac[2],
+            ab[0] * ac[1] - ab[1] * ac[0],
+        ];
+        area += 0.5 * (cr[0] * cr[0] + cr[1] * cr[1] + cr[2] * cr[2]).sqrt();
+    }
+
+    let stats = MeshStats {
+        vertices: positions.len(),
+        triangles: indices.len() / 3,
+        components: 0,
+        chi: 0,
+        volume: 0.0,
+        boundary_touch: false,
+        hash: 0,
+        bounds: Some(Aabb::from_points(&positions)),
+    };
+    (
+        Mesh {
+            positions,
+            normals,
+            indices,
+            stats,
+        },
+        area,
+        cap_loops,
+    )
+}
+
+fn run_patch(cfg: &Config, input: &Path) -> Result<(), String> {
+    let t0 = Instant::now();
+    let bytes = fs::read(input).map_err(|e| format!("读不了 {}：{e}", input.display()))?;
+    let data = parse_ply_with(
+        &bytes,
+        &PlyReadOptions {
+            scales_are_log: !cfg.raw_scale,
+            opacity_is_logit: !cfg.raw_opacity,
+        },
+    )?;
+    let load_ms = t0.elapsed().as_secs_f64() * 1e3;
+    let (kept, _prune_stats) = prune(
+        &data.gaussians,
+        &PruneOptions {
+            min_opacity: cfg.prune_opacity,
+            min_radius: cfg.min_radius,
+            max_radius: cfg.max_radius,
+        },
+    );
+    if kept.is_empty() {
+        return Err("剪枝后没有高斯：降低 --prune-opacity 或 --min-radius".into());
+    }
+    let t = Instant::now();
+    let (mesh, area, cap_loops) = surfel_patches(
+        &kept,
+        cfg.patch_scale,
+        cfg.weld_cell,
+        cfg.cap,
+        cfg.weld_nearest,
+        cfg.tj,
+        cfg.remesh,
+        cfg.remesh_radius,
+        cfg.weld_angle,
+        cfg.cap_min_loop,
+    );
+    let build_ms = t.elapsed().as_secs_f64() * 1e3;
+    let obj = cfg
+        .out
+        .clone()
+        .unwrap_or_else(|| input.with_extension("obj"));
+    if let Some(parent) = obj.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).map_err(|e| format!("建目录失败：{e}"))?;
+    }
+    write_obj(&mesh, &obj).map_err(|e| format!("写 OBJ 失败：{e}"))?;
+    println!(
+        "{{\"mode\":\"patch\",\"gaussians\":{},\"kept\":{},\"verts\":{},\"tris\":{},\"area\":{:.6},\"patch_scale\":{},\"weld_cell\":{},\"cap_loops\":{},\"load_ms\":{:.1},\"build_ms\":{:.1}}}",
+        data.gaussians.len(),
+        kept.len(),
+        mesh.stats.vertices,
+        mesh.stats.triangles,
+        area,
+        cfg.patch_scale,
+        cfg.weld_cell,
+        cap_loops,
+        load_ms,
+        build_ms
+    );
+    println!("输出 {}", obj.display());
+    Ok(())
+}
+
+/// 三态符号场重建：面元朝向投票 → Inside/Null/Outside → 三态 Dual Contouring。
+/// 与二值 iso 路径的根本差别：薄壳不被解释成「有体积的实体」，Null 层充当断路开关。
+fn run_trisign(cfg: &Config, input: &Path) -> Result<(), String> {
+    let t0 = Instant::now();
+    let bytes = fs::read(input).map_err(|e| format!("读不了 {}：{e}", input.display()))?;
+    let data = parse_ply_with(
+        &bytes,
+        &PlyReadOptions {
+            scales_are_log: !cfg.raw_scale,
+            opacity_is_logit: !cfg.raw_opacity,
+        },
+    )?;
+    let load_ms = t0.elapsed().as_secs_f64() * 1e3;
+    let (kept, _prune) = prune(
+        &data.gaussians,
+        &PruneOptions {
+            min_opacity: cfg.prune_opacity,
+            min_radius: cfg.min_radius,
+            max_radius: cfg.max_radius,
+        },
+    );
+    if kept.is_empty() {
+        return Err("剪枝后没有高斯：降低 --prune-opacity 或 --min-radius".into());
+    }
+
+    let opts = VoxelizeOptions {
+        n: cfg.grid,
+        padding: cfg.padding,
+        mode: VoxelMode::Surfel,
+        backend: Backend::Cpu,
+        ..VoxelizeOptions::default()
+    };
+    let mut voxel_ms = 0.0f64;
+    let mut mesh_ms = 0.0f64;
+    let (sm, counts, grid, band) = if cfg.mixed {
+        // 符号/距离解耦：符号决定断路（单层），距离负责插值（平滑）。
+        let t = Instant::now();
+        let (field, grid) = mixed_sign_field(&kept, &opts, cfg.trisign_band)?;
+        voxel_ms = t.elapsed().as_secs_f64() * 1e3;
+        let t = Instant::now();
+        let sm = extract_surface_mixed(&field, grid.origin, grid.h);
+        mesh_ms = t.elapsed().as_secs_f64() * 1e3;
+        let band = cfg.trisign_band.unwrap_or(grid.h);
+        (sm, field.counts(), grid, band)
+    } else {
+        let t = Instant::now();
+        let (field, grid) = tri_sign_field(&kept, &opts, cfg.trisign_band)?;
+        voxel_ms = t.elapsed().as_secs_f64() * 1e3;
+        let t = Instant::now();
+        let sm = extract_surface(&field, grid.origin, grid.h);
+        mesh_ms = t.elapsed().as_secs_f64() * 1e3;
+        let band = cfg.trisign_band.unwrap_or(grid.h);
+        (sm, field.counts(), grid, band)
+    };
+    if sm.indices.is_empty() {
+        return Err("三态提取没有生成三角形：加大 --grid 或调 --trisign-band".into());
+    }
+
+    // 顶点法线 = 邻接面法线平均
+    let mut normals = vec![[0.0f32; 3]; sm.positions.len()];
+    for tri in sm.indices.chunks(3) {
+        let n = face_normal(
+            sm.positions[tri[0] as usize],
+            sm.positions[tri[1] as usize],
+            sm.positions[tri[2] as usize],
+        );
+        for k in 0..3 {
+            let v = &mut normals[tri[k] as usize];
+            v[0] += n[0];
+            v[1] += n[1];
+            v[2] += n[2];
+        }
+    }
+    for v in &mut normals {
+        let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-12);
+        *v = [v[0] / l, v[1] / l, v[2] / l];
+    }
+
+    let stats = MeshStats {
+        vertices: sm.positions.len(),
+        triangles: sm.indices.len() / 3,
+        components: 0,
+        chi: 0,
+        volume: 0.0,
+        boundary_touch: false,
+        hash: 0,
+        bounds: Some(Aabb::from_points(&sm.positions)),
+    };
+    let mesh = Mesh {
+        positions: sm.positions,
+        normals,
+        indices: sm.indices,
+        stats,
+    };
+    let obj = cfg
+        .out
+        .clone()
+        .unwrap_or_else(|| input.with_extension("obj"));
+    if let Some(parent) = obj.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).map_err(|e| format!("建目录失败：{e}"))?;
+    }
+    write_obj(&mesh, &obj).map_err(|e| format!("写 OBJ 失败：{e}"))?;
+    println!(
+        "{{\"mode\":\"trisign\",\"gaussians\":{},\"kept\":{},\"grid\":{},\"h\":{:.6},\"band\":{:.6},\"inside\":{},\"null\":{},\"outside\":{},\"quads\":{},\"verts\":{},\"tris\":{},\"load_ms\":{:.1},\"voxel_ms\":{:.1},\"mesh_ms\":{:.1}}}",
+        data.gaussians.len(),
+        kept.len(),
+        grid.n,
+        grid.h,
+        band,
+        counts[0],
+        counts[1],
+        counts[2],
+        sm.quads,
+        mesh.stats.vertices,
+        mesh.stats.triangles,
+        load_ms,
+        voxel_ms,
+        mesh_ms
+    );
+    println!("输出 {}", obj.display());
+    Ok(())
 }
 
 fn run_batch(cfg: &Config, inputs: &[String]) -> Result<(), String> {
@@ -393,7 +1436,7 @@ fn convert_and_write(
         cfg.threads
     };
     let gpu_dense_512 = cfg.grid > 256 && cfg.gpu && mode == VoxelMode::Surfel;
-    let mut sparse = cfg.grid > 256 && !gpu_dense_512;
+    let mut sparse = (cfg.grid > 256 || cfg.shell_thickness.is_some()) && !gpu_dense_512;
     let mut gpu_fallback = None;
     let want_gpu = if cfg.grid > 256 && !gpu_dense_512 {
         if cfg.gpu || cfg.gpu_mesh {
@@ -470,6 +1513,8 @@ fn convert_and_write(
         iso_frac: 0.65,
         iso_abs: cfg.iso,
         seal: cfg.seal,
+        shell_thickness: cfg.shell_thickness,
+        normal_band_cells: cfg.normal_band.unwrap_or(1.0),
         kernel_clamp_world: cfg.kernel_clamp_world,
         kernel_clamp_ref,
         density_norm_ref: cfg.density_norm_ref,
@@ -520,7 +1565,20 @@ fn convert_and_write(
     let mut sparse_note = None;
     let mut acc_vox = 0.0;
     let mut acc_mesh = 0.0;
-    let (mut field, mut mesh) = if sparse {
+    let (mut field, mut mesh) = if let Some(dl) = cfg.double_layer {
+        if !cfg.quiet {
+            stage(
+                3,
+                5,
+                "双面重建",
+                &format!("±{:.4} 两层独立建场（不共用零等值面）", dl * 0.5),
+            );
+        }
+        let (f, m, v, mm) = run_double_layer(&kept, &voxel_opts, dl)?;
+        acc_vox += v;
+        acc_mesh += mm;
+        (f, m)
+    } else if sparse {
         let (f, m, v, mm, note) = run_sparse_leg(&kept, &voxel_opts)?;
         acc_vox = v;
         acc_mesh = mm;
@@ -888,6 +1946,63 @@ fn run_leg(
     let mesh = field_to_mesh(&field);
     let mesh_ms = t.elapsed().as_secs_f64() * 1e3;
     Ok((field, mesh, voxel_ms, mesh_ms))
+}
+
+/// 双面重建器：把每个面元沿法向偏移 ±t/2 拆成两层，两层各自用**独立标量场**配 Surface Nets
+/// 取面，再把内层翻转绕序与外层合并。两层的等值面互不相干，不再共用同一个零等值面，
+/// 因此不会出现「同一个场里两层叠加」导致的双层重叠/褶皱。
+fn run_double_layer(
+    gaussians: &[Gaussian],
+    opts: &VoxelizeOptions,
+    thickness: f32,
+) -> Result<(Field, Mesh, f64, f64), String> {
+    // 同一包围盒（含 ±t/2 外扩），两层落在同一世界坐标系，合并后不会错位。
+    let mut bounds = opts.aabb.unwrap_or_else(|| bounds_of(gaussians));
+    for k in 0..3 {
+        bounds.min[k] -= thickness * 0.5;
+        bounds.max[k] += thickness * 0.5;
+    }
+
+    let mut outer = gaussians.to_vec();
+    let mut inner = gaussians.to_vec();
+    for (i, g) in gaussians.iter().enumerate() {
+        let n = match g.normal {
+            Some(n) => n,
+            None => g.eigen().vectors[0],
+        };
+        for k in 0..3 {
+            outer[i].mean[k] = g.mean[k] + n[k] * thickness * 0.5;
+            inner[i].mean[k] = g.mean[k] - n[k] * thickness * 0.5;
+        }
+    }
+
+    let mut o = opts.clone();
+    o.aabb = Some(bounds);
+    o.shell_thickness = None;
+    o.mode = VoxelMode::Surfel;
+    o.backend = Backend::Cpu;
+
+    let (field, m_out, vox_ms, mesh_ms) = run_leg(&outer, &o, None)?;
+    let (_, m_in, _, _) = run_leg(&inner, &o, None)?;
+    if m_out.indices.is_empty() || m_in.indices.is_empty() {
+        return Err(
+            "双面重建：某一层没有生成三角形（加大 --grid、减小 --double-layer，或提高 --prune-opacity）"
+                .into(),
+        );
+    }
+
+    // 合并：外层保持绕序（朝外），内层反转绕序（朝内）。
+    let mut positions = m_out.positions.clone();
+    let mut normals = m_out.normals.clone();
+    let mut indices = m_out.indices.clone();
+    let base = positions.len() as u32;
+    positions.extend_from_slice(&m_in.positions);
+    normals.extend_from_slice(&m_in.normals);
+    for tri in m_in.indices.as_chunks::<3>().0 {
+        indices.extend_from_slice(&[base + tri[0], base + tri[2], base + tri[1]]);
+    }
+    let merged = finish_mesh(positions, normals, indices, &field.grid);
+    Ok((field, merged, vox_ms * 2.0, mesh_ms * 2.0))
 }
 
 /// 核宽/密度是否已钉在世界单位（此时密度近似分辨率无关，探针 iso 不再按 n⁻² 换算）。
