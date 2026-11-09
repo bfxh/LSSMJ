@@ -453,9 +453,12 @@ pub fn unwrap(mesh: &Mesh, padding: f32) -> UvLayout {
     if mesh.tris.is_empty() {
         return UvLayout::default();
     }
-    let fast = mesh.tris.len() > 50_000;
-    let tri_islands = if fast {
-        uv_lscm::block_islands(mesh, 4, 4000)
+    let tri_islands = if mesh.tris.len() > 50_000 {
+        // 大 mesh 分块参数经实测扫描（CHG-2026-11-09-AU）：
+        // · grid=8 是**双赢点**：岛 31,671→28,129（−11%）、fill 0.3674→0.3900（+6.4%）；
+        // · grid=32 的 fill 最高（0.4242，+15.8%）但岛数涨到 72k，接缝代价大，暂不作默认；
+        // · grid=2 反而更差（0.3614）；max_tris 在 4000→20000 之间几乎不影响 fill。
+        uv_lscm::block_islands(mesh, 8, 20_000)
     } else {
         uv_lscm::seam_islands(mesh, 45.0)
     };
