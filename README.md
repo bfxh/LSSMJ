@@ -51,4 +51,6 @@ python tools/ledger.py report --out docs/analysis/ledger-stats.md
 
 ## 许可
 
-**GPL-3.0-or-later**——分析文档中的引用片段一律逐字标注出处，便于复核与回流。
+**MIT**（见 [LICENSE](LICENSE) 与 [NOTICE.md](NOTICE.md)）——分析文档中的引用片段一律逐字标注出处、版权归各上游，便于复核与回流。
+
+> 2026-11-12 之前的分析文档与账本按当时的 GPL-3.0-or-later 口径写成（例如各处的「许可红线」条目），属历史记录，不改写证据锚；对本仓代码的当前授权以 MIT 为准。
